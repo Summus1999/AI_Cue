@@ -1,0 +1,46 @@
+# 依赖目录
+node_modules
+src-tauri/target
+
+# 原始资源文件（已转换）
+AI_Cue icon.png
+
+# 构建输出
+dist
+src-tauri/gen
+
+# 日志文件
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 编辑器配置
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+coverage
+*.lcov
+
+# 临时文件
+*.tmp
+*.temp
+.cache

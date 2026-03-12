@@ -1,0 +1,99 @@
+/* 极简冰川主题 - 基础样式 */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS 变量定义 */
+:root {
+  --background: 222 47% 3%;
+  --foreground: 180 100% 70%;
+  --card: 222 47% 6%;
+  --card-foreground: 180 100% 70%;
+  --popover: 222 47% 6%;
+  --popover-foreground: 180 100% 70%;
+  --primary: 187 85% 43%;
+  --primary-foreground: 222 47% 3%;
+  --secondary: 222 30% 12%;
+  --secondary-foreground: 180 100% 70%;
+  --muted: 222 30% 12%;
+  --muted-foreground: 180 30% 50%;
+  --accent: 187 85% 43%;
+  --accent-foreground: 222 47% 3%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 222 30% 18%;
+  --input: 222 30% 18%;
+  --ring: 187 85% 43%;
+  --radius: 16px;
+}
+
+/* 基础样式 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 隐藏滚动条但保留滚动功能 */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* 自定义拖拽区域 */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] input {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* 聚焦发光效果 */
+.glow-focus:focus {
+  outline: none;
+  box-shadow: 0 0 0 1px hsl(var(--ring) / 0.5);
+}
+
+/* 消息气泡动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-enter {
+  animation: fadeIn 150ms ease-out forwards;
+}
+
+/* 输入框 placeholder 颜色 */
+::placeholder {
+  color: hsl(var(--muted-foreground));
+}
