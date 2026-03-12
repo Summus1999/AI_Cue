@@ -1,7 +1,7 @@
 // 设置面板组件 - 侧边滑出式设计
 import { useState, useEffect } from 'react';
-import { X, ChevronDown, Check } from 'lucide-react';
-import { loadConfig, saveConfig, QWEN_MODELS, AppConfig, DEFAULT_CONFIG } from '../store/config';
+import { X, ChevronDown, Check, AlertCircle } from 'lucide-react';
+import { loadConfig, saveConfig, QWEN_MODELS, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -12,10 +12,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   // 配置状态
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
   
   // 下拉框展开状态
-  const [openDropdown, setOpenDropdown] = useState<'provider' | 'model' | null>(null);
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
   // 面板打开时加载配置
   useEffect(() => {
@@ -26,12 +27,22 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         setIsLoading(false);
       });
       setSaveStatus('idle');
+      setErrorMessage('');
     }
   }, [isOpen]);
 
   // 保存配置
   const handleSave = async () => {
+    // 验证配置
+    const validation = validateConfig(config);
+    if (!validation.valid) {
+      setSaveStatus('error');
+      setErrorMessage(validation.message || '配置无效');
+      return;
+    }
+
     setSaveStatus('saving');
+    setErrorMessage('');
     try {
       await saveConfig(config);
       setSaveStatus('saved');
@@ -39,8 +50,10 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         setSaveStatus('idle');
         onClose();
       }, 500);
-    } catch {
-      setSaveStatus('idle');
+    } catch (err) {
+      console.error('保存失败详情:', err);
+      setSaveStatus('error');
+      setErrorMessage('保存失败: ' + (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -59,7 +72,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       
       {/* 滑出面板 */}
       <div 
-        className="relative h-full w-[280px] bg-slate-900/95 backdrop-blur-md border-l border-cyan-900/30 shadow-2xl animate-slide-in"
+        className="relative h-full w-[280px] bg-slate-900/95 backdrop-blur-md border-l border-cyan-900/30 shadow-2xl"
         style={{
           animation: 'slideIn 200ms ease-out forwards'
         }}
@@ -83,58 +96,53 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             </div>
           ) : (
             <>
-              {/* AI Provider 选择 */}
+              {/* API Key 设置（必填） */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
-                  AI 模型
+                  API Key <span className="text-red-400">*</span>
                 </label>
-                <div className="relative">
-                  <button
-                    onClick={() => setOpenDropdown(openDropdown === 'provider' ? null : 'provider')}
-                    className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30 transition-colors"
-                  >
-                    <span>千问 (Qwen)</span>
-                    <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${openDropdown === 'provider' ? 'rotate-180' : ''}`} />
-                  </button>
-                  
-                  {/* Provider 下拉菜单 */}
-                  {openDropdown === 'provider' && (
-                    <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10">
-                      <div className="px-3 py-2 text-sm text-cyan-100 flex items-center gap-2 bg-cyan-900/20">
-                        <Check className="w-4 h-4 text-cyan-400" />
-                        <span>千问 (Qwen)</span>
-                      </div>
-                      <div className="px-3 py-2 text-xs text-cyan-400/40 border-t border-cyan-900/10 mt-1 pt-1">
-                        更多模型即将支持
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <input
+                  type="password"
+                  value={config.apiKey}
+                  onChange={(e) => {
+                    setConfig(prev => ({ ...prev, apiKey: e.target.value }));
+                    if (errorMessage) setErrorMessage('');
+                  }}
+                  placeholder="输入阿里云 DashScope API Key"
+                  className={`w-full px-3 py-2.5 bg-slate-800/50 border rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30 transition-colors ${
+                    saveStatus === 'error' && !config.apiKey 
+                      ? 'border-red-500/50' 
+                      : 'border-cyan-900/20'
+                  }`}
+                />
+                <p className="text-[10px] text-cyan-400/40">
+                  必填，请从阿里云 DashScope 控制台获取
+                </p>
               </div>
 
               {/* 模型版本选择 */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
-                  模型版本
+                  千问模型 <span className="text-red-400">*</span>
                 </label>
                 <div className="relative">
                   <button
-                    onClick={() => setOpenDropdown(openDropdown === 'model' ? null : 'model')}
+                    onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
                     className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30 transition-colors"
                   >
                     <span>{selectedModel?.name || config.model}</span>
-                    <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${openDropdown === 'model' ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   
                   {/* Model 下拉菜单 */}
-                  {openDropdown === 'model' && (
+                  {isModelDropdownOpen && (
                     <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
                       {QWEN_MODELS.map((model) => (
                         <button
                           key={model.id}
                           onClick={() => {
                             setConfig(prev => ({ ...prev, model: model.id }));
-                            setOpenDropdown(null);
+                            setIsModelDropdownOpen(false);
                           }}
                           className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-2 ${
                             config.model === model.id 
@@ -158,21 +166,17 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 )}
               </div>
 
-              {/* API Key 设置（可选） */}
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
-                  API Key（可选）
-                </label>
-                <input
-                  type="password"
-                  value={config.apiKey || ''}
-                  onChange={(e) => setConfig(prev => ({ ...prev, apiKey: e.target.value }))}
-                  placeholder="使用默认 Key 请留空"
-                  className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30 transition-colors"
-                />
-                <p className="text-[10px] text-cyan-400/40">
-                  如需使用自己的阿里云 DashScope API Key，请在此输入
-                </p>
+              {/* 错误提示 */}
+              {saveStatus === 'error' && errorMessage && (
+                <div className="flex items-start gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span className="break-all">{errorMessage}</span>
+                </div>
+              )}
+              
+              {/* 调试信息 */}
+              <div className="text-[10px] text-cyan-600/30 pt-4">
+                提示: 按 F12 打开控制台查看详细日志
               </div>
             </>
           )}
@@ -186,6 +190,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
               saveStatus === 'saved'
                 ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                : saveStatus === 'error'
+                ? 'bg-red-500/10 text-red-400 border border-red-500/30'
                 : 'bg-cyan-500/10 text-cyan-400 border border-cyan-900/30 hover:bg-cyan-500/20'
             }`}
           >
@@ -199,6 +205,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 <Check className="w-4 h-4" />
                 已保存
               </span>
+            ) : saveStatus === 'error' ? (
+              '请完善信息'
             ) : (
               '保存设置'
             )}
