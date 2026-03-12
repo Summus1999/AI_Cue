@@ -15,6 +15,7 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    open: false,  // 禁止自动打开浏览器
     watch: {
       ignored: ["**/src-tauri/**"],
     },
