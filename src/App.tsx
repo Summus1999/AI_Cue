@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Minus, X } from "lucide-react";
+import { Send, Minus, X, Settings } from "lucide-react";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 // 消息类型定义
 interface Message {
@@ -28,6 +29,9 @@ function App() {
   
   // 是否正在生成回复
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // 设置面板开关状态
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // 滚动引用
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -89,7 +93,7 @@ function App() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full bg-slate-950 text-cyan-400 overflow-hidden rounded-2xl">
+    <div className="relative flex flex-col w-full h-full bg-slate-950 text-cyan-400 overflow-hidden rounded-2xl">
       {/* 自定义标题栏 - 支持拖拽 */}
       <div
         data-tauri-drag-region
@@ -105,6 +109,14 @@ function App() {
 
         {/* 右侧：窗口控制按钮 */}
         <div className="flex items-center gap-1">
+          {/* 设置按钮 */}
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors duration-150"
+            title="设置"
+          >
+            <Settings className="w-3.5 h-3.5 text-cyan-400/60" />
+          </button>
           <button
             onClick={handleMinimize}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors duration-150"
@@ -182,6 +194,12 @@ function App() {
           Shift + Enter 换行 · Enter 发送
         </div>
       </div>
+
+      {/* 设置面板 */}
+      <SettingsPanel 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+      />
     </div>
   );
 }
