@@ -1,0 +1,98 @@
+name: Build Windows App
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: false
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli
+
+      - name: Generate self-signed certificate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=AI Cue, O=AI Cue, C=CN" `
+            -Type CodeSigning `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -NotAfter (Get-Date).AddYears(1)
+          
+          $certPath = "$env:TEMP\ai-cue-cert.pfx"
+          $password = ConvertTo-SecureString -String "tauri-self-signed" -Force -AsPlainText
+          
+          Export-PfxCertificate `
+            -Cert $cert `
+            -FilePath $certPath `
+            -Password $password
+          
+          Write-Host "Certificate generated at: $certPath"
+          
+          # 将证书路径和密码设置到环境变量
+          echo "CERTIFICATE_PATH=$certPath" >> $env:GITHUB_ENV
+          echo "CERTIFICATE_PASSWORD=tauri-self-signed" >> $env:GITHUB_ENV
+          
+          # 将证书添加到受信任的根证书颁发机构（仅当前会话）
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+            [System.Security.Cryptography.X509Certificates.StoreName]::Root,
+            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+          )
+          $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+          $store.Add($cert)
+          $store.Close()
+
+      - name: Build Tauri app (with signing)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE_PATH: ${{ env.CERTIFICATE_PATH }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ env.CERTIFICATE_PASSWORD }}
+
+      - name: Build Tauri app (without signing)
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-cue-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 30
+          if-no-files-found: error
