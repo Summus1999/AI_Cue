@@ -1,0 +1,25 @@
+---
+description: Agent must read Agent.md at session start (harness engineering)
+alwaysApply: true
+---
+
+# AI_Cue Agent Harness
+
+This project follows harness engineering. At the start of every session, before responding to any user request, you MUST:
+
+1. Read `Agent.md` in the project root
+2. Read `TODO.md` to check current project progress
+
+`Agent.md` contains:
+- Project context and tech stack reference
+- Mandatory workflow (e.g. propose solution before coding)
+- Code style and communication rules
+- Document conventions
+
+Follow its instructions throughout the session. When human engineers update `Agent.md` after agent errors, subsequent sessions will inherit the improved constraints.
+
+You must NEVER modify `TODO.md`. Only human engineers may edit it.
+
+`TODO.md` progress markers (set by human engineers only):
+- ✅ = task completed
+- ❌ = task not completed
