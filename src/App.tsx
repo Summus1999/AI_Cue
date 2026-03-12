@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Minus, X, Settings } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { invoke } from "@tauri-apps/api/core";
 
 // 消息类型定义
 interface Message {
@@ -19,7 +20,7 @@ function App() {
     {
       id: generateId(),
       role: "assistant",
-      content: "你好，我是你的面试助手。输入面试官的问题，我会帮你生成回答要点。",
+      content: "你好，我是你的面试助手。输入面试官的问题，我会帮你生成回答要点。\n\n点击 🎤 按钮可以录制电脑播放的音频。",
       timestamp: Date.now(),
     },
   ]);
@@ -33,6 +34,11 @@ function App() {
   // 设置面板开关状态
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
+  // 录音状态
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  
   // 滚动引用
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +48,27 @@ function App() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // 录音状态轮询
+  useEffect(() => {
+    if (isRecording) {
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 0.1);
+      }, 100);
+    } else {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setRecordingDuration(0);
+    }
+    
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    };
+  }, [isRecording]);
 
   // 发送消息
   const handleSend = async () => {
@@ -80,16 +107,75 @@ function App() {
     }
   };
 
-  // 最小化窗口
-  const handleMinimize = () => {
-    // TODO: 调用 Tauri API 最小化窗口
-    console.log("最小化窗口");
+  // 开始/停止录音
+  const toggleRecording = async () => {
+    if (isRecording) {
+      // 停止录音
+      try {
+        const wavData: number[] = await invoke("stop_audio_recording");
+        setIsRecording(false);
+        
+        // 将 number[] 转换为 Uint8Array
+        const audioData = new Uint8Array(wavData);
+        
+        // 添加系统消息
+        setMessages(prev => [...prev, {
+          id: generateId(),
+          role: "assistant",
+          content: `🎤 录音完成！音频大小: ${(audioData.length / 1024).toFixed(1)}KB\n\n正在识别语音...`,
+          timestamp: Date.now(),
+        }]);
+        
+        // TODO: 调用语音识别 API
+        // await recognizeSpeech(audioData);
+        
+      } catch (err) {
+        console.error("停止录音失败:", err);
+        setMessages(prev => [...prev, {
+          id: generateId(),
+          role: "assistant",
+          content: "❌ 录音失败: " + String(err),
+          timestamp: Date.now(),
+        }]);
+        setIsRecording(false);
+      }
+    } else {
+      // 开始录音
+      try {
+        await invoke("start_audio_recording");
+        setIsRecording(true);
+        
+        setMessages(prev => [...prev, {
+          id: generateId(),
+          role: "assistant",
+          content: "🎤 正在聆听电脑音频...\n再次点击 🎤 停止录音",
+          timestamp: Date.now(),
+        }]);
+        
+      } catch (err) {
+        console.error("开始录音失败:", err);
+        setMessages(prev => [...prev, {
+          id: generateId(),
+          role: "assistant",
+          content: "❌ 无法开始录音: " + String(err),
+          timestamp: Date.now(),
+        }]);
+      }
+    }
   };
 
+  // 最小化窗口
+  const handleMinimize = () => {};
+
   // 关闭窗口
-  const handleClose = () => {
-    // TODO: 调用 Tauri API 关闭窗口
-    console.log("关闭窗口");
+  const handleClose = () => {};
+
+  // 格式化录音时长
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 10);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
   };
 
   return (
@@ -101,10 +187,15 @@ function App() {
       >
         {/* 左侧：窗口标题 */}
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-cyan-400/60" />
+          <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-cyan-400/60'}`} />
           <span className="text-xs font-medium text-cyan-400/80 tracking-wide">
             AI Cue
           </span>
+          {isRecording && (
+            <span className="text-xs text-red-400 font-mono ml-2">
+              ● {formatDuration(recordingDuration)}
+            </span>
+          )}
         </div>
 
         {/* 右侧：窗口控制按钮 */}
@@ -173,25 +264,43 @@ function App() {
       {/* 输入区域 */}
       <div className="p-4 bg-slate-950 border-t border-cyan-900/20">
         <div className="relative flex items-end gap-2">
+          {/* 语音输入按钮 */}
+          <button
+            onClick={toggleRecording}
+            className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-all duration-150 ${
+              isRecording
+                ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse'
+                : 'bg-slate-800/50 text-cyan-400/60 border-cyan-900/20 hover:bg-cyan-900/20 hover:text-cyan-400'
+            }`}
+            title={isRecording ? "停止录音" : "语音输入（录制电脑音频）"}
+          >
+            {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+          
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入问题，按 Enter 发送..."
+            placeholder={isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
             rows={1}
-            className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-slate-900/50 text-cyan-100 text-sm placeholder:text-cyan-600/50 rounded-xl border border-cyan-900/20 resize-none scrollbar-hide glow-focus transition-all duration-150"
+            disabled={isRecording}
+            className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-slate-900/50 text-cyan-100 text-sm placeholder:text-cyan-600/50 rounded-xl border border-cyan-900/20 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isGenerating}
+            disabled={!input.trim() || isGenerating || isRecording}
             className="flex items-center justify-center w-10 h-10 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-30 disabled:cursor-not-allowed text-cyan-400 rounded-xl border border-cyan-900/20 transition-all duration-150"
           >
             <Send className="w-4 h-4" />
           </button>
         </div>
         <div className="mt-2 text-[10px] text-cyan-600/40 text-center">
-          Shift + Enter 换行 · Enter 发送
+          {isRecording ? (
+            <span className="text-red-400/60">正在录制电脑音频... 点击 🎤 停止</span>
+          ) : (
+            "Shift + Enter 换行 · Enter 发送 · 🎤 录制电脑音频"
+          )}
         </div>
       </div>
 
