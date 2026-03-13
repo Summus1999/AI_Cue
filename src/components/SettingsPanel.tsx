@@ -65,22 +65,22 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="flex flex-col w-full h-full bg-slate-950 text-cyan-400 overflow-hidden rounded-2xl">
+    <div className="flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       {/* 标题栏 - 支持拖拽 */}
       <div
         data-tauri-drag-region
-        className="flex-shrink-0 flex items-center justify-between h-10 px-4 bg-slate-950/80 border-b border-cyan-900/20 select-none"
+        className="flex-shrink-0 flex items-center justify-between h-10 px-4 bg-amber-100/80 border-b border-amber-200 select-none"
       >
         {/* 返回按钮 + 标题 */}
         <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors"
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors"
             title="返回"
           >
-            <ArrowLeft className="w-4 h-4 text-cyan-400/60" />
+            <ArrowLeft className="w-4 h-4 text-amber-700" />
           </button>
-          <span className="text-xs font-medium text-cyan-400/80 tracking-wide">设置</span>
+          <span className="text-xs font-medium text-amber-800 tracking-wide">设置</span>
         </div>
       </div>
 
@@ -88,14 +88,14 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-amber-400 border-t-amber-700 rounded-full animate-spin" />
           </div>
         ) : (
           <>
             {/* API Key 设置（必填） */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
-                API Key <span className="text-red-400">*</span>
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                API Key <span className="text-red-500">*</span>
               </label>
               <input
                 type="password"
@@ -105,34 +105,34 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   if (errorMessage) setErrorMessage('');
                 }}
                 placeholder="输入阿里云 DashScope API Key"
-                className={`w-full px-3 py-2.5 bg-slate-800/50 border rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30 transition-colors ${
+                className={`w-full px-3 py-2.5 bg-white/80 border rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 transition-colors ${
                   saveStatus === 'error' && !config.apiKey 
-                    ? 'border-red-500/50' 
-                    : 'border-cyan-900/20'
+                    ? 'border-red-400' 
+                    : 'border-amber-300'
                 }`}
               />
-              <p className="text-[10px] text-cyan-400/40">
+              <p className="text-[10px] text-amber-600">
                 必填，请从阿里云 DashScope 控制台获取
               </p>
             </div>
 
             {/* 模型版本选择 */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
-                千问模型 <span className="text-red-400">*</span>
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                千问模型 <span className="text-red-500">*</span>
               </label>
               <div className="relative">
                 <button
                   onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 hover:border-amber-400 transition-colors"
                 >
                   <span>{selectedModel?.name || config.model}</span>
-                  <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
                 
                 {/* Model 下拉菜单 */}
                 {isModelDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
+                  <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-white border border-amber-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
                     {QWEN_MODELS.map((model) => (
                       <button
                         key={model.id}
@@ -142,11 +142,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                         }}
                         className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-2 ${
                           config.model === model.id 
-                            ? 'bg-cyan-900/20 text-cyan-100' 
-                            : 'text-cyan-100/80 hover:bg-slate-700/50'
+                            ? 'bg-amber-100 text-amber-900' 
+                            : 'text-amber-800 hover:bg-amber-50'
                         }`}
                       >
-                        {config.model === model.id && <Check className="w-4 h-4 text-cyan-400" />}
+                        {config.model === model.id && <Check className="w-4 h-4 text-amber-600" />}
                         <span className={config.model === model.id ? '' : 'pl-6'}>{model.name}</span>
                       </button>
                     ))}
@@ -156,18 +156,18 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               
               {/* 模型描述 */}
               {selectedModel && (
-                <p className="text-xs text-cyan-400/50 leading-relaxed">
+                <p className="text-xs text-amber-600 leading-relaxed">
                   {selectedModel.description}
                 </p>
               )}
             </div>
 
             {/* 分隔线 */}
-            <div className="border-t border-cyan-900/20" />
+            <div className="border-t border-amber-200" />
 
             {/* Prompt 设置 */}
             <div className="space-y-3">
-              <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
                 Prompt 设置
               </label>
               
@@ -175,15 +175,15 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               <div className="relative">
                 <button
                   onClick={() => setIsPromptDropdownOpen(!isPromptDropdownOpen)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 hover:border-amber-400 transition-colors"
                 >
                   <span>{PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.name || '通用面试助手'}</span>
-                  <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isPromptDropdownOpen ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isPromptDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
                 
                 {/* Prompt 模板下拉菜单 */}
                 {isPromptDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
+                  <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-white border border-amber-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
                     {PROMPT_TEMPLATES.map((template) => (
                       <button
                         key={template.id}
@@ -193,11 +193,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                         }}
                         className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-2 ${
                           config.promptTemplateId === template.id 
-                            ? 'bg-cyan-900/20 text-cyan-100' 
-                            : 'text-cyan-100/80 hover:bg-slate-700/50'
+                            ? 'bg-amber-100 text-amber-900' 
+                            : 'text-amber-800 hover:bg-amber-50'
                         }`}
                       >
-                        {config.promptTemplateId === template.id && <Check className="w-4 h-4 text-cyan-400" />}
+                        {config.promptTemplateId === template.id && <Check className="w-4 h-4 text-amber-600" />}
                         <span className={config.promptTemplateId === template.id ? '' : 'pl-6'}>{template.name}</span>
                       </button>
                     ))}
@@ -207,7 +207,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               
               {/* 模板描述 */}
               {config.promptTemplateId !== 'custom' && (
-                <p className="text-xs text-cyan-400/50 leading-relaxed">
+                <p className="text-xs text-amber-600 leading-relaxed">
                   {PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.description}
                 </p>
               )}
@@ -220,9 +220,9 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     onChange={(e) => setConfig(prev => ({ ...prev, customPrompt: e.target.value }))}
                     placeholder="描述你希望AI如何帮助你回答面试问题..."
                     rows={6}
-                    className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30 transition-colors resize-none"
+                    className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 transition-colors resize-none"
                   />
-                  <p className="text-[10px] text-cyan-400/40">
+                  <p className="text-[10px] text-amber-600">
                     自定义提示词帮助AI更好地理解你的面试场景和需求
                   </p>
                 </div>
@@ -231,7 +231,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
             {/* NLS 语音识别配置 */}
             <div className="space-y-3">
-              <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
                 语音识别（NLS）
               </label>
               <div className="space-y-2">
@@ -240,33 +240,33 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   value={config.nlsAppKey}
                   onChange={(e) => setConfig(prev => ({ ...prev, nlsAppKey: e.target.value }))}
                   placeholder="Appkey"
-                  className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
                 />
                 <input
                   type="text"
                   value={config.nlsAccessKeyId}
                   onChange={(e) => setConfig(prev => ({ ...prev, nlsAccessKeyId: e.target.value }))}
                   placeholder="AccessKey ID"
-                  className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
                 />
                 <input
                   type="password"
                   value={config.nlsAccessKeySecret}
                   onChange={(e) => setConfig(prev => ({ ...prev, nlsAccessKeySecret: e.target.value }))}
                   placeholder="AccessKey Secret"
-                  className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
                 />
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setIsNlsRegionDropdownOpen(!isNlsRegionDropdownOpen)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30"
+                    className="w-full flex items-center justify-between px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 hover:border-amber-400"
                   >
                     <span>{NLS_REGIONS.find(r => r.id === config.nlsRegion)?.name || config.nlsRegion}</span>
-                    <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isNlsRegionDropdownOpen ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isNlsRegionDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   {isNlsRegionDropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10">
+                    <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-white border border-amber-200 rounded-lg shadow-lg z-10">
                       {NLS_REGIONS.map((r) => (
                         <button
                           key={r.id}
@@ -276,10 +276,10 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                             setIsNlsRegionDropdownOpen(false);
                           }}
                           className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 ${
-                            config.nlsRegion === r.id ? 'bg-cyan-900/20 text-cyan-100' : 'text-cyan-100/80 hover:bg-slate-700/50'
+                            config.nlsRegion === r.id ? 'bg-amber-100 text-amber-900' : 'text-amber-800 hover:bg-amber-50'
                           }`}
                         >
-                          {config.nlsRegion === r.id && <Check className="w-4 h-4 text-cyan-400" />}
+                          {config.nlsRegion === r.id && <Check className="w-4 h-4 text-amber-600" />}
                           <span className={config.nlsRegion === r.id ? '' : 'pl-6'}>{r.name}</span>
                         </button>
                       ))}
@@ -287,17 +287,17 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   )}
                 </div>
               </div>
-              <p className="text-[10px] text-cyan-400/40">
+              <p className="text-[10px] text-amber-600">
                 智能语音交互控制台获取 Appkey，RAM 获取 AccessKey
               </p>
             </div>
 
             {/* 分隔线 */}
-            <div className="border-t border-cyan-900/20" />
+            <div className="border-t border-amber-200" />
 
             {/* 语音识别阈值设置 */}
             <div className="space-y-3">
-              <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
                 语音识别阈值
               </label>
               
@@ -320,7 +320,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               
               {/* 数值显示和场景标签 */}
               <div className="flex items-center justify-between">
-                <span className="text-sm text-cyan-100 font-mono">
+                <span className="text-sm text-amber-900 font-mono">
                   {config.speechThreshold}%
                 </span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -335,7 +335,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               </div>
               
               {/* 说明文字 */}
-              <p className="text-xs text-cyan-400/50 leading-relaxed">
+              <p className="text-xs text-amber-600 leading-relaxed">
                 {config.speechThreshold <= 30 
                   ? '低阈值：容易触发识别，适合安静环境' 
                   : config.speechThreshold <= 60 
@@ -353,7 +353,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             )}
             
             {/* 调试信息 */}
-            <div className="text-[10px] text-cyan-600/30 pt-4">
+            <div className="text-[10px] text-amber-500 pt-4">
               提示: 按 F12 打开控制台查看详细日志
             </div>
           </>
@@ -361,21 +361,21 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       </div>
 
       {/* 底部保存按钮 */}
-      <div className="flex-shrink-0 p-4 border-t border-cyan-900/20 bg-slate-950/95">
+      <div className="flex-shrink-0 p-4 border-t border-amber-200 bg-amber-100/50">
         <button
           onClick={handleSave}
           disabled={saveStatus === 'saving'}
           className={`w-full py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
             saveStatus === 'saved'
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              ? 'bg-green-100 text-green-700 border border-green-300'
               : saveStatus === 'error'
-              ? 'bg-red-500/10 text-red-400 border border-red-500/30'
-              : 'bg-cyan-500/10 text-cyan-400 border border-cyan-900/30 hover:bg-cyan-500/20'
+              ? 'bg-red-100 text-red-600 border border-red-300'
+              : 'bg-amber-600 text-white border border-amber-700 hover:bg-amber-700'
           }`}
         >
           {saveStatus === 'saving' ? (
             <span className="flex items-center justify-center gap-2">
-              <div className="w-4 h-4 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin" />
               保存中...
             </span>
           ) : saveStatus === 'saved' ? (

@@ -260,16 +260,16 @@ function App() {
   };
 
   return (
-    <div className="relative flex flex-col w-full h-full bg-slate-950 text-cyan-400 overflow-hidden rounded-2xl">
+    <div className="relative flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       {/* 自定义标题栏 - 支持拖拽 */}
       <div
         data-tauri-drag-region
-        className="flex items-center justify-between h-10 px-4 bg-slate-950/80 border-b border-cyan-900/20 select-none"
+        className="flex items-center justify-between h-10 px-4 bg-amber-100/80 border-b border-amber-200 select-none"
       >
         {/* 左侧：窗口标题 */}
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-cyan-400/60'}`} />
-          <span className="text-xs font-medium text-cyan-400/80 tracking-wide">
+          <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-amber-600/60'}`} />
+          <span className="text-xs font-medium text-amber-800 tracking-wide">
             AI Cue
           </span>
           {isRecording && (
@@ -284,24 +284,24 @@ function App() {
           {/* 设置按钮 */}
           <button
             onClick={() => setCurrentView('settings')}
-            className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors duration-150"
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
             title="设置"
           >
-            <Settings className="w-3.5 h-3.5 text-cyan-400/60" />
+            <Settings className="w-3.5 h-3.5 text-amber-700" />
           </button>
           <button
             onClick={handleMinimize}
-            className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors duration-150"
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
             title="最小化"
           >
-            <Minus className="w-3 h-3 text-cyan-400/60" />
+            <Minus className="w-3 h-3 text-amber-700" />
           </button>
           <button
             onClick={handleClose}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-red-900/30 transition-colors duration-150"
             title="关闭"
           >
-            <X className="w-3 h-3 text-cyan-400/60 hover:text-red-400" />
+            <X className="w-3 h-3 text-amber-700 hover:text-red-500" />
           </button>
         </div>
       </div>
@@ -321,8 +321,8 @@ function App() {
             <div
               className={`max-w-[90%] px-4 py-2.5 text-sm leading-relaxed ${
                 message.role === "user"
-                  ? "bg-cyan-900/30 text-cyan-300 rounded-2xl rounded-br-md"
-                  : "bg-slate-900/60 text-cyan-100/90 rounded-2xl rounded-bl-md"
+                  ? "bg-amber-200/60 text-amber-900 rounded-2xl rounded-br-md"
+                  : "bg-amber-800 text-amber-50 rounded-2xl rounded-bl-md"
               }`}
             >
               {message.content}
@@ -333,25 +333,25 @@ function App() {
         {/* 生成中指示器 */}
         {isGenerating && (
           <div className="message-enter flex justify-start">
-            <div className="flex items-center gap-1 px-4 py-2.5 bg-slate-900/60 rounded-2xl rounded-bl-md">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: "0ms" }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: "150ms" }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: "300ms" }} />
+            <div className="flex items-center gap-1 px-4 py-2.5 bg-amber-800 rounded-2xl rounded-bl-md">
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "0ms" }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "150ms" }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "300ms" }} />
             </div>
           </div>
         )}
       </div>
 
       {/* 输入区域 */}
-      <div className="p-4 bg-slate-950 border-t border-cyan-900/20">
+      <div className="p-4 bg-amber-100/50 border-t border-amber-200">
         <div className="relative flex items-end gap-2">
           {/* 语音输入按钮 */}
           <button
             onClick={toggleRecording}
             className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-all duration-150 ${
               isRecording
-                ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse'
-                : 'bg-slate-800/50 text-cyan-400/60 border-cyan-900/20 hover:bg-cyan-900/20 hover:text-cyan-400'
+                ? 'bg-red-100 text-red-500 border-red-300 animate-pulse'
+                : 'bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200 hover:text-amber-800'
             }`}
             title={isRecording ? "停止录音" : "语音输入（录制电脑音频）"}
           >
@@ -365,18 +365,18 @@ function App() {
             placeholder={isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
             rows={1}
             disabled={isRecording}
-            className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-slate-900/50 text-cyan-100 text-sm placeholder:text-cyan-600/50 rounded-xl border border-cyan-900/20 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
+            className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-white/80 text-amber-900 text-sm placeholder:text-amber-400 rounded-xl border border-amber-300 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isGenerating || isRecording}
-            className="flex items-center justify-center w-10 h-10 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-30 disabled:cursor-not-allowed text-cyan-400 rounded-xl border border-cyan-900/20 transition-all duration-150"
+            className="flex items-center justify-center w-10 h-10 bg-amber-600 hover:bg-amber-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl border border-amber-700 transition-all duration-150"
           >
             <Send className="w-4 h-4" />
           </button>
         </div>
-        <div className="mt-2 text-[10px] text-cyan-600/40 text-center">
+        <div className="mt-2 text-[10px] text-amber-600 text-center">
           {isRecording ? (
             <span className="text-red-400/60">正在录制电脑音频... 点击 🎤 停止</span>
           ) : (
