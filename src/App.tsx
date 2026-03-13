@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { Send, Minus, X, Settings, Mic, Square } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { invoke } from "@tauri-apps/api/core";
+import { recognizeSpeech } from "./services/speechRecognition";
+import { loadConfig } from "./store/config";
 
 // 消息类型定义
 interface Message {
@@ -125,9 +127,34 @@ function App() {
           content: `🎤 录音完成！音频大小: ${(audioData.length / 1024).toFixed(1)}KB\n\n正在识别语音...`,
           timestamp: Date.now(),
         }]);
-        
-        // TODO: 调用语音识别 API
-        // await recognizeSpeech(audioData);
+
+        try {
+          const config = await loadConfig();
+          const text = await recognizeSpeech(audioData, config);
+          if (text.trim()) {
+            setInput(prev => (prev ? `${prev} ${text}` : text));
+            setMessages(prev => prev.slice(0, -1).concat([{
+              id: generateId(),
+              role: "assistant",
+              content: `✅ 识别结果: ${text}`,
+              timestamp: Date.now(),
+            }]));
+          } else {
+            setMessages(prev => prev.slice(0, -1).concat([{
+              id: generateId(),
+              role: "assistant",
+              content: "未识别到有效语音，请重试",
+              timestamp: Date.now(),
+            }]));
+          }
+        } catch (err) {
+          setMessages(prev => prev.slice(0, -1).concat([{
+            id: generateId(),
+            role: "assistant",
+            content: "❌ 语音识别失败: " + String(err),
+            timestamp: Date.now(),
+          }]));
+        }
         
       } catch (err) {
         console.error("停止录音失败:", err);

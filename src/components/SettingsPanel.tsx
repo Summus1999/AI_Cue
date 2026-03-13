@@ -1,7 +1,7 @@
 // 设置面板组件 - 侧边滑出式设计
 import { useState, useEffect } from 'react';
 import { X, ChevronDown, Check, AlertCircle } from 'lucide-react';
-import { loadConfig, saveConfig, QWEN_MODELS, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
+import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   
   // 下拉框展开状态
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [isNlsRegionDropdownOpen, setIsNlsRegionDropdownOpen] = useState(false);
 
   // 面板打开时加载配置
   useEffect(() => {
@@ -72,13 +73,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       
       {/* 滑出面板 */}
       <div 
-        className="relative h-full w-[280px] bg-slate-900/95 backdrop-blur-md border-l border-cyan-900/30 shadow-2xl"
+        className="relative flex flex-col h-full w-[280px] bg-slate-900/95 backdrop-blur-md border-l border-cyan-900/30 shadow-2xl"
         style={{
           animation: 'slideIn 200ms ease-out forwards'
         }}
       >
         {/* 面板标题栏 */}
-        <div className="flex items-center justify-between h-10 px-4 border-b border-cyan-900/20">
+        <div className="flex-shrink-0 flex items-center justify-between h-10 px-4 border-b border-cyan-900/20">
           <span className="text-sm font-medium text-cyan-100">设置</span>
           <button
             onClick={onClose}
@@ -88,8 +89,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </button>
         </div>
 
-        {/* 设置内容 */}
-        <div className="p-4 space-y-6">
+        {/* 设置内容 - 可滚动 */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
@@ -169,6 +170,72 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               {/* 分隔线 */}
               <div className="border-t border-cyan-900/20" />
 
+              {/* NLS 语音识别配置 */}
+              <div className="space-y-3">
+                <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+                  语音识别（NLS）
+                </label>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={config.nlsAppKey}
+                    onChange={(e) => setConfig(prev => ({ ...prev, nlsAppKey: e.target.value }))}
+                    placeholder="Appkey"
+                    className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  />
+                  <input
+                    type="text"
+                    value={config.nlsAccessKeyId}
+                    onChange={(e) => setConfig(prev => ({ ...prev, nlsAccessKeyId: e.target.value }))}
+                    placeholder="AccessKey ID"
+                    className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  />
+                  <input
+                    type="password"
+                    value={config.nlsAccessKeySecret}
+                    onChange={(e) => setConfig(prev => ({ ...prev, nlsAccessKeySecret: e.target.value }))}
+                    placeholder="AccessKey Secret"
+                    className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30"
+                  />
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsNlsRegionDropdownOpen(!isNlsRegionDropdownOpen)}
+                      className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30"
+                    >
+                      <span>{NLS_REGIONS.find(r => r.id === config.nlsRegion)?.name || config.nlsRegion}</span>
+                      <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isNlsRegionDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isNlsRegionDropdownOpen && (
+                      <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10">
+                        {NLS_REGIONS.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => {
+                              setConfig(prev => ({ ...prev, nlsRegion: r.id }));
+                              setIsNlsRegionDropdownOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 ${
+                              config.nlsRegion === r.id ? 'bg-cyan-900/20 text-cyan-100' : 'text-cyan-100/80 hover:bg-slate-700/50'
+                            }`}
+                          >
+                            {config.nlsRegion === r.id && <Check className="w-4 h-4 text-cyan-400" />}
+                            <span className={config.nlsRegion === r.id ? '' : 'pl-6'}>{r.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[10px] text-cyan-400/40">
+                  智能语音交互控制台获取 Appkey，RAM 获取 AccessKey
+                </p>
+              </div>
+
+              {/* 分隔线 */}
+              <div className="border-t border-cyan-900/20" />
+
               {/* 语音识别阈值设置 */}
               <div className="space-y-3">
                 <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
@@ -235,7 +302,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         </div>
 
         {/* 底部保存按钮 */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-cyan-900/20 bg-slate-900/95 backdrop-blur-md">
+        <div className="flex-shrink-0 p-4 border-t border-cyan-900/20 bg-slate-900/95 backdrop-blur-md">
           <button
             onClick={handleSave}
             disabled={saveStatus === 'saving'}

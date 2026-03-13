@@ -9,12 +9,24 @@ export const QWEN_MODELS = [
   { id: 'qwen-coder-plus', name: 'qwen-coder-plus', description: '专门针对编程优化' },
 ] as const;
 
+// NLS region options for speech recognition
+export const NLS_REGIONS = [
+  { id: 'cn-shanghai', name: '华东2（上海）' },
+  { id: 'cn-beijing', name: '华北2（北京）' },
+  { id: 'cn-shenzhen', name: '华南1（深圳）' },
+] as const;
+
 // 配置类型定义
 export interface AppConfig {
   provider: 'qwen';
   model: string;
-  apiKey: string;  // 必填
+  apiKey: string;  // DashScope API Key
   speechThreshold: number;  // 语音识别阈值，范围 0-100
+  // NLS speech recognition (optional, for voice input)
+  nlsAppKey: string;
+  nlsAccessKeyId: string;
+  nlsAccessKeySecret: string;
+  nlsRegion: string;
 }
 
 // 默认配置
@@ -22,7 +34,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   provider: 'qwen',
   model: 'qwen-turbo',
   apiKey: '',
-  speechThreshold: 30,  // 默认阈值 30%
+  speechThreshold: 30,
+  nlsAppKey: '',
+  nlsAccessKeyId: '',
+  nlsAccessKeySecret: '',
+  nlsRegion: 'cn-shanghai',
 };
 
 // Store 实例（延迟初始化）
@@ -59,6 +75,10 @@ function loadFromLocalStorage(): AppConfig {
         model: parsed.model || DEFAULT_CONFIG.model,
         apiKey: parsed.apiKey || '',
         speechThreshold: parsed.speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
+        nlsAppKey: parsed.nlsAppKey || '',
+        nlsAccessKeyId: parsed.nlsAccessKeyId || '',
+        nlsAccessKeySecret: parsed.nlsAccessKeySecret || '',
+        nlsRegion: parsed.nlsRegion || DEFAULT_CONFIG.nlsRegion,
       };
     }
   } catch (err) {
@@ -93,11 +113,20 @@ export async function loadConfig(): Promise<AppConfig> {
     const speechThreshold = await store.get<number>('speechThreshold');
     console.log('Store 数据:', { model, hasApiKey: !!apiKey, speechThreshold });
     
+    const nlsAppKey = await store.get<string>('nlsAppKey');
+    const nlsAccessKeyId = await store.get<string>('nlsAccessKeyId');
+    const nlsAccessKeySecret = await store.get<string>('nlsAccessKeySecret');
+    const nlsRegion = await store.get<string>('nlsRegion');
+
     return {
       provider: 'qwen',
       model: model || DEFAULT_CONFIG.model,
       apiKey: apiKey || '',
       speechThreshold: speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
+      nlsAppKey: nlsAppKey || '',
+      nlsAccessKeyId: nlsAccessKeyId || '',
+      nlsAccessKeySecret: nlsAccessKeySecret || '',
+      nlsRegion: nlsRegion || DEFAULT_CONFIG.nlsRegion,
     };
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);
@@ -120,6 +149,10 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('model', config.model);
     await store.set('apiKey', config.apiKey);
     await store.set('speechThreshold', config.speechThreshold);
+    await store.set('nlsAppKey', config.nlsAppKey);
+    await store.set('nlsAccessKeyId', config.nlsAccessKeyId);
+    await store.set('nlsAccessKeySecret', config.nlsAccessKeySecret);
+    await store.set('nlsRegion', config.nlsRegion);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {
@@ -133,6 +166,20 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 export function validateConfig(config: AppConfig): { valid: boolean; message?: string } {
   if (!config.apiKey || config.apiKey.trim() === '') {
     return { valid: false, message: '请输入阿里云 DashScope API Key' };
+  }
+  return { valid: true };
+}
+
+// 验证 NLS 配置是否完整（语音识别可选）
+export function validateNlsConfig(config: AppConfig): { valid: boolean; message?: string } {
+  if (!config.nlsAppKey?.trim()) {
+    return { valid: false, message: '请输入 NLS Appkey' };
+  }
+  if (!config.nlsAccessKeyId?.trim()) {
+    return { valid: false, message: '请输入 AccessKey ID' };
+  }
+  if (!config.nlsAccessKeySecret?.trim()) {
+    return { valid: false, message: '请输入 AccessKey Secret' };
   }
   return { valid: true };
 }
