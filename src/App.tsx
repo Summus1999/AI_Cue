@@ -53,8 +53,8 @@ function App() {
   // 是否正在生成回复
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 设置面板开关状态
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // 当前视图：主界面 | 设置页面
+  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main');
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -283,7 +283,7 @@ function App() {
         <div className="flex items-center gap-1">
           {/* 设置按钮 */}
           <button
-            onClick={() => setIsSettingsOpen(true)}
+            onClick={() => setCurrentView('settings')}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-cyan-900/20 transition-colors duration-150"
             title="设置"
           >
@@ -385,11 +385,15 @@ function App() {
         </div>
       </div>
 
-      {/* 设置面板 */}
-      <SettingsPanel 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
-      />
+      {/* 设置页面 - 全页面覆盖 */}
+      {currentView === 'settings' && (
+        <div className="absolute inset-0 z-50">
+          <SettingsPanel
+            isOpen={true}
+            onClose={() => setCurrentView('main')}
+          />
+        </div>
+      )}
     </div>
   );
 }
