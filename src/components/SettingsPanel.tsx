@@ -166,6 +166,58 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 )}
               </div>
 
+              {/* 分隔线 */}
+              <div className="border-t border-cyan-900/20" />
+
+              {/* 语音识别阈值设置 */}
+              <div className="space-y-3">
+                <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+                  语音识别阈值
+                </label>
+                
+                {/* 滑块控件 */}
+                <div 
+                  className="px-1"
+                  style={{ '--threshold-percent': `${config.speechThreshold}%` } as React.CSSProperties}
+                >
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={config.speechThreshold}
+                    onChange={(e) => {
+                      setConfig(prev => ({ ...prev, speechThreshold: parseInt(e.target.value, 10) }));
+                    }}
+                    className="threshold-slider"
+                  />
+                </div>
+                
+                {/* 数值显示和场景标签 */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-cyan-100 font-mono">
+                    {config.speechThreshold}%
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    config.speechThreshold <= 30 
+                      ? 'bg-green-500/10 text-green-400' 
+                      : config.speechThreshold <= 60 
+                        ? 'bg-yellow-500/10 text-yellow-400' 
+                        : 'bg-red-500/10 text-red-400'
+                  }`}>
+                    {config.speechThreshold <= 30 ? '低' : config.speechThreshold <= 60 ? '中' : '高'}
+                  </span>
+                </div>
+                
+                {/* 说明文字 */}
+                <p className="text-xs text-cyan-400/50 leading-relaxed">
+                  {config.speechThreshold <= 30 
+                    ? '低阈值：容易触发识别，适合安静环境' 
+                    : config.speechThreshold <= 60 
+                      ? '中阈值：平衡灵敏度与准确性，推荐' 
+                      : '高阈值：需较大音量触发，适合嘈杂环境'}
+                </p>
+              </div>
+
               {/* 错误提示 */}
               {saveStatus === 'error' && errorMessage && (
                 <div className="flex items-start gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">

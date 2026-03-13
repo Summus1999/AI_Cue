@@ -14,6 +14,7 @@ export interface AppConfig {
   provider: 'qwen';
   model: string;
   apiKey: string;  // 必填
+  speechThreshold: number;  // 语音识别阈值，范围 0-100
 }
 
 // 默认配置
@@ -21,6 +22,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   provider: 'qwen',
   model: 'qwen-turbo',
   apiKey: '',
+  speechThreshold: 30,  // 默认阈值 30%
 };
 
 // Store 实例（延迟初始化）
@@ -56,6 +58,7 @@ function loadFromLocalStorage(): AppConfig {
         provider: 'qwen',
         model: parsed.model || DEFAULT_CONFIG.model,
         apiKey: parsed.apiKey || '',
+        speechThreshold: parsed.speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
       };
     }
   } catch (err) {
@@ -87,12 +90,14 @@ export async function loadConfig(): Promise<AppConfig> {
     console.log('从 Tauri Store 加载配置...');
     const model = await store.get<string>('model');
     const apiKey = await store.get<string>('apiKey');
-    console.log('Store 数据:', { model, hasApiKey: !!apiKey });
+    const speechThreshold = await store.get<number>('speechThreshold');
+    console.log('Store 数据:', { model, hasApiKey: !!apiKey, speechThreshold });
     
     return {
       provider: 'qwen',
       model: model || DEFAULT_CONFIG.model,
       apiKey: apiKey || '',
+      speechThreshold: speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
     };
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);
@@ -114,6 +119,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('provider', config.provider);
     await store.set('model', config.model);
     await store.set('apiKey', config.apiKey);
+    await store.set('speechThreshold', config.speechThreshold);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {
