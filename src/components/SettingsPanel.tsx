@@ -1,7 +1,7 @@
 // 设置面板组件 - 侧边滑出式设计
 import { useState, useEffect } from 'react';
 import { X, ChevronDown, Check, AlertCircle } from 'lucide-react';
-import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
+import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -18,6 +18,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   // 下拉框展开状态
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isNlsRegionDropdownOpen, setIsNlsRegionDropdownOpen] = useState(false);
+  const [isPromptDropdownOpen, setIsPromptDropdownOpen] = useState(false);
 
   // 面板打开时加载配置
   useEffect(() => {
@@ -169,6 +170,70 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
               {/* 分隔线 */}
               <div className="border-t border-cyan-900/20" />
+
+              {/* Prompt 设置 */}
+              <div className="space-y-3">
+                <label className="text-xs font-medium text-cyan-400/70 uppercase tracking-wider">
+                  Prompt 设置
+                </label>
+                
+                {/* 模板选择下拉框 */}
+                <div className="relative">
+                  <button
+                    onClick={() => setIsPromptDropdownOpen(!isPromptDropdownOpen)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 hover:border-cyan-700/30 transition-colors"
+                  >
+                    <span>{PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.name || '通用面试助手'}</span>
+                    <ChevronDown className={`w-4 h-4 text-cyan-400/50 transition-transform ${isPromptDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {/* Prompt 模板下拉菜单 */}
+                  {isPromptDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-slate-800 border border-cyan-900/20 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
+                      {PROMPT_TEMPLATES.map((template) => (
+                        <button
+                          key={template.id}
+                          onClick={() => {
+                            setConfig(prev => ({ ...prev, promptTemplateId: template.id }));
+                            setIsPromptDropdownOpen(false);
+                          }}
+                          className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-2 ${
+                            config.promptTemplateId === template.id 
+                              ? 'bg-cyan-900/20 text-cyan-100' 
+                              : 'text-cyan-100/80 hover:bg-slate-700/50'
+                          }`}
+                        >
+                          {config.promptTemplateId === template.id && <Check className="w-4 h-4 text-cyan-400" />}
+                          <span className={config.promptTemplateId === template.id ? '' : 'pl-6'}>{template.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                {/* 模板描述 */}
+                {config.promptTemplateId !== 'custom' && (
+                  <p className="text-xs text-cyan-400/50 leading-relaxed">
+                    {PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.description}
+                  </p>
+                )}
+                
+                {/* 自定义 Prompt 输入框 */}
+                {config.promptTemplateId === 'custom' && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={config.customPrompt}
+                      onChange={(e) => setConfig(prev => ({ ...prev, customPrompt: e.target.value }))}
+                      placeholder="描述你希望AI如何帮助你回答面试问题...\n\n例如：\n- 你的专业领域\n- 期望的回答风格\n- 特殊的面试场景"
+                      rows={6}
+                      className="w-full px-3 py-2.5 bg-slate-800/50 border border-cyan-900/20 rounded-lg text-sm text-cyan-100 placeholder:text-cyan-600/40 focus:outline-none focus:border-cyan-500/30 transition-colors resize-none"
+                    />
+                    <p className="text-[10px] text-cyan-400/40">
+                      自定义提示词帮助AI更好地理解你的面试场景和需求
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {/* NLS 语音识别配置 */}
               <div className="space-y-3">

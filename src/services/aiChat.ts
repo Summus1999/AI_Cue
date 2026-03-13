@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { AppConfig } from '../store/config';
+import { PROMPT_TEMPLATES } from '../store/config';
 
 /** 聊天消息结构 */
 export interface ChatMessage {
@@ -12,15 +13,24 @@ export interface ChatMessage {
   content: string;
 }
 
-/** 面试助手系统提示词 */
-const SYSTEM_PROMPT = `你是一个专业的面试助手。用户会向你提供面试官的问题，你需要：
-1. 理解问题的核心考察点
-2. 给出清晰、有条理的回答要点
-3. 回答应简洁有力，突出重点
-4. 如果是技术问题，给出准确的技术解答
-5. 如果是行为面试问题，使用 STAR 法则组织回答
-
-请用中文回答，保持专业但友好的语气。`;
+/**
+ * 获取系统提示词
+ * 根据配置返回预设模板或自定义 prompt
+ */
+function getSystemPrompt(config: AppConfig): string {
+  // 如果是自定义模式，使用用户输入的 prompt
+  if (config.promptTemplateId === 'custom') {
+    // 如果自定义 prompt 为空，回退到默认模板
+    if (config.customPrompt?.trim()) {
+      return config.customPrompt;
+    }
+    return PROMPT_TEMPLATES[0].prompt;
+  }
+  
+  // 查找对应的预设模板
+  const template = PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId);
+  return template?.prompt || PROMPT_TEMPLATES[0].prompt;
+}
 
 /**
  * 发送消息给千问 AI 并获取回答
@@ -39,9 +49,12 @@ export async function sendToQwen(
     throw new Error('请先在设置中配置 DashScope API Key');
   }
 
+  // 获取系统提示词
+  const systemPrompt = getSystemPrompt(config);
+
   // 构建消息列表
   const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     ...history,
     { role: 'user', content: question }
   ];

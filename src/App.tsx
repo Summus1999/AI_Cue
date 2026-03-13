@@ -17,6 +17,25 @@ interface Message {
 // 生成唯一 ID
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
+// 获取语音识别错误的友好提示
+function getSpeechErrorMessage(error: unknown): string {
+  const errStr = String(error);
+  // 没有录到有效音频
+  if (errStr.includes("NO_VALID_AUDIO_ERROR") || errStr.includes("NO_VALID_AUDIO")) {
+    return "抱歉，我没有听清楚，请再试一次";
+  }
+  // 音频太短
+  if (errStr.includes("AUDIO_TOO_SHORT") || errStr.includes("TOO_SHORT")) {
+    return "录音时间太短了，请多说一些";
+  }
+  // 音频质量问题
+  if (errStr.includes("AUDIO_QUALITY") || errStr.includes("QUALITY")) {
+    return "音频质量不太好，请调整麦克风或环境后重试";
+  }
+  // 默认错误
+  return "语音识别出现问题，请检查麦克风后重试";
+}
+
 function App() {
   // 消息列表状态
   const [messages, setMessages] = useState<Message[]>([
@@ -186,7 +205,7 @@ function App() {
           setMessages(prev => prev.slice(0, -1).concat([{
             id: generateId(),
             role: "assistant",
-            content: "❌ 语音识别失败: " + String(err),
+            content: getSpeechErrorMessage(err),
             timestamp: Date.now(),
           }]));
         }
