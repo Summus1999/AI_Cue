@@ -36,56 +36,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli
-
-      - name: Generate self-signed certificate
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          $cert = New-SelfSignedCertificate `
-            -Subject "CN=AI Cue, O=AI Cue, C=CN" `
-            -Type CodeSigning `
-            -CertStoreLocation Cert:\CurrentUser\My `
-            -NotAfter (Get-Date).AddYears(1)
-          
-          $certPath = "$env:TEMP\ai-cue-cert.pfx"
-          $password = ConvertTo-SecureString -String "tauri-self-signed" -Force -AsPlainText
-          
-          Export-PfxCertificate `
-            -Cert $cert `
-            -FilePath $certPath `
-            -Password $password
-          
-          Write-Host "Certificate generated at: $certPath"
-          
-          # 将证书路径和密码设置到环境变量
-          echo "CERTIFICATE_PATH=$certPath" >> $env:GITHUB_ENV
-          echo "CERTIFICATE_PASSWORD=tauri-self-signed" >> $env:GITHUB_ENV
-          
-          # 将证书添加到受信任的根证书颁发机构（仅当前会话）
-          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
-            [System.Security.Cryptography.X509Certificates.StoreName]::Root,
-            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-          )
-          $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-          $store.Add($cert)
-          $store.Close()
-
-      - name: Build Tauri app (with signing)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: npm run tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          WINDOWS_CERTIFICATE_PATH: ${{ env.CERTIFICATE_PATH }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ env.CERTIFICATE_PASSWORD }}
-
-      - name: Build Tauri app (without signing)
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-        run: npm run tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Keep CI unsigned for internal builds. When a real Windows certificate is
+      # available, import the PFX before this step and remove --no-sign.
+      - name: Build unsigned Tauri MSI
+        run: npm run tauri -- build --no-sign
 
       - name: Upload MSI installer
         uses: actions/upload-artifact@v4
