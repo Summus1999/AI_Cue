@@ -3,6 +3,7 @@
 mod audio;
 mod commands;
 mod nls;
+mod qwen;
 
 pub fn run() {
     tauri::Builder::default()
@@ -11,6 +12,7 @@ pub fn run() {
             commands::start_audio_recording,
             commands::stop_audio_recording,
             commands::nls_recognize_speech,
+            commands::qwen_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

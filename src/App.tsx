@@ -3,6 +3,7 @@ import { Send, Minus, X, Settings, Mic, Square } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
+import { sendToQwen } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 
 // 消息类型定义
@@ -72,15 +73,17 @@ function App() {
     };
   }, [isRecording]);
 
-  // 发送消息
+  // 发送消息并调用 AI 生成回答
   const handleSend = async () => {
     if (!input.trim() || isGenerating) return;
 
+    const question = input.trim();
+    
     // 添加用户消息
     const userMessage: Message = {
       id: generateId(),
       role: "user",
-      content: input.trim(),
+      content: question,
       timestamp: Date.now(),
     };
     
@@ -88,17 +91,28 @@ function App() {
     setInput("");
     setIsGenerating(true);
 
-    // TODO: 后续接入 AI API，目前模拟回复
-    setTimeout(() => {
+    try {
+      const config = await loadConfig();
+      const answer = await sendToQwen(question, config);
+      
       const assistantMessage: Message = {
         id: generateId(),
         role: "assistant",
-        content: "收到你的问题。这是一个模拟回复，后续将接入千问 API 提供实时回答。",
+        content: answer,
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      const errorMessage: Message = {
+        id: generateId(),
+        role: "assistant",
+        content: "❌ AI 回答失败: " + (err instanceof Error ? err.message : String(err)),
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsGenerating(false);
-    }, 800);
+    }
   };
 
   // 处理键盘事件
@@ -132,13 +146,34 @@ function App() {
           const config = await loadConfig();
           const text = await recognizeSpeech(audioData, config);
           if (text.trim()) {
-            setInput(prev => (prev ? `${prev} ${text}` : text));
+            // 显示识别结果并自动调用 AI
             setMessages(prev => prev.slice(0, -1).concat([{
               id: generateId(),
-              role: "assistant",
-              content: `✅ 识别结果: ${text}`,
+              role: "user",
+              content: `🎤 ${text}`,
               timestamp: Date.now(),
             }]));
+            
+            // 自动调用千问 AI 生成回答
+            setIsGenerating(true);
+            try {
+              const answer = await sendToQwen(text, config);
+              setMessages(prev => [...prev, {
+                id: generateId(),
+                role: "assistant",
+                content: answer,
+                timestamp: Date.now(),
+              }]);
+            } catch (aiErr) {
+              setMessages(prev => [...prev, {
+                id: generateId(),
+                role: "assistant",
+                content: "❌ AI 回答失败: " + (aiErr instanceof Error ? aiErr.message : String(aiErr)),
+                timestamp: Date.now(),
+              }]);
+            } finally {
+              setIsGenerating(false);
+            }
           } else {
             setMessages(prev => prev.slice(0, -1).concat([{
               id: generateId(),

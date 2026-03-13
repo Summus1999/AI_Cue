@@ -1,4 +1,6 @@
-// Tauri 命令 - 音频录制和语音识别
+// Tauri 命令 - 音频录制、语音识别和 AI 对话
+
+use crate::qwen::ChatMessage;
 
 // 开始录音
 #[tauri::command]
@@ -29,4 +31,14 @@ pub async fn nls_recognize_speech(
         &region,
     )
     .await
+}
+
+// 千问 AI 对话（通过 Rust 后端调用 DashScope API）
+#[tauri::command]
+pub async fn qwen_chat(
+    api_key: String,
+    model: String,
+    messages: Vec<ChatMessage>,
+) -> Result<String, String> {
+    crate::qwen::chat(&api_key, &model, messages).await
 }
