@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Minus, X, Settings, Mic, Square } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
 import { sendToQwen } from "./services/aiChat";
 import { loadConfig } from "./store/config";
+import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
 
 // 消息类型定义
 interface Message {
@@ -53,8 +55,8 @@ function App() {
   // 是否正在生成回复
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 当前视图：主界面 | 设置页面
-  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main');
+  // 当前视图：主界面 | 设置页面 | 快捷键设置
+  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts'>('main');
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -63,6 +65,10 @@ function App() {
   
   // 滚动引用
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  // 用于快捷键回调的函数引用
+  const toggleRecordingRef = useRef<() => void>(() => {});
+  const handleSendRef = useRef<() => void>(() => {});
 
   // 自动滚动到底部
   useEffect(() => {
@@ -91,6 +97,26 @@ function App() {
       }
     };
   }, [isRecording]);
+
+  // 初始化快捷键
+  useEffect(() => {
+    const initShortcuts = async () => {
+      try {
+        // 设置快捷键处理器
+        setShortcutHandlers({
+          toggleRecording: () => toggleRecordingRef.current(),
+          sendMessage: () => handleSendRef.current(),
+        });
+        
+        const config = await loadConfig();
+        await initializeShortcuts(config.shortcutConfig);
+        console.log('快捷键初始化完成');
+      } catch (err) {
+        console.error('快捷键初始化失败:', err);
+      }
+    };
+    initShortcuts();
+  }, []);
 
   // 发送消息并调用 AI 生成回答
   const handleSend = async () => {
@@ -245,6 +271,12 @@ function App() {
     }
   };
 
+  // 更新快捷键回调的函数引用
+  useEffect(() => {
+    toggleRecordingRef.current = toggleRecording;
+    handleSendRef.current = handleSend;
+  });
+
   // 最小化窗口
   const handleMinimize = () => {};
 
@@ -281,6 +313,14 @@ function App() {
 
         {/* 右侧：窗口控制按钮 */}
         <div className="flex items-center gap-1">
+          {/* 快捷键设置按钮 */}
+          <button
+            onClick={() => setCurrentView('shortcuts')}
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
+            title="快捷键设置"
+          >
+            <Keyboard className="w-3.5 h-3.5 text-amber-700" />
+          </button>
           {/* 设置按钮 */}
           <button
             onClick={() => setCurrentView('settings')}
@@ -389,6 +429,16 @@ function App() {
       {currentView === 'settings' && (
         <div className="absolute inset-0 z-50">
           <SettingsPanel
+            isOpen={true}
+            onClose={() => setCurrentView('main')}
+          />
+        </div>
+      )}
+
+      {/* 快捷键设置页面 - 全页面覆盖 */}
+      {currentView === 'shortcuts' && (
+        <div className="absolute inset-0 z-50">
+          <ShortcutSettingsPanel
             isOpen={true}
             onClose={() => setCurrentView('main')}
           />

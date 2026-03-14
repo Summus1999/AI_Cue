@@ -1,6 +1,24 @@
 // 配置管理 - 使用 Tauri Store 插件持久化（带 localStorage 备用）
 import { Store } from '@tauri-apps/plugin-store';
 
+// 快捷键配置接口
+export interface ShortcutConfig {
+  toggleRecording: string;  // 录制音频开始/停止
+  sendMessage: string;      // 发送消息
+}
+
+// 默认快捷键配置
+export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
+  toggleRecording: 'CommandOrControl+Shift+R',
+  sendMessage: 'CommandOrControl+Enter',
+};
+
+// 快捷键功能名称映射
+export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
+  toggleRecording: '录制音频 (开始/停止)',
+  sendMessage: '发送消息',
+};
+
 // 支持的千问模型列表
 export const QWEN_MODELS = [
   { id: 'qwen-turbo', name: 'qwen-turbo', description: '快速响应，成本低，适合简单问题' },
@@ -91,6 +109,8 @@ export interface AppConfig {
   // Prompt 配置
   promptTemplateId: string;  // 选中的模板ID
   customPrompt: string;      // 自定义 prompt 内容
+  // 快捷键配置
+  shortcutConfig: ShortcutConfig;
 }
 
 // 默认配置
@@ -105,6 +125,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   nlsRegion: 'cn-shanghai',
   promptTemplateId: 'default',
   customPrompt: '',
+  shortcutConfig: DEFAULT_SHORTCUT_CONFIG,
 };
 
 // Store 实例（延迟初始化）
@@ -147,6 +168,7 @@ function loadFromLocalStorage(): AppConfig {
         nlsRegion: parsed.nlsRegion || DEFAULT_CONFIG.nlsRegion,
         promptTemplateId: parsed.promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
         customPrompt: parsed.customPrompt || '',
+        shortcutConfig: parsed.shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
       };
     }
   } catch (err) {
@@ -188,6 +210,7 @@ export async function loadConfig(): Promise<AppConfig> {
 
     const promptTemplateId = await store.get<string>('promptTemplateId');
     const customPrompt = await store.get<string>('customPrompt');
+    const shortcutConfig = await store.get<ShortcutConfig>('shortcutConfig');
 
     return {
       provider: 'qwen',
@@ -200,6 +223,7 @@ export async function loadConfig(): Promise<AppConfig> {
       nlsRegion: nlsRegion || DEFAULT_CONFIG.nlsRegion,
       promptTemplateId: promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
       customPrompt: customPrompt || '',
+      shortcutConfig: shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
     };
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);
@@ -228,6 +252,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('nlsRegion', config.nlsRegion);
     await store.set('promptTemplateId', config.promptTemplateId);
     await store.set('customPrompt', config.customPrompt);
+    await store.set('shortcutConfig', config.shortcutConfig);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {
