@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import { MessageContent } from "./components/MessageContent";
@@ -108,6 +108,22 @@ function App() {
   // 滚动引用
   const scrollRef = useRef<HTMLDivElement>(null);
   
+  // 智能滚动控制：用户手动向上滚动时暂停自动滚动
+  // 使用 ref 同步存储状态，避免 React 异步更新导致的竞态问题
+  const autoScrollEnabledRef = useRef(true);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const scrollCooldownRef = useRef<number>(0); // 冷却时间戳
+  
+  // 同步更新 ref 和 state
+  const updateAutoScroll = useCallback((enabled: boolean) => {
+    autoScrollEnabledRef.current = enabled;
+    setAutoScrollEnabled(enabled);
+    // 禁用自动滚动时设置冷却时间（1秒内不自动恢复）
+    if (!enabled) {
+      scrollCooldownRef.current = Date.now() + 1000;
+    }
+  }, []);
+  
   // 用于快捷键回调的函数引用
   const toggleRecordingRef = useRef<() => void>(() => {});
   const handleSendRef = useRef<() => void>(() => {});
@@ -209,9 +225,45 @@ function App() {
     }
   }, [appendAssistantChunk, updateAssistantMessage]);
 
-  // 自动滚动到底部
+  // 判断是否在底部附近
+  const isNearBottom = useCallback((element: HTMLDivElement) => {
+    const threshold = 100;
+    return element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
+  }, []);
+
+  // 处理滚动事件：滚动到底部时恢复自动滚动
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    
+    // 冷却时间内不恢复自动滚动
+    if (Date.now() < scrollCooldownRef.current) return;
+    
+    const nearBottom = isNearBottom(scrollRef.current);
+    if (nearBottom && !autoScrollEnabledRef.current) {
+      updateAutoScroll(true);
+    }
+  }, [isNearBottom, updateAutoScroll]);
+
+  // 检测用户向上滚动：暂停自动滚动
+  const handleWheel = useCallback((e: WheelEvent) => {
+    // deltaY < 0 表示向上滚动
+    if (e.deltaY < 0 && autoScrollEnabledRef.current) {
+      updateAutoScroll(false);
+    }
+  }, [updateAutoScroll]);
+
+  // 绑定 wheel 事件监听器
   useEffect(() => {
-    if (scrollRef.current) {
+    const scrollElement = scrollRef.current;
+    if (scrollElement) {
+      scrollElement.addEventListener('wheel', handleWheel);
+      return () => scrollElement.removeEventListener('wheel', handleWheel);
+    }
+  }, [handleWheel]);
+
+  // 自动滚动到底部（使用 ref 检查，避免竞态）
+  useEffect(() => {
+    if (scrollRef.current && autoScrollEnabledRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -551,6 +603,7 @@ function App() {
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4"
+        onScroll={handleScroll}
       >
         {messages.map((message) => (
           <div
@@ -585,6 +638,20 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* 滚动到底部提示按钮 - 仅在自动滚动被暂停且正在生成时显示 */}
+      {!autoScrollEnabled && isGenerating && (
+        <button
+          onClick={() => {
+            updateAutoScroll(true);
+            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+          }}
+          className="absolute bottom-28 right-4 flex items-center gap-1 bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg transition-colors z-40"
+        >
+          <ChevronDown className="w-3 h-3" />
+          滚动到底部
+        </button>
+      )}
 
       {/* 输入区域 */}
       <div className="p-4 bg-amber-100/50 border-t border-amber-200">
