@@ -4,7 +4,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
-import { sendToQwen } from "./services/aiChat";
+import { sendToQwenStream } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
 
@@ -138,15 +138,29 @@ function App() {
 
     try {
       const config = await loadConfig();
-      const answer = await sendToQwen(question, config);
       
-      const assistantMessage: Message = {
-        id: generateId(),
+      // 创建 AI 消息占位
+      const assistantId = generateId();
+      setMessages((prev) => [...prev, {
+        id: assistantId,
         role: "assistant",
-        content: answer,
+        content: "",
         timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      }]);
+
+      // 流式接收 AI 回答
+      await sendToQwenStream(question, config, (content, done) => {
+        if (!done && content) {
+          setMessages((prev) => prev.map(msg => 
+            msg.id === assistantId 
+              ? { ...msg, content: msg.content + content }
+              : msg
+          ));
+        }
+        if (done) {
+          setIsGenerating(false);
+        }
+      });
     } catch (err) {
       const errorMessage: Message = {
         id: generateId(),
@@ -202,13 +216,28 @@ function App() {
             // 自动调用千问 AI 生成回答
             setIsGenerating(true);
             try {
-              const answer = await sendToQwen(text, config);
+              // 创建 AI 消息占位
+              const assistantId = generateId();
               setMessages(prev => [...prev, {
-                id: generateId(),
+                id: assistantId,
                 role: "assistant",
-                content: answer,
+                content: "",
                 timestamp: Date.now(),
               }]);
+
+              // 流式接收 AI 回答
+              await sendToQwenStream(text, config, (content, done) => {
+                if (!done && content) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantId 
+                      ? { ...msg, content: msg.content + content }
+                      : msg
+                  ));
+                }
+                if (done) {
+                  setIsGenerating(false);
+                }
+              });
             } catch (aiErr) {
               setMessages(prev => [...prev, {
                 id: generateId(),

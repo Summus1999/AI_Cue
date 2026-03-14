@@ -14,6 +14,7 @@ pub fn run() {
             commands::stop_audio_recording,
             commands::nls_recognize_speech,
             commands::qwen_chat,
+            commands::qwen_chat_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
