@@ -10,6 +10,15 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // 多页面入口配置
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        screenshot: path.resolve(__dirname, "screenshot.html"),
+      },
+    },
+  },
   // Vite options tailored for Tauri development and specific to this project
   clearScreen: false,
   server: {

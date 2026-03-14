@@ -109,6 +109,10 @@ export interface AppConfig {
   // Prompt 配置
   promptTemplateId: string;  // 选中的模板ID
   customPrompt: string;      // 自定义 prompt 内容
+  // 高质量题解仓库（每行一个 URL）
+  highQualityRepoUrls: string;
+  // 本地题解文档路径（Markdown，支持 ## 到 ###### 的题号标题）
+  localDocPath: string;
   // 快捷键配置
   shortcutConfig: ShortcutConfig;
 }
@@ -125,6 +129,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   nlsRegion: 'cn-shanghai',
   promptTemplateId: 'default',
   customPrompt: '',
+  highQualityRepoUrls: '',
+  localDocPath: '',
   shortcutConfig: DEFAULT_SHORTCUT_CONFIG,
 };
 
@@ -168,6 +174,8 @@ function loadFromLocalStorage(): AppConfig {
         nlsRegion: parsed.nlsRegion || DEFAULT_CONFIG.nlsRegion,
         promptTemplateId: parsed.promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
         customPrompt: parsed.customPrompt || '',
+        highQualityRepoUrls: parsed.highQualityRepoUrls || '',
+        localDocPath: parsed.localDocPath || '',
         shortcutConfig: parsed.shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
       };
     }
@@ -210,6 +218,8 @@ export async function loadConfig(): Promise<AppConfig> {
 
     const promptTemplateId = await store.get<string>('promptTemplateId');
     const customPrompt = await store.get<string>('customPrompt');
+    const highQualityRepoUrls = await store.get<string>('highQualityRepoUrls');
+    const localDocPath = await store.get<string>('localDocPath');
     const shortcutConfig = await store.get<ShortcutConfig>('shortcutConfig');
 
     return {
@@ -223,6 +233,8 @@ export async function loadConfig(): Promise<AppConfig> {
       nlsRegion: nlsRegion || DEFAULT_CONFIG.nlsRegion,
       promptTemplateId: promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
       customPrompt: customPrompt || '',
+      highQualityRepoUrls: highQualityRepoUrls || '',
+      localDocPath: localDocPath || '',
       shortcutConfig: shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
     };
   } catch (error) {
@@ -252,6 +264,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('nlsRegion', config.nlsRegion);
     await store.set('promptTemplateId', config.promptTemplateId);
     await store.set('customPrompt', config.customPrompt);
+    await store.set('highQualityRepoUrls', config.highQualityRepoUrls);
+    await store.set('localDocPath', config.localDocPath);
     await store.set('shortcutConfig', config.shortcutConfig);
     await store.save();
     console.log('配置已保存到 Tauri Store');

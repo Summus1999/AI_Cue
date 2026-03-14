@@ -7,9 +7,9 @@ use std::io::Cursor;
 
 use hound::{WavSpec, WavWriter};
 
-pub(crate) use types::{AudioError, CapturedAudio};
 #[cfg(test)]
 pub(crate) use types::AudioFormat;
+pub(crate) use types::{AudioError, CapturedAudio};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const TARGET_CHANNELS: u16 = 1;
@@ -35,8 +35,8 @@ fn encode_captured_audio_to_wav(_captured: &CapturedAudio) -> Result<Vec<u8>, Au
 
     let mut cursor = Cursor::new(Vec::new());
     {
-        let mut writer =
-            WavWriter::new(&mut cursor, spec).map_err(|error| AudioError::Encoding(error.to_string()))?;
+        let mut writer = WavWriter::new(&mut cursor, spec)
+            .map_err(|error| AudioError::Encoding(error.to_string()))?;
         for sample in samples {
             writer
                 .write_sample(sample)
@@ -138,12 +138,15 @@ mod tests {
 
     #[test]
     fn encodes_capture_as_wav_with_target_format() {
-        let wav_bytes =
-            encode_captured_audio_to_wav(&stereo_capture_48khz()).expect("wav encoding should succeed");
+        let wav_bytes = encode_captured_audio_to_wav(&stereo_capture_48khz())
+            .expect("wav encoding should succeed");
 
         let mut reader = WavReader::new(Cursor::new(wav_bytes)).expect("wav should be readable");
         let spec = reader.spec();
-        let samples = reader.samples::<i16>().collect::<Result<Vec<_>, _>>().unwrap();
+        let samples = reader
+            .samples::<i16>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         assert_eq!(spec.channels, TARGET_CHANNELS);
         assert_eq!(spec.sample_rate, TARGET_SAMPLE_RATE);

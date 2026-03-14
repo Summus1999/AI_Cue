@@ -1,6 +1,7 @@
 // 设置面板组件 - 全页面进出式设计
 import { useState, useEffect } from 'react';
-import { ArrowLeft, ChevronDown, Check, AlertCircle } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
 import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
 
 interface SettingsPanelProps {
@@ -289,6 +290,63 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               </div>
               <p className="text-[10px] text-amber-600">
                 智能语音交互控制台获取 Appkey，RAM 获取 AccessKey
+              </p>
+            </div>
+
+            {/* 分隔线 */}
+            <div className="border-t border-amber-200" />
+
+            {/* 本地题解文档 */}
+            <div className="space-y-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                本地题解文档（Markdown）
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={config.localDocPath}
+                  onChange={(e) => setConfig(prev => ({ ...prev, localDocPath: e.target.value }))}
+                  placeholder="本地 .md 文件路径，支持 ## 到 ###### 的题号标题，如 #### 16.最接近的三数之和"
+                  className="flex-1 px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const selected = await open({
+                      multiple: false,
+                      directory: false,
+                      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+                    });
+                    if (selected && typeof selected === 'string') {
+                      setConfig(prev => ({ ...prev, localDocPath: selected }));
+                    }
+                  }}
+                  className="flex-shrink-0 px-3 py-2.5 bg-amber-200/80 border border-amber-300 rounded-lg text-sm text-amber-800 hover:bg-amber-300/80 transition-colors flex items-center gap-1.5"
+                  title="选择文件"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  选择
+                </button>
+              </div>
+              <p className="text-[10px] text-amber-600">
+                优先在本地文档中按题号检索；支持 `##` 到 `######` 标题，命中后直接使用文档代码，仅生成说明
+              </p>
+            </div>
+
+            {/* 高质量题解仓库 */}
+            <div className="space-y-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                高质量题解仓库（GitHub）
+              </label>
+              <textarea
+                value={config.highQualityRepoUrls}
+                onChange={(e) => setConfig(prev => ({ ...prev, highQualityRepoUrls: e.target.value }))}
+                placeholder={"每行一个 GitHub 仓库 URL，例如：\nhttps://github.com/doocs/leetcode\nhttps://github.com/wisdompeak/LeetCode"}
+                rows={5}
+                className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 transition-colors resize-none"
+              />
+              <p className="text-[10px] text-amber-600">
+                仅会在你填写的仓库中抓取题解内容；每行一个 URL
               </p>
             </div>
 

@@ -1,12 +1,20 @@
-import { useState, useRef, useEffect } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
+import { MessageContent } from "./components/MessageContent";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
-import { sendToQwenStream } from "./services/aiChat";
+import {
+  buildScreenshotFollowUpPrompt,
+  SCREENSHOT_ANALYSIS_PROMPT,
+  sendToQwenStream,
+  sendToQwenStreamWithImage,
+} from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 
 // 消息类型定义
 interface Message {
@@ -16,8 +24,39 @@ interface Message {
   timestamp: number;
 }
 
+interface ScreenshotContext {
+  imageBase64: string;
+  debugPath: string;
+  createdAt: number;
+}
+
+interface ScreenCaptureResult {
+  source_path: string;
+  screen_x: number;
+  screen_y: number;
+  logical_width: number;
+  logical_height: number;
+  physical_width: number;
+  physical_height: number;
+}
+
+interface ScreenshotCompletePayload {
+  imageData: number[];
+  debugPath: string;
+}
+
 // 生成唯一 ID
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 8192;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
 
 // 获取语音识别错误的友好提示
 function getSpeechErrorMessage(error: unknown): string {
@@ -54,6 +93,9 @@ function App() {
   
   // 是否正在生成回复
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // 最近一次截图上下文
+  const [latestScreenshotContext, setLatestScreenshotContext] = useState<ScreenshotContext | null>(null);
   
   // 当前视图：主界面 | 设置页面 | 快捷键设置
   const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts'>('main');
@@ -69,6 +111,102 @@ function App() {
   // 用于快捷键回调的函数引用
   const toggleRecordingRef = useRef<() => void>(() => {});
   const handleSendRef = useRef<() => void>(() => {});
+
+  const updateAssistantMessage = useCallback((assistantId: string, content: string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === assistantId ? { ...message, content } : message,
+      ),
+    );
+  }, []);
+
+  const appendAssistantChunk = useCallback((assistantId: string, content: string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === assistantId
+          ? { ...message, content: message.content + content }
+          : message,
+      ),
+    );
+  }, []);
+
+  const requestAssistantReply = useCallback(async (
+    userContent: string,
+    requestText: string,
+    imageBase64?: string,
+  ) => {
+    const assistantId = generateId();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        role: "user",
+        content: userContent,
+        timestamp: Date.now(),
+      },
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+      },
+    ]);
+
+    setIsGenerating(true);
+
+    try {
+      const config = await loadConfig();
+      let hasReceivedContent = false;
+
+      const onChunk = (content: string, done: boolean) => {
+        if (!done && content) {
+          hasReceivedContent = true;
+          appendAssistantChunk(assistantId, content);
+        }
+      };
+
+      const send = async () => {
+        if (imageBase64) {
+          await sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk);
+          return;
+        }
+        await sendToQwenStream(requestText, config, onChunk);
+      };
+
+      try {
+        await send();
+      } catch (error) {
+        if (imageBase64 && !hasReceivedContent) {
+          updateAssistantMessage(assistantId, "");
+          hasReceivedContent = false;
+          try {
+            await send();
+            return;
+          } catch (retryError) {
+            updateAssistantMessage(
+              assistantId,
+              "❌ 图片识别失败: " + (retryError instanceof Error ? retryError.message : String(retryError)),
+            );
+            return;
+          }
+        }
+
+        updateAssistantMessage(
+          assistantId,
+          (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    } catch (error) {
+      updateAssistantMessage(
+        assistantId,
+        (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [appendAssistantChunk, updateAssistantMessage]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -123,55 +261,13 @@ function App() {
     if (!input.trim() || isGenerating) return;
 
     const question = input.trim();
-    
-    // 添加用户消息
-    const userMessage: Message = {
-      id: generateId(),
-      role: "user",
-      content: question,
-      timestamp: Date.now(),
-    };
-    
-    setMessages((prev) => [...prev, userMessage]);
     setInput("");
-    setIsGenerating(true);
+    const imageBase64 = latestScreenshotContext?.imageBase64;
+    const requestText = imageBase64
+      ? buildScreenshotFollowUpPrompt(question)
+      : question;
 
-    try {
-      const config = await loadConfig();
-      
-      // 创建 AI 消息占位
-      const assistantId = generateId();
-      setMessages((prev) => [...prev, {
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-      }]);
-
-      // 流式接收 AI 回答
-      await sendToQwenStream(question, config, (content, done) => {
-        if (!done && content) {
-          setMessages((prev) => prev.map(msg => 
-            msg.id === assistantId 
-              ? { ...msg, content: msg.content + content }
-              : msg
-          ));
-        }
-        if (done) {
-          setIsGenerating(false);
-        }
-      });
-    } catch (err) {
-      const errorMessage: Message = {
-        id: generateId(),
-        role: "assistant",
-        content: "❌ AI 回答失败: " + (err instanceof Error ? err.message : String(err)),
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsGenerating(false);
-    }
+    await requestAssistantReply(question, requestText, imageBase64);
   };
 
   // 处理键盘事件
@@ -205,49 +301,13 @@ function App() {
           const config = await loadConfig();
           const text = await recognizeSpeech(audioData, config);
           if (text.trim()) {
-            // 显示识别结果并自动调用 AI
-            setMessages(prev => prev.slice(0, -1).concat([{
-              id: generateId(),
-              role: "user",
-              content: `🎤 ${text}`,
-              timestamp: Date.now(),
-            }]));
-            
-            // 自动调用千问 AI 生成回答
-            setIsGenerating(true);
-            try {
-              // 创建 AI 消息占位
-              const assistantId = generateId();
-              setMessages(prev => [...prev, {
-                id: assistantId,
-                role: "assistant",
-                content: "",
-                timestamp: Date.now(),
-              }]);
+            setMessages((prev) => prev.slice(0, -1));
+            const imageBase64 = latestScreenshotContext?.imageBase64;
+            const requestText = imageBase64
+              ? buildScreenshotFollowUpPrompt(text)
+              : text;
 
-              // 流式接收 AI 回答
-              await sendToQwenStream(text, config, (content, done) => {
-                if (!done && content) {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === assistantId 
-                      ? { ...msg, content: msg.content + content }
-                      : msg
-                  ));
-                }
-                if (done) {
-                  setIsGenerating(false);
-                }
-              });
-            } catch (aiErr) {
-              setMessages(prev => [...prev, {
-                id: generateId(),
-                role: "assistant",
-                content: "❌ AI 回答失败: " + (aiErr instanceof Error ? aiErr.message : String(aiErr)),
-                timestamp: Date.now(),
-              }]);
-            } finally {
-              setIsGenerating(false);
-            }
+            await requestAssistantReply(`🎤 ${text}`, requestText, imageBase64);
           } else {
             setMessages(prev => prev.slice(0, -1).concat([{
               id: generateId(),
@@ -297,6 +357,115 @@ function App() {
           timestamp: Date.now(),
         }]);
       }
+    }
+  };
+
+  // 截图功能
+  const handleScreenshot = async () => {
+    if (isRecording || isGenerating) return;
+    
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const mainWindow = getCurrentWindow();
+    const existingScreenshotWindow = await WebviewWindow.getByLabel("screenshot");
+    let activeSourcePath: string | null = null;
+    let cleanupListeners = () => {};
+
+    const restoreMainWindow = async () => {
+      await mainWindow.show();
+      await mainWindow.setFocus();
+    };
+    
+    try {
+      if (existingScreenshotWindow) {
+        await existingScreenshotWindow.close();
+      }
+
+      await mainWindow.hide();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const capture = await invoke<ScreenCaptureResult>('capture_full_screen');
+      activeSourcePath = capture.source_path;
+      const cleanupCallbacks: Array<() => void> = [];
+      cleanupListeners = () => {
+        cleanupCallbacks.forEach((callback) => callback());
+        cleanupCallbacks.length = 0;
+      };
+
+      const unlistenComplete = await listen<ScreenshotCompletePayload>('screenshot-complete', (event) => {
+        cleanupListeners();
+        void (async () => {
+          try {
+            await restoreMainWindow();
+
+            const bytes = new Uint8Array(event.payload.imageData);
+            const imageBase64 = bytesToBase64(bytes);
+            setLatestScreenshotContext({
+              imageBase64,
+              debugPath: event.payload.debugPath,
+              createdAt: Date.now(),
+            });
+            await requestAssistantReply("📷 [已发送截图]", SCREENSHOT_ANALYSIS_PROMPT, imageBase64);
+          } catch (error) {
+            await restoreMainWindow();
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: generateId(),
+                role: "assistant",
+                content: "❌ 截图识别失败: " + (error instanceof Error ? error.message : String(error)),
+                timestamp: Date.now(),
+              },
+            ]);
+          }
+        })();
+      });
+      cleanupCallbacks.push(unlistenComplete);
+
+      const unlistenCancel = await listen('screenshot-cancelled', () => {
+        cleanupListeners();
+        void restoreMainWindow();
+      });
+      cleanupCallbacks.push(unlistenCancel);
+
+      const screenshotUrl = `/screenshot.html?sourcePath=${encodeURIComponent(capture.source_path)}&logicalWidth=${capture.logical_width}&logicalHeight=${capture.logical_height}&physicalWidth=${capture.physical_width}&physicalHeight=${capture.physical_height}`;
+
+      new WebviewWindow('screenshot', {
+        url: screenshotUrl,
+        x: capture.screen_x,
+        y: capture.screen_y,
+        width: capture.logical_width,
+        height: capture.logical_height,
+        decorations: false,
+        transparent: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        focus: true,
+        resizable: false,
+      });
+    } catch (err) {
+      cleanupListeners();
+      if (activeSourcePath) {
+        try {
+          await invoke("cancel_screenshot", { sourcePath: activeSourcePath });
+        } catch {
+          // Ignore cleanup failure.
+        }
+      }
+      try {
+        await restoreMainWindow();
+      } catch {
+        // Ignore restore failure.
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          role: "assistant",
+          content: "❌ 截图失败: " + (err instanceof Error ? err.message : String(err)),
+          timestamp: Date.now(),
+        },
+      ]);
     }
   };
 
@@ -394,7 +563,10 @@ function App() {
                   : "bg-amber-800 text-amber-50 rounded-2xl rounded-bl-md"
               }`}
             >
-              {message.content}
+              <MessageContent
+                content={message.content}
+                variant={message.role}
+              />
             </div>
           </div>
         ))}
@@ -437,6 +609,15 @@ function App() {
             className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-white/80 text-amber-900 text-sm placeholder:text-amber-400 rounded-xl border border-amber-300 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
+          {/* 截图按钮 */}
+          <button
+            onClick={handleScreenshot}
+            disabled={isRecording || isGenerating}
+            className="flex items-center justify-center w-10 h-10 bg-amber-100 hover:bg-amber-200 disabled:opacity-30 disabled:cursor-not-allowed text-amber-700 rounded-xl border border-amber-300 transition-all duration-150"
+            title="区域截图"
+          >
+            <Camera className="w-4 h-4" />
+          </button>
           <button
             onClick={handleSend}
             disabled={!input.trim() || isGenerating || isRecording}
@@ -449,7 +630,7 @@ function App() {
           {isRecording ? (
             <span className="text-red-400/60">正在录制电脑音频... 点击 🎤 停止</span>
           ) : (
-            "Shift + Enter 换行 · Enter 发送 · 🎤 录制电脑音频"
+            "Shift + Enter 换行 · Enter 发送 · 🎤 录音 · 📷 截图"
           )}
         </div>
       </div>

@@ -1,143 +1,93 @@
-/**
- * AI 对话服务 - 调用千问 API 生成回答
- * 通过 Tauri Rust 后端调用，绕过 CORS 限制
- */
-
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import type { AppConfig } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
 
-/** 聊天消息结构 */
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
-/** 流式事件 payload */
 interface StreamEvent {
   content: string;
   done: boolean;
 }
 
-/**
- * 获取系统提示词
- * 根据配置返回预设模板或自定义 prompt
- */
+export const SCREENSHOT_ANALYSIS_PROMPT =
+  '请识别截图中的算法题，并直接给出最终可提交的 C++ 解法。如果题面不完整，请做合理假设。';
+
+function parseRepoUrls(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+export function buildScreenshotFollowUpPrompt(question: string): string {
+  return [
+    '请基于这张截图继续处理用户的问题。',
+    '如果截图中同时包含题面和现有代码，请先识别题目，再指出当前代码中的问题，然后给出最终可提交的 C++ 代码。',
+    '如果题面信息不完整，请明确你的合理假设。',
+    `用户问题：${question}`,
+  ].join('\n');
+}
+
 function getSystemPrompt(config: AppConfig): string {
-  // 如果是自定义模式，使用用户输入的 prompt
   if (config.promptTemplateId === 'custom') {
-    // 如果自定义 prompt 为空，回退到默认模板
     if (config.customPrompt?.trim()) {
       return config.customPrompt;
     }
     return PROMPT_TEMPLATES[0].prompt;
   }
-  
-  // 查找对应的预设模板
-  const template = PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId);
+
+  const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
   return template?.prompt || PROMPT_TEMPLATES[0].prompt;
 }
 
-/**
- * 发送消息给千问 AI 并获取回答
- * 
- * @param question 用户的问题（面试官的问题）
- * @param config 应用配置（包含 API Key 和模型选择）
- * @param history 可选的历史对话记录
- * @returns AI 的回答
- */
-export async function sendToQwen(
-  question: string,
-  config: AppConfig,
-  history: ChatMessage[] = []
-): Promise<string> {
-  if (!config.apiKey?.trim()) {
-    throw new Error('请先在设置中配置 DashScope API Key');
-  }
-
-  // 获取系统提示词
-  const systemPrompt = getSystemPrompt(config);
-
-  // 构建消息列表
-  const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: question }
-  ];
-
-  // 调用 Rust 后端
-  const result = await invoke<string>('qwen_chat', {
-    apiKey: config.apiKey,
-    model: config.model || 'qwen-turbo',
-    messages,
-  });
-
-  return result;
-}
-
-/**
- * 流式发送消息给千问 AI 并通过回调获取回答
- * 
- * @param question 用户的问题
- * @param config 应用配置
- * @param onChunk 每次收到新内容时的回调
- * @param history 可选的历史对话记录
- * @returns 清理函数
- */
-export async function sendToQwenStream(
-  question: string,
-  config: AppConfig,
+async function streamWithEvent(
+  invokeCommand: string,
+  invokeArgs: Record<string, unknown>,
   onChunk: (content: string, done: boolean) => void,
-  history: ChatMessage[] = []
-): Promise<UnlistenFn> {
-  if (!config.apiKey?.trim()) {
-    throw new Error('请先在设置中配置 DashScope API Key');
-  }
-
-  // 获取系统提示词
-  const systemPrompt = getSystemPrompt(config);
-
-  // 构建消息列表
-  const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: question }
-  ];
-
-  // 用于控制输出速度的队列和定时器
+): Promise<void> {
   const charQueue: string[] = [];
   let isProcessing = false;
   let isDone = false;
-  const CHAR_DELAY = 30; // 每个字符的延迟(ms)，用于减慢输出速度
+  let resolveDone: (() => void) | null = null;
+
+  const donePromise = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
 
   const processQueue = () => {
     if (isProcessing || charQueue.length === 0) {
       if (isDone && charQueue.length === 0) {
         onChunk('', true);
+        resolveDone?.();
       }
       return;
     }
-    
+
     isProcessing = true;
     const char = charQueue.shift()!;
     onChunk(char, false);
-    
+
     setTimeout(() => {
       isProcessing = false;
       processQueue();
-    }, CHAR_DELAY);
+    }, 30);
   };
 
-  // 监听流式事件
   const unlisten = await listen<StreamEvent>('qwen-stream', (event) => {
     if (event.payload.done) {
       isDone = true;
       if (charQueue.length === 0) {
         onChunk('', true);
+        resolveDone?.();
       }
-    } else if (event.payload.content) {
-      // 将内容拆分成单个字符加入队列
+      return;
+    }
+
+    if (event.payload.content) {
       for (const char of event.payload.content) {
         charQueue.push(char);
       }
@@ -146,16 +96,83 @@ export async function sendToQwenStream(
   });
 
   try {
-    // 调用 Rust 后端流式接口
-    await invoke('qwen_chat_stream', {
+    await invoke(invokeCommand, invokeArgs);
+    await donePromise;
+  } catch (error) {
+    throw error;
+  } finally {
+    unlisten();
+  }
+}
+
+export async function sendToQwen(
+  question: string,
+  config: AppConfig,
+  history: ChatMessage[] = [],
+): Promise<string> {
+  if (!config.apiKey?.trim()) {
+    throw new Error('请先在设置中配置 DashScope API Key');
+  }
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: getSystemPrompt(config) },
+    ...history,
+    { role: 'user', content: question },
+  ];
+
+  return invoke<string>('qwen_chat', {
+    apiKey: config.apiKey,
+    model: config.model || 'qwen-turbo',
+    messages,
+  });
+}
+
+export async function sendToQwenStream(
+  question: string,
+  config: AppConfig,
+  onChunk: (content: string, done: boolean) => void,
+  history: ChatMessage[] = [],
+): Promise<void> {
+  if (!config.apiKey?.trim()) {
+    throw new Error('请先在设置中配置 DashScope API Key');
+  }
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: getSystemPrompt(config) },
+    ...history,
+    { role: 'user', content: question },
+  ];
+
+  await streamWithEvent(
+    'qwen_chat_stream',
+    {
       apiKey: config.apiKey,
       model: config.model || 'qwen-turbo',
       messages,
-    });
-  } catch (error) {
-    unlisten();
-    throw error;
+    },
+    onChunk,
+  );
+}
+
+export async function sendToQwenStreamWithImage(
+  prompt: string,
+  imageBase64: string,
+  config: AppConfig,
+  onChunk: (content: string, done: boolean) => void,
+): Promise<void> {
+  if (!config.apiKey?.trim()) {
+    throw new Error('请先在设置中配置 DashScope API Key');
   }
 
-  return unlisten;
+  await streamWithEvent(
+    'qwen_chat_stream_vision',
+    {
+      apiKey: config.apiKey,
+      imageBase64,
+      prompt,
+      repoUrls: parseRepoUrls(config.highQualityRepoUrls || ''),
+      localDocPath: config.localDocPath?.trim() || null,
+    },
+    onChunk,
+  );
 }

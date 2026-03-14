@@ -54,3 +54,24 @@ pub async fn qwen_chat_stream(
 ) -> Result<(), String> {
     crate::qwen::chat_stream(app, &api_key, &model, messages).await
 }
+
+// 千问视觉 API 流式对话（截图识别，固定使用 qwen-vl-max）
+#[tauri::command]
+pub async fn qwen_chat_stream_vision(
+    app: AppHandle,
+    api_key: String,
+    image_base64: String,
+    prompt: String,
+    repo_urls: Vec<String>,
+    local_doc_path: Option<String>,
+) -> Result<(), String> {
+    crate::qwen::chat_stream_vision(
+        app,
+        &api_key,
+        &image_base64,
+        &prompt,
+        repo_urls,
+        local_doc_path,
+    )
+    .await
+}
