@@ -5,18 +5,21 @@ import { Store } from '@tauri-apps/plugin-store';
 export interface ShortcutConfig {
   toggleRecording: string;  // 录制音频开始/停止
   sendMessage: string;      // 发送消息
+  takeScreenshot: string;   // 截图
 }
 
 // 默认快捷键配置
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   toggleRecording: 'CommandOrControl+Shift+R',
   sendMessage: 'CommandOrControl+Enter',
+  takeScreenshot: 'CommandOrControl+Shift+S',
 };
 
 // 快捷键功能名称映射
 export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
   toggleRecording: '录制音频 (开始/停止)',
   sendMessage: '发送消息',
+  takeScreenshot: '区域截图',
 };
 
 // 支持的千问模型列表
@@ -176,7 +179,10 @@ function loadFromLocalStorage(): AppConfig {
         customPrompt: parsed.customPrompt || '',
         highQualityRepoUrls: parsed.highQualityRepoUrls || '',
         localDocPath: parsed.localDocPath || '',
-        shortcutConfig: parsed.shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
+        shortcutConfig: {
+          ...DEFAULT_SHORTCUT_CONFIG,
+          ...(parsed.shortcutConfig || {}),
+        },
       };
     }
   } catch (err) {
@@ -235,7 +241,10 @@ export async function loadConfig(): Promise<AppConfig> {
       customPrompt: customPrompt || '',
       highQualityRepoUrls: highQualityRepoUrls || '',
       localDocPath: localDocPath || '',
-      shortcutConfig: shortcutConfig || DEFAULT_SHORTCUT_CONFIG,
+      shortcutConfig: {
+        ...DEFAULT_SHORTCUT_CONFIG,
+        ...(shortcutConfig || {}),
+      },
     };
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);

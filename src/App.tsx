@@ -111,6 +111,7 @@ function App() {
   // 用于快捷键回调的函数引用
   const toggleRecordingRef = useRef<() => void>(() => {});
   const handleSendRef = useRef<() => void>(() => {});
+  const handleScreenshotRef = useRef<() => void>(() => {});
 
   const updateAssistantMessage = useCallback((assistantId: string, content: string) => {
     setMessages((prev) =>
@@ -244,6 +245,7 @@ function App() {
         setShortcutHandlers({
           toggleRecording: () => toggleRecordingRef.current(),
           sendMessage: () => handleSendRef.current(),
+          takeScreenshot: () => handleScreenshotRef.current(),
         });
         
         const config = await loadConfig();
@@ -473,6 +475,7 @@ function App() {
   useEffect(() => {
     toggleRecordingRef.current = toggleRecording;
     handleSendRef.current = handleSend;
+    handleScreenshotRef.current = handleScreenshot;
   });
 
   // 最小化窗口

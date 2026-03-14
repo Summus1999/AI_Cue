@@ -9,6 +9,7 @@ export type ShortcutCallback = () => void;
 interface ShortcutHandlers {
   toggleRecording?: ShortcutCallback;
   sendMessage?: ShortcutCallback;
+  takeScreenshot?: ShortcutCallback;
 }
 
 // 当前注册的快捷键
@@ -42,7 +43,8 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
   // 检查 handlers 是否已设置
   console.log('当前 handlers 状态:', {
     toggleRecording: !!handlers.toggleRecording,
-    sendMessage: !!handlers.sendMessage
+    sendMessage: !!handlers.sendMessage,
+    takeScreenshot: !!handlers.takeScreenshot
   });
 
   // 注册录音快捷键
@@ -73,6 +75,21 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
     console.log(`快捷键 ${config.sendMessage} 注册成功 -> sendMessage`);
   } catch (err) {
     console.error(`注册快捷键 ${config.sendMessage} 失败:`, err);
+  }
+
+  // 注册截图快捷键
+  try {
+    await register(config.takeScreenshot, () => {
+      console.log(`快捷键触发: takeScreenshot, handler存在: ${!!handlers.takeScreenshot}`);
+      if (handlers.takeScreenshot) {
+        handlers.takeScreenshot();
+      } else {
+        console.error('takeScreenshot handler 未设置!');
+      }
+    });
+    console.log(`快捷键 ${config.takeScreenshot} 注册成功 -> takeScreenshot`);
+  } catch (err) {
+    console.error(`注册快捷键 ${config.takeScreenshot} 失败:`, err);
   }
 }
 
