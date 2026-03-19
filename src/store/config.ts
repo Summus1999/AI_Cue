@@ -100,6 +100,18 @@ export interface WindowConfig {
   };
 }
 
+// 面试背景配置接口
+export interface InterviewBackground {
+  /** 是否启用面试背景注入 */
+  enabled: boolean;
+  /** 公司名称 */
+  company: string;
+  /** 目标岗位 */
+  position: string;
+  /** JD 关键要点（支持多行文本） */
+  jdHighlights: string;
+}
+
 // 默认快捷键配置
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   toggleRecording: 'CommandOrControl+Shift+R',
@@ -225,6 +237,10 @@ export interface AppConfig {
   shortcutConfig: ShortcutConfig;
   // 窗口配置
   window: WindowConfig;
+  // 上下文窗口大小（轮数），默认 5
+  contextWindowSize: number;
+  // 面试背景配置
+  interviewBackground: InterviewBackground;
 }
 
 // 默认配置
@@ -264,6 +280,15 @@ export const DEFAULT_CONFIG: AppConfig = {
     hoverRestore: { enabled: true },
     bounds: { main: null, compact: null },
     compactMode: { enabled: false },
+  },
+  // 上下文窗口大小（轮数），默认 5
+  contextWindowSize: 5,
+  // 面试背景配置
+  interviewBackground: {
+    enabled: false,
+    company: '',
+    position: '',
+    jdHighlights: '',
   },
 };
 
@@ -333,6 +358,11 @@ function migrateConfig(parsed: any): AppConfig {
     shortcutConfig: {
       ...DEFAULT_SHORTCUT_CONFIG,
       ...(parsed.shortcutConfig || {}),
+    },
+    contextWindowSize: parsed.contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
+    interviewBackground: {
+      ...DEFAULT_CONFIG.interviewBackground,
+      ...(parsed.interviewBackground || {}),
     },
   };
 }
@@ -416,6 +446,9 @@ export async function loadConfig(): Promise<AppConfig> {
     }
 
     // 新格式配置
+    const contextWindowSize = await store.get<number>('contextWindowSize');
+    const interviewBackground = await store.get<InterviewBackground>('interviewBackground');
+
     const config: AppConfig = {
       activeProvider: activeProvider || DEFAULT_CONFIG.activeProvider,
       providerConfigs: providerConfigs || DEFAULT_CONFIG.providerConfigs,
@@ -433,6 +466,8 @@ export async function loadConfig(): Promise<AppConfig> {
         ...(shortcutConfig || {}),
       },
       window: windowConfig || DEFAULT_CONFIG.window,
+      contextWindowSize: contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
+      interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
     };
 
     return validateAndFixConfig(config);
@@ -473,6 +508,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('localDocPath', config.localDocPath);
     await store.set('shortcutConfig', config.shortcutConfig);
     await store.set('window', config.window);
+    await store.set('contextWindowSize', config.contextWindowSize);
+    await store.set('interviewBackground', config.interviewBackground);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {
@@ -503,6 +540,34 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
     }
     if (!validatedConfig.window.compactMode) {
       validatedConfig.window.compactMode = DEFAULT_CONFIG.window.compactMode;
+    }
+  }
+
+  // 验证 contextWindowSize（范围：0-20）
+  if (typeof validatedConfig.contextWindowSize !== 'number' ||
+      validatedConfig.contextWindowSize < 0 ||
+      validatedConfig.contextWindowSize > 20 ||
+      !Number.isInteger(validatedConfig.contextWindowSize)) {
+    validatedConfig.contextWindowSize = DEFAULT_CONFIG.contextWindowSize;
+  }
+
+  // 验证 interviewBackground
+  if (!validatedConfig.interviewBackground) {
+    validatedConfig.interviewBackground = DEFAULT_CONFIG.interviewBackground;
+  } else {
+    // 确保 enabled 是 boolean
+    if (typeof validatedConfig.interviewBackground.enabled !== 'boolean') {
+      validatedConfig.interviewBackground.enabled = false;
+    }
+    // 确保字符串字段为字符串类型
+    if (typeof validatedConfig.interviewBackground.company !== 'string') {
+      validatedConfig.interviewBackground.company = '';
+    }
+    if (typeof validatedConfig.interviewBackground.position !== 'string') {
+      validatedConfig.interviewBackground.position = '';
+    }
+    if (typeof validatedConfig.interviewBackground.jdHighlights !== 'string') {
+      validatedConfig.interviewBackground.jdHighlights = '';
     }
   }
   

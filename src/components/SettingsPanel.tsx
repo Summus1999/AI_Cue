@@ -187,6 +187,160 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               )}
             </div>
 
+            {/* 分隔线 */}
+            <div className="border-t border-amber-200" />
+
+            {/* 对话上下文设置 */}
+            <div className="space-y-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                对话上下文
+              </label>
+              
+              {/* 上下文轮数设置 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-amber-800">上下文轮数</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setConfig(prev => ({ 
+                        ...prev, 
+                        contextWindowSize: Math.max(0, (prev.contextWindowSize ?? 5) - 1) 
+                      }))}
+                      className="w-7 h-7 flex items-center justify-center bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors"
+                    >
+                      -
+                    </button>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      value={config.contextWindowSize ?? 5}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        setConfig(prev => ({ 
+                          ...prev, 
+                          contextWindowSize: Math.max(0, Math.min(20, isNaN(value) ? 5 : value))
+                        }));
+                      }}
+                      className="w-14 px-2 py-1 text-center bg-white/80 border border-amber-300 rounded text-sm text-amber-900"
+                    />
+                    <button
+                      onClick={() => setConfig(prev => ({ 
+                        ...prev, 
+                        contextWindowSize: Math.min(20, (prev.contextWindowSize ?? 5) + 1) 
+                      }))}
+                      className="w-7 h-7 flex items-center justify-center bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-600">
+                  每次发送消息时携带最近 {(config.contextWindowSize ?? 5)} 轮对话历史（范围：0-20，0 表示不传递历史）
+                </p>
+              </div>
+            </div>
+
+            {/* 分隔线 */}
+            <div className="border-t border-amber-200" />
+
+            {/* 面试背景设置 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                  面试背景
+                </label>
+                {/* 启用开关 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfig(prev => ({
+                      ...prev,
+                      interviewBackground: {
+                        ...prev.interviewBackground,
+                        enabled: !prev.interviewBackground.enabled,
+                      }
+                    }));
+                  }}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+                    config.interviewBackground?.enabled ? 'bg-amber-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
+                      config.interviewBackground?.enabled ? 'translate-x-5' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* 面试背景表单 */}
+              <div className={`space-y-3 ${config.interviewBackground?.enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+                {/* 公司名称 */}
+                <div className="space-y-1">
+                  <label className="text-xs text-amber-600">公司名称</label>
+                  <input
+                    type="text"
+                    value={config.interviewBackground?.company || ''}
+                    onChange={(e) => setConfig(prev => ({
+                      ...prev,
+                      interviewBackground: {
+                        ...prev.interviewBackground,
+                        company: e.target.value,
+                      }
+                    }))}
+                    placeholder="例如：字节跳动"
+                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                {/* 目标岗位 */}
+                <div className="space-y-1">
+                  <label className="text-xs text-amber-600">目标岗位</label>
+                  <input
+                    type="text"
+                    value={config.interviewBackground?.position || ''}
+                    onChange={(e) => setConfig(prev => ({
+                      ...prev,
+                      interviewBackground: {
+                        ...prev.interviewBackground,
+                        position: e.target.value,
+                      }
+                    }))}
+                    placeholder="例如：高级前端工程师"
+                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                {/* JD 要点 */}
+                <div className="space-y-1">
+                  <label className="text-xs text-amber-600">JD 要点</label>
+                  <textarea
+                    value={config.interviewBackground?.jdHighlights || ''}
+                    onChange={(e) => setConfig(prev => ({
+                      ...prev,
+                      interviewBackground: {
+                        ...prev.interviewBackground,
+                        jdHighlights: e.target.value,
+                      }
+                    }))}
+                    placeholder="粘贴职位描述的关键要求，例如：
+- 精通 React/Vue，有大型项目经验
+- 熟悉性能优化与监控体系
+- 有跨端开发经验优先"
+                    rows={4}
+                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 resize-none"
+                  />
+                </div>
+
+                {/* 提示信息 */}
+                <div className="flex items-start gap-1.5 text-[10px] text-amber-500">
+                  <span>💡</span>
+                  <span>开启后，以上信息将自动注入系统 Prompt，帮助 AI 更贴合公司和岗位要求生成回答</span>
+                </div>
+              </div>
+            </div>
+
             {/* NLS 语音识别配置 */}
             <div className="space-y-3">
               <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">

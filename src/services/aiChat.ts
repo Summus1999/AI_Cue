@@ -1,11 +1,41 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { AppConfig, ProviderType, ProviderConfig } from '../store/config';
+import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+}
+
+/**
+ * 从消息列表中提取最近 N 轮对话作为上下文
+ * @param messages  当前会话的全部消息（按时间升序）
+ * @param windowSize  上下文窗口大小（轮数），1轮 = 1条user + 1条assistant
+ * @returns 用于传递给 AI 的 ChatMessage 数组
+ */
+export function buildContextHistory(
+  messages: Array<{ role: string; content: string }>,
+  windowSize: number,
+): ChatMessage[] {
+  if (windowSize <= 0 || messages.length === 0) {
+    console.log(`[Context] 上下文窗口已禁用或无历史消息 (windowSize=${windowSize}, messages=${messages.length})`);
+    return [];
+  }
+
+  // 排除 system 消息，只保留 user 和 assistant
+  const validMessages = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+  
+  // 取最近 windowSize 轮 = windowSize * 2 条消息
+  const maxMessages = windowSize * 2;
+  const history = validMessages.slice(-maxMessages);
+
+  console.log(`[Context] 构建上下文历史: windowSize=${windowSize}, 可用消息=${validMessages.length}, 提取历史=${history.length}条`);
+
+  return history.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
 }
 
 interface StreamEvent {
@@ -32,16 +62,48 @@ export function buildScreenshotFollowUpPrompt(question: string): string {
   ].join('\n');
 }
 
-function getSystemPrompt(config: AppConfig): string {
-  if (config.promptTemplateId === 'custom') {
-    if (config.customPrompt?.trim()) {
-      return config.customPrompt;
-    }
-    return PROMPT_TEMPLATES[0].prompt;
+function buildInterviewBackgroundPrompt(bg: InterviewBackground): string {
+  const parts: string[] = ['---', '## 当前面试背景'];
+
+  if (bg.company) {
+    parts.push(`- **目标公司**: ${bg.company}`);
+  }
+  if (bg.position) {
+    parts.push(`- **应聘岗位**: ${bg.position}`);
+  }
+  if (bg.jdHighlights) {
+    parts.push(`- **JD 要点**:\n${bg.jdHighlights}`);
   }
 
-  const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
-  return template?.prompt || PROMPT_TEMPLATES[0].prompt;
+  parts.push('');
+  parts.push('请根据以上面试背景，调整你的回答风格和侧重点，使回答更加贴合该公司和岗位的要求。');
+
+  return parts.join('\n');
+}
+
+function getSystemPrompt(config: AppConfig): string {
+  // 1. 获取基础 Prompt（现有逻辑不变）
+  let basePrompt: string;
+  if (config.promptTemplateId === 'custom') {
+    if (config.customPrompt?.trim()) {
+      basePrompt = config.customPrompt;
+    } else {
+      basePrompt = PROMPT_TEMPLATES[0].prompt;
+    }
+  } else {
+    const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
+    basePrompt = template?.prompt || PROMPT_TEMPLATES[0].prompt;
+  }
+
+  // 2. 注入面试背景（新增）
+  const bg = config.interviewBackground;
+  if (bg?.enabled && (bg.company || bg.position || bg.jdHighlights)) {
+    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD要点长度=${bg.jdHighlights?.length || 0}字符`);
+    const bgSection = buildInterviewBackgroundPrompt(bg);
+    return `${basePrompt}\n\n${bgSection}`;
+  }
+
+  return basePrompt;
 }
 
 async function streamWithEvent(

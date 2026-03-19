@@ -10,8 +10,9 @@ import { recognizeSpeech } from "./services/speechRecognition";
 import {
   buildScreenshotFollowUpPrompt,
   SCREENSHOT_ANALYSIS_PROMPT,
-  sendToQwenStream,
   sendToQwenStreamWithImage,
+  sendStream,
+  buildContextHistory,
 } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
@@ -170,6 +171,9 @@ function App() {
     requestText: string,
     imageBase64?: string,
   ) => {
+    // 在添加新消息之前，先捕获当前消息列表用于构建上下文历史
+    const currentMessages = [...messages];
+    
     const assistantId = generateId();
     setMessages((prev) => [
       ...prev,
@@ -231,12 +235,20 @@ function App() {
         }
       };
 
+      // 构建上下文历史（使用 setMessages 之前捕获的消息列表，取最近 N 轮）
+      const contextHistory = buildContextHistory(
+        currentMessages,
+        config.contextWindowSize ?? 5,
+      );
+
       const send = async () => {
         if (imageBase64) {
+          // 截图识别仍使用千问专用接口
           await sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk);
           return;
         }
-        await sendToQwenStream(requestText, config, onChunk);
+        // 使用新的统一流式接口，传递上下文历史
+        await sendStream(requestText, config, onChunk, contextHistory);
       };
 
       try {
