@@ -10,6 +10,8 @@ interface ShortcutHandlers {
   toggleRecording?: ShortcutCallback;
   sendMessage?: ShortcutCallback;
   takeScreenshot?: ShortcutCallback;
+  togglePassthrough?: ShortcutCallback;
+  toggleCompactMode?: ShortcutCallback;
 }
 
 // 当前注册的快捷键
@@ -44,7 +46,9 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
   console.log('当前 handlers 状态:', {
     toggleRecording: !!handlers.toggleRecording,
     sendMessage: !!handlers.sendMessage,
-    takeScreenshot: !!handlers.takeScreenshot
+    takeScreenshot: !!handlers.takeScreenshot,
+    togglePassthrough: !!handlers.togglePassthrough,
+    toggleCompactMode: !!handlers.toggleCompactMode
   });
 
   // 注册录音快捷键
@@ -90,6 +94,40 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
     console.log(`快捷键 ${config.takeScreenshot} 注册成功 -> takeScreenshot`);
   } catch (err) {
     console.error(`注册快捷键 ${config.takeScreenshot} 失败:`, err);
+  }
+
+  // 注册切换穿透模式快捷键
+  if (config.togglePassthrough) {
+    try {
+      await register(config.togglePassthrough, () => {
+        console.log(`快捷键触发: togglePassthrough, handler存在: ${!!handlers.togglePassthrough}`);
+        if (handlers.togglePassthrough) {
+          handlers.togglePassthrough();
+        } else {
+          console.error('togglePassthrough handler 未设置!');
+        }
+      });
+      console.log(`快捷键 ${config.togglePassthrough} 注册成功 -> togglePassthrough`);
+    } catch (err) {
+      console.error(`注册快捷键 ${config.togglePassthrough} 失败:`, err);
+    }
+  }
+
+  // 注册切换紧凑模式快捷键
+  if (config.toggleCompactMode) {
+    try {
+      await register(config.toggleCompactMode, () => {
+        console.log(`快捷键触发: toggleCompactMode, handler存在: ${!!handlers.toggleCompactMode}`);
+        if (handlers.toggleCompactMode) {
+          handlers.toggleCompactMode();
+        } else {
+          console.error('toggleCompactMode handler 未设置!');
+        }
+      });
+      console.log(`快捷键 ${config.toggleCompactMode} 注册成功 -> toggleCompactMode`);
+    } catch (err) {
+      console.error(`注册快捷键 ${config.toggleCompactMode} 失败:`, err);
+    }
   }
 }
 

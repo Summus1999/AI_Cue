@@ -138,3 +138,96 @@ body {
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(180, 83, 9, 0.3);
 }
+
+/* 透明度滑块样式 */
+.opacity-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, 
+    #b45309 0%, 
+    #b45309 var(--opacity-percent, 80%), 
+    rgba(180, 83, 9, 0.2) var(--opacity-percent, 80%), 
+    rgba(180, 83, 9, 0.2) 100%
+  );
+  outline: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.opacity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b45309;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.opacity-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 3px 10px rgba(180, 83, 9, 0.4);
+}
+
+.opacity-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b45309;
+  border: 2px solid white;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+/* ====== 穿透模式样式 ====== */
+
+/* 穿透模式开启时，根容器添加视觉提示 */
+[data-passthrough="true"] {
+  /* 穿透模式边框指示 */
+  outline: 2px dashed rgba(217, 119, 6, 0.6) !important;
+  outline-offset: -2px;
+}
+
+/* 穿透模式下，所有交互元素强制保持可点击 */
+[data-passthrough="true"] button,
+[data-passthrough="true"] input,
+[data-passthrough="true"] textarea,
+[data-passthrough="true"] select,
+[data-passthrough="true"] a,
+[data-passthrough="true"] [data-interactive="true"],
+[data-passthrough="true"] [data-tauri-drag-region],
+[data-passthrough="true"] [role="button"] {
+  pointer-events: auto !important;
+}
+
+/* ====== 紧凑模式样式 ====== */
+.compact-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 80px;
+  max-height: 100vh;
+}
+
+.compact-content {
+  max-height: 200px;
+  min-height: 40px;
+  overflow-y: auto;
+}
+
+/* 流式输出闪烁光标 */
+.streaming-cursor::after {
+  content: '█';
+  animation: blink 1s step-end infinite;
+  color: #b45309;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}

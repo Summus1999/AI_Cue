@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
+import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
@@ -14,9 +15,12 @@ import {
 } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
+import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
+import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
 import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 // 消息类型定义
 interface Message {
@@ -80,6 +84,12 @@ function getSpeechErrorMessage(error: unknown): string {
 }
 
 function App() {
+  // 穿透模式状态
+  const [passthroughActive, setPassthroughActive] = useState(false);
+
+  // 紧凑模式状态
+  const [compactMode, setCompactModeState] = useState(false);
+
   // 消息列表状态
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -351,6 +361,42 @@ function App() {
     restoreLastSession();
   }, []);
 
+  // 启动时恢复窗口透明度和悬停恢复功能
+  useEffect(() => {
+    async function restoreWindowOpacity() {
+      try {
+        const config = await loadConfig();
+        if (config.window?.opacity) {
+          await initWindowOpacity(config.window.opacity);
+        }
+        // 初始化悬停恢复功能
+        if (config.window?.hoverRestore?.enabled) {
+          enableHoverRestore(true, config.window.opacity ?? 0.8);
+        }
+        // 恢复紧凑模式状态
+        if (config.window?.compactMode?.enabled) {
+          initCompactMode(true);
+          setCompactModeState(true);
+        }
+      } catch (error) {
+        console.error('Failed to restore window opacity:', error);
+      }
+    }
+    restoreWindowOpacity();
+    
+    // 组件卸载时清理悬停恢复资源和穿透模式
+    return () => {
+      cleanupHoverRestore();
+      cleanupPassthrough();
+    };
+  }, []);
+
+  // 紧凑模式切换处理函数
+  const handleToggleCompactMode = async () => {
+    const newState = await toggleCompactMode();
+    setCompactModeState(newState);
+  };
+
   // 初始化快捷键
   useEffect(() => {
     const initShortcuts = async () => {
@@ -360,16 +406,43 @@ function App() {
           toggleRecording: () => toggleRecordingRef.current(),
           sendMessage: () => handleSendRef.current(),
           takeScreenshot: () => handleScreenshotRef.current(),
+          togglePassthrough: async () => {
+            const newState = await togglePassthrough();
+            setPassthroughActive(newState);
+          },
+          toggleCompactMode: handleToggleCompactMode,
         });
         
         const config = await loadConfig();
         await initializeShortcuts(config.shortcutConfig);
         console.log('快捷键初始化完成');
+        
+        // 恢复窗口位置
+        const mode = config.window?.compactMode?.enabled ? 'compact' : 'main';
+        restoreWindowBounds(mode);
       } catch (err) {
         console.error('快捷键初始化失败:', err);
       }
     };
     initShortcuts();
+  }, []);
+
+  // 注册窗口移动/缩放事件，保存窗口位置
+  useEffect(() => {
+    const mainWindow = getCurrentWindow();
+    
+    const unlistenMove = mainWindow.onMoved(() => {
+      saveWindowBounds(); // 根据 compactMode 状态自动传入正确的 mode
+    });
+    
+    const unlistenResize = mainWindow.onResized(() => {
+      saveWindowBounds();
+    });
+    
+    return () => {
+      unlistenMove.then(fn => fn());
+      unlistenResize.then(fn => fn());
+    };
   }, []);
 
   // 发送消息并调用 AI 生成回答
@@ -393,6 +466,18 @@ function App() {
     setLatestScreenshotContext(null);
   };
 
+  // 获取最新 AI 回答（用于紧凑模式显示）
+  const latestAIMessage = useMemo(() => {
+    if (!messages || messages.length === 0) return null;
+    // 从后往前找最新的 AI 消息
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') {
+        return messages[i].content;
+      }
+    }
+    return null;
+  }, [messages]);
+
   // 打开会话列表
   const handleOpenSessions = async () => {
     try {
@@ -402,6 +487,24 @@ function App() {
     } catch (error) {
       console.error('Failed to load sessions:', error);
     }
+  };
+
+  // 打开设置页面（紧凑模式下自动切换回完整模式）
+  const handleOpenSettings = async () => {
+    if (compactMode) {
+      await setCompactMode(false);
+      setCompactModeState(false);
+    }
+    setCurrentView('settings');
+  };
+
+  // 打开快捷键设置（紧凑模式下自动切换回完整模式）
+  const handleOpenShortcuts = async () => {
+    if (compactMode) {
+      await setCompactMode(false);
+      setCompactModeState(false);
+    }
+    setCurrentView('shortcuts');
   };
 
   // 选择会话
@@ -671,7 +774,11 @@ function App() {
   const handleMinimize = () => {};
 
   // 关闭窗口
-  const handleClose = () => {};
+  const handleClose = async () => {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const mainWindow = getCurrentWindow();
+    await mainWindow.close();
+  };
 
   // 格式化录音时长
   const formatDuration = (seconds: number) => {
@@ -680,6 +787,25 @@ function App() {
     const ms = Math.floor((seconds % 1) * 10);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
   };
+
+  // 紧凑模式渲染
+  if (compactMode && currentView === 'main') {
+    return (
+      <div className="relative flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
+        <CompactView
+          latestAIMessage={latestAIMessage}
+          isStreaming={isGenerating}
+          onExpand={handleToggleCompactMode}
+          onClose={handleClose}
+          passthroughActive={passthroughActive}
+          onTogglePassthrough={async () => {
+            const newState = await togglePassthrough();
+            setPassthroughActive(newState);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
@@ -719,9 +845,54 @@ function App() {
           >
             <History className="w-3.5 h-3.5 text-amber-700" />
           </button>
+          {/* 穿透模式切换按钮 */}
+          <button
+            onClick={async () => {
+              const newState = await togglePassthrough();
+              setPassthroughActive(newState);
+            }}
+            className={`p-1 rounded transition-colors ${
+              passthroughActive 
+                ? 'bg-amber-600 text-white' 
+                : 'text-amber-700 hover:bg-amber-200/50'
+            }`}
+            title={passthroughActive ? '点击穿透：开启' : '点击穿透：关闭'}
+          >
+            {/* 鼠标指针图标 */}
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              {passthroughActive ? (
+                // 虚线鼠标指针（穿透开启）
+                <path d="M6.672 1.911a1 1 0 10-1.932.518l.259.966a1 1 0 001.932-.518l-.26-.966zM2.429 4.74a1 1 0 10-.517 1.932l.966.259a1 1 0 00.517-1.932l-.966-.26zm8.814-.569a1 1 0 00-1.415-1.414l-.707.707a1 1 0 101.414 1.415l.708-.708zm-7.071 7.072l.707-.708A1 1 0 003.465 9.12l-.708.707a1 1 0 001.415 1.415zm3.2-5.171a1 1 0 00-1.3 1.3l4 10a1 1 0 001.823.075l1.38-2.759 3.018 3.02a1 1 0 001.414-1.415l-3.019-3.02 2.76-1.379a1 1 0 00-.076-1.822l-10-4z" strokeDasharray="3 2" />
+              ) : (
+                // 实心鼠标指针（穿透关闭）
+                <path fillRule="evenodd" d="M6.672 1.911a1 1 0 10-1.932.518l.259.966a1 1 0 001.932-.518l-.26-.966zM2.429 4.74a1 1 0 10-.517 1.932l.966.259a1 1 0 00.517-1.932l-.966-.26zm8.814-.569a1 1 0 00-1.415-1.414l-.707.707a1 1 0 101.414 1.415l.708-.708zm-7.071 7.072l.707-.708A1 1 0 003.465 9.12l-.708.707a1 1 0 001.415 1.415zm3.2-5.171a1 1 0 00-1.3 1.3l4 10a1 1 0 001.823.075l1.38-2.759 3.018 3.02a1 1 0 001.414-1.415l-3.019-3.02 2.76-1.379a1 1 0 00-.076-1.822l-10-4z" clipRule="evenodd" />
+              )}
+            </svg>
+          </button>
+          {/* 紧凑模式切换按钮 */}
+          <button
+            onClick={handleToggleCompactMode}
+            className="p-1 rounded text-amber-700 hover:bg-amber-200/50 transition-colors"
+            title={compactMode ? '展开为完整模式' : '切换为紧凑模式'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              {compactMode ? (
+                // 展开图标：四角箭头向外扩展
+                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L5.414 15H7a1 1 0 010 2H3a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clipRule="evenodd" />
+              ) : (
+                // 收缩图标：上下横线 + 中间向内收缩箭头
+                <>
+                  <path d="M4 3h12a1 1 0 110 2H4a1 1 0 110-2z" />
+                  <path d="M7.293 7.707a1 1 0 011.414 0L10 9.0l1.293-1.293a1 1 0 111.414 1.414l-2 2a1 1 0 01-1.414 0l-2-2a1 1 0 010-1.414z" />
+                  <path d="M7.293 12.293a1 1 0 011.414 0L10 11l1.293 1.293a1 1 0 01-1.414 1.414l-2-2a1 1 0 010-1.414z" transform="rotate(180 10 12)" />
+                  <path d="M4 15h12a1 1 0 110 2H4a1 1 0 110-2z" />
+                </>
+              )}
+            </svg>
+          </button>
           {/* 快捷键设置按钮 */}
           <button
-            onClick={() => setCurrentView('shortcuts')}
+            onClick={handleOpenShortcuts}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
             title="快捷键设置"
           >
@@ -729,7 +900,7 @@ function App() {
           </button>
           {/* 设置按钮 */}
           <button
-            onClick={() => setCurrentView('settings')}
+            onClick={handleOpenSettings}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
             title="设置"
           >
@@ -755,6 +926,7 @@ function App() {
       {/* 消息列表区域 */}
       <div
         ref={scrollRef}
+        data-interactive="true"
         className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4"
         onScroll={handleScroll}
       >
@@ -807,7 +979,7 @@ function App() {
       )}
 
       {/* 输入区域 */}
-      <div className="p-4 bg-amber-100/50 border-t border-amber-200">
+      <div data-interactive="true" className="p-4 bg-amber-100/50 border-t border-amber-200">
         <div className="relative flex items-end gap-2">
           {/* 语音输入按钮 */}
           <button

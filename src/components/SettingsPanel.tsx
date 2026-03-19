@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
+import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
 
 interface SettingsPanelProps {
@@ -400,6 +401,78 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     ? '中阈值：平衡灵敏度与准确性，推荐' 
                     : '高阈值：需较大音量触发，适合嘈杂环境'}
               </p>
+            </div>
+
+            {/* 窗口外观设置 */}
+            <div className="space-y-3 pt-3 border-t border-amber-200">
+              <h3 className="text-sm font-semibold text-amber-800">窗口外观</h3>
+              
+              {/* 透明度滑块 */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-amber-700">窗口透明度</label>
+                  <span className="text-xs font-mono text-amber-600">{Math.round(config.window.opacity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="20"
+                  max="100"
+                  step="5"
+                  value={Math.round(config.window.opacity * 100)}
+                  onChange={(e) => {
+                    const percent = Number(e.target.value);
+                    const opacity = percent / 100;
+                    // 更新 CSS 变量用于滑块背景填充
+                    e.target.style.setProperty('--opacity-percent', `${percent}%`);
+                    // 实时预览
+                    setWindowOpacity(opacity);
+                    // 更新配置状态
+                    setConfig(prev => ({ ...prev, window: { ...prev.window, opacity } }));
+                  }}
+                  className="opacity-slider w-full"
+                  style={{ '--opacity-percent': `${Math.round(config.window.opacity * 100)}%` } as React.CSSProperties}
+                />
+                <div className="flex justify-between text-[10px] text-amber-500">
+                  <span>20%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+
+              {/* 悬停恢复开关 - iOS 风格 */}
+              <div className="flex items-center justify-between mt-4">
+                <div>
+                  <label className="text-xs font-medium text-amber-700">鼠标悬停恢复不透明</label>
+                  <p className="text-[10px] text-amber-500 mt-0.5">鼠标移入窗口时自动恢复为完全不透明</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newEnabled = !config.window?.hoverRestore?.enabled;
+                    setConfig(prev => ({
+                      ...prev,
+                      window: {
+                        ...prev.window,
+                        hoverRestore: { enabled: newEnabled }
+                      }
+                    }));
+                    // 实时生效
+                    enableHoverRestore(newEnabled, config.window?.opacity ?? 0.8);
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ease-in-out ${
+                    config.window?.hoverRestore?.enabled ? 'bg-amber-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white shadow-md ${
+                      config.window?.hoverRestore?.enabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                    style={{
+                      transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+                    }}
+                  />
+                </button>
+              </div>
             </div>
 
             {/* 错误提示 */}

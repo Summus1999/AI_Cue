@@ -6,6 +6,31 @@ export interface ShortcutConfig {
   toggleRecording: string;  // 录制音频开始/停止
   sendMessage: string;      // 发送消息
   takeScreenshot: string;   // 截图
+  togglePassthrough: string; // 切换穿透模式
+  toggleCompactMode: string; // 切换紧凑模式
+}
+
+// 窗口边界配置
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// 窗口配置接口
+export interface WindowConfig {
+  opacity: number;              // 0.2~1.0，默认 0.8
+  hoverRestore: {
+    enabled: boolean;           // 默认 true
+  };
+  bounds: {
+    main: WindowBounds | null;
+    compact: WindowBounds | null;
+  };
+  compactMode: {
+    enabled: boolean;           // 默认 false
+  };
 }
 
 // 默认快捷键配置
@@ -13,6 +38,8 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   toggleRecording: 'CommandOrControl+Shift+R',
   sendMessage: 'CommandOrControl+Enter',
   takeScreenshot: 'CommandOrControl+Shift+S',
+  togglePassthrough: 'CommandOrControl+Shift+T',
+  toggleCompactMode: 'CommandOrControl+Shift+M',
 };
 
 // 快捷键功能名称映射
@@ -20,6 +47,8 @@ export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
   toggleRecording: '录制音频 (开始/停止)',
   sendMessage: '发送消息',
   takeScreenshot: '区域截图',
+  togglePassthrough: '切换穿透模式',
+  toggleCompactMode: '切换紧凑模式',
 };
 
 // 支持的千问模型列表
@@ -118,6 +147,8 @@ export interface AppConfig {
   localDocPath: string;
   // 快捷键配置
   shortcutConfig: ShortcutConfig;
+  // 窗口配置
+  window: WindowConfig;
 }
 
 // 默认配置
@@ -135,6 +166,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   highQualityRepoUrls: '',
   localDocPath: '',
   shortcutConfig: DEFAULT_SHORTCUT_CONFIG,
+  window: {
+    opacity: 0.8,
+    hoverRestore: { enabled: true },
+    bounds: { main: null, compact: null },
+    compactMode: { enabled: false },
+  },
 };
 
 // Store 实例（延迟初始化）
@@ -166,7 +203,7 @@ function loadFromLocalStorage(): AppConfig {
     if (saved) {
       const parsed = JSON.parse(saved);
       console.log('从 localStorage 加载配置:', parsed);
-      return {
+      const config: AppConfig = {
         provider: 'qwen',
         model: parsed.model || DEFAULT_CONFIG.model,
         apiKey: parsed.apiKey || '',
@@ -183,7 +220,9 @@ function loadFromLocalStorage(): AppConfig {
           ...DEFAULT_SHORTCUT_CONFIG,
           ...(parsed.shortcutConfig || {}),
         },
+        window: parsed.window || DEFAULT_CONFIG.window,
       };
+      return validateAndFixConfig(config);
     }
   } catch (err) {
     console.error('localStorage 读取失败:', err);
@@ -227,6 +266,7 @@ export async function loadConfig(): Promise<AppConfig> {
     const highQualityRepoUrls = await store.get<string>('highQualityRepoUrls');
     const localDocPath = await store.get<string>('localDocPath');
     const shortcutConfig = await store.get<ShortcutConfig>('shortcutConfig');
+    const windowConfig = await store.get<WindowConfig>('window');
 
     return {
       provider: 'qwen',
@@ -245,6 +285,7 @@ export async function loadConfig(): Promise<AppConfig> {
         ...DEFAULT_SHORTCUT_CONFIG,
         ...(shortcutConfig || {}),
       },
+      window: windowConfig || DEFAULT_CONFIG.window,
     };
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);
@@ -276,6 +317,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('highQualityRepoUrls', config.highQualityRepoUrls);
     await store.set('localDocPath', config.localDocPath);
     await store.set('shortcutConfig', config.shortcutConfig);
+    await store.set('window', config.window);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {
@@ -283,6 +325,33 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     useLocalStorage = true;
     saveToLocalStorage(config);
   }
+}
+
+// 验证并修复配置
+function validateAndFixConfig(config: AppConfig): AppConfig {
+  const validatedConfig = { ...config };
+  
+  // 验证 window 配置
+  if (!validatedConfig.window) {
+    validatedConfig.window = DEFAULT_CONFIG.window;
+  } else {
+    if (typeof validatedConfig.window.opacity !== 'number' || 
+        validatedConfig.window.opacity < 0.2 || 
+        validatedConfig.window.opacity > 1.0) {
+      validatedConfig.window.opacity = DEFAULT_CONFIG.window.opacity;
+    }
+    if (!validatedConfig.window.hoverRestore) {
+      validatedConfig.window.hoverRestore = DEFAULT_CONFIG.window.hoverRestore;
+    }
+    if (!validatedConfig.window.bounds) {
+      validatedConfig.window.bounds = DEFAULT_CONFIG.window.bounds;
+    }
+    if (!validatedConfig.window.compactMode) {
+      validatedConfig.window.compactMode = DEFAULT_CONFIG.window.compactMode;
+    }
+  }
+  
+  return validatedConfig;
 }
 
 // 验证配置是否完整（API Key 必填）
