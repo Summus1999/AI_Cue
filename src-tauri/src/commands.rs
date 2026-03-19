@@ -1,4 +1,4 @@
-// Tauri 命令 - 音频录制、语音识别和 AI 对话
+// Tauri 命令 - 音频录制、语音识别、AI 对话和数据库操作
 
 use crate::qwen::ChatMessage;
 use tauri::AppHandle;
@@ -74,4 +74,54 @@ pub async fn qwen_chat_stream_vision(
         local_doc_path,
     )
     .await
+}
+
+// ==================== 数据库命令 ====================
+
+// 创建新会话
+#[tauri::command]
+pub fn create_session(db: tauri::State<'_, crate::database::Database>) -> Result<serde_json::Value, String> {
+    crate::database::create_session(&db)
+}
+
+// 列出所有会话
+#[tauri::command]
+pub fn list_sessions(db: tauri::State<'_, crate::database::Database>) -> Result<Vec<serde_json::Value>, String> {
+    crate::database::list_sessions(&db)
+}
+
+// 获取会话的所有消息
+#[tauri::command]
+pub fn get_session_messages(db: tauri::State<'_, crate::database::Database>, session_id: String) -> Result<Vec<serde_json::Value>, String> {
+    crate::database::get_session_messages(&db, &session_id)
+}
+
+// 保存消息
+#[tauri::command]
+pub fn save_message(db: tauri::State<'_, crate::database::Database>, session_id: String, role: String, content: String, image: Option<String>) -> Result<serde_json::Value, String> {
+    crate::database::save_message(&db, &session_id, &role, &content, image.as_deref())
+}
+
+// 更新会话标题
+#[tauri::command]
+pub fn update_session_title(db: tauri::State<'_, crate::database::Database>, session_id: String, title: String) -> Result<(), String> {
+    crate::database::update_session_title(&db, &session_id, &title)
+}
+
+// 删除会话
+#[tauri::command]
+pub fn delete_session(db: tauri::State<'_, crate::database::Database>, session_id: String) -> Result<(), String> {
+    crate::database::delete_session(&db, &session_id)
+}
+
+// 搜索会话
+#[tauri::command]
+pub fn search_sessions(db: tauri::State<'_, crate::database::Database>, keyword: String) -> Result<Vec<serde_json::Value>, String> {
+    crate::database::search_sessions(&db, &keyword)
+}
+
+// 获取最近活跃的会话
+#[tauri::command]
+pub fn get_last_active_session(db: tauri::State<'_, crate::database::Database>) -> Result<Option<serde_json::Value>, String> {
+    crate::database::get_last_active_session(&db)
 }

@@ -26,6 +26,7 @@ hmac = "0.12"
 sha1 = "0.10"
 base64 = "0.22"
 uuid = { version = "1.10", features = ["v4"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 

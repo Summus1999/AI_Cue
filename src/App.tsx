@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
+import SessionList from "./components/SessionList";
 import { MessageContent } from "./components/MessageContent";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
@@ -13,6 +14,7 @@ import {
 } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
+import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 
@@ -97,8 +99,14 @@ function App() {
   // 最近一次截图上下文
   const [latestScreenshotContext, setLatestScreenshotContext] = useState<ScreenshotContext | null>(null);
   
+  // 当前会话 ID（延迟创建：首次发送消息时才创建）
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
   // 当前视图：主界面 | 设置页面 | 快捷键设置
-  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts' | 'sessions'>('main');
+  
+  // 会话列表状态
+  const [sessions, setSessions] = useState<Session[]>([]);
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -170,6 +178,30 @@ function App() {
     ]);
 
     setIsGenerating(true);
+    
+    // 捕获当前会话 ID，处理闭包问题
+    let sessionId = currentSessionId;
+    let isNewSession = false;
+    
+    // 保存用户消息到数据库（延迟创建会话）
+    try {
+      if (!sessionId) {
+        const newSession = await createSession();
+        sessionId = newSession.id;
+        setCurrentSessionId(sessionId);
+        isNewSession = true;
+      }
+      await saveMessage(sessionId, 'user', userContent, imageBase64);
+      // 如果是新会话，用用户消息的前 20 个字符作为标题
+      if (isNewSession) {
+        await updateSessionTitle(sessionId, userContent.slice(0, 20));
+      }
+    } catch (dbError) {
+      console.error('Failed to save user message:', dbError);
+    }
+    
+    // 用于收集完整的 AI 回复
+    let fullAssistantContent = '';
 
     try {
       const config = await loadConfig();
@@ -178,7 +210,14 @@ function App() {
       const onChunk = (content: string, done: boolean) => {
         if (!done && content) {
           hasReceivedContent = true;
+          fullAssistantContent += content;
           appendAssistantChunk(assistantId, content);
+        }
+        // AI 回复完成时保存到数据库
+        if (done && sessionId && fullAssistantContent) {
+          saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
+            console.error('Failed to save assistant message:', err);
+          });
         }
       };
 
@@ -195,6 +234,7 @@ function App() {
       } catch (error) {
         if (imageBase64 && !hasReceivedContent) {
           updateAssistantMessage(assistantId, "");
+          fullAssistantContent = '';
           hasReceivedContent = false;
           try {
             await send();
@@ -223,7 +263,7 @@ function App() {
     } finally {
       setIsGenerating(false);
     }
-  }, [appendAssistantChunk, updateAssistantMessage]);
+  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId]);
 
   // 判断是否在底部附近
   const isNearBottom = useCallback((element: HTMLDivElement) => {
@@ -289,6 +329,28 @@ function App() {
     };
   }, [isRecording]);
 
+  // 启动时恢复上次会话
+  useEffect(() => {
+    async function restoreLastSession() {
+      try {
+        const lastSession = await getLastActiveSession();
+        if (lastSession) {
+          const msgs = await getSessionMessages(lastSession.id);
+          setMessages(msgs.map(m => ({
+            id: generateId(),
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            timestamp: m.created_at || Date.now(),
+          })));
+          setCurrentSessionId(lastSession.id);
+        }
+      } catch (error) {
+        console.error('Failed to restore last session:', error);
+      }
+    }
+    restoreLastSession();
+  }, []);
+
   // 初始化快捷键
   useEffect(() => {
     const initShortcuts = async () => {
@@ -322,6 +384,81 @@ function App() {
       : question;
 
     await requestAssistantReply(question, requestText, imageBase64);
+  };
+
+  // 新建会话（清空消息并重置会话 ID，延迟创建）
+  const handleClear = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+    setLatestScreenshotContext(null);
+  };
+
+  // 打开会话列表
+  const handleOpenSessions = async () => {
+    try {
+      const sessionList = await listSessions();
+      setSessions(sessionList);
+      setCurrentView('sessions');
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
+    }
+  };
+
+  // 选择会话
+  const handleSelectSession = async (session: Session) => {
+    try {
+      const msgs = await getSessionMessages(session.id);
+      setMessages(msgs.map(m => ({
+        id: generateId(),
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: m.created_at || Date.now(),
+      })));
+      setCurrentSessionId(session.id);
+      setCurrentView('main');
+    } catch (error) {
+      console.error('Failed to load session messages:', error);
+    }
+  };
+
+  // 删除会话
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId);
+      // 刷新列表
+      const sessionList = await listSessions();
+      setSessions(sessionList);
+      // 如果删的是当前活跃会话，重置
+      if (sessionId === currentSessionId) {
+        setMessages([]);
+        setCurrentSessionId(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
+  };
+
+  // 搜索会话
+  const handleSearchSessions = async (keyword: string) => {
+    try {
+      if (keyword.trim()) {
+        const results = await searchSessions(keyword);
+        setSessions(results);
+      } else {
+        const sessionList = await listSessions();
+        setSessions(sessionList);
+      }
+    } catch (error) {
+      console.error('Failed to search sessions:', error);
+    }
+  };
+
+  // 新建会话（从会话列表触发）
+  const handleNewSessionFromList = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+    setLatestScreenshotContext(null);
+    setCurrentView('main');
   };
 
   // 处理键盘事件
@@ -566,6 +703,22 @@ function App() {
 
         {/* 右侧：窗口控制按钮 */}
         <div className="flex items-center gap-1">
+          {/* 新建会话按钮 */}
+          <button
+            onClick={handleClear}
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
+            title="新建会话"
+          >
+            <Plus className="w-3.5 h-3.5 text-amber-700" />
+          </button>
+          {/* 会话历史按钮 */}
+          <button
+            onClick={handleOpenSessions}
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
+            title="会话历史"
+          >
+            <History className="w-3.5 h-3.5 text-amber-700" />
+          </button>
           {/* 快捷键设置按钮 */}
           <button
             onClick={() => setCurrentView('shortcuts')}
@@ -721,6 +874,21 @@ function App() {
           <ShortcutSettingsPanel
             isOpen={true}
             onClose={() => setCurrentView('main')}
+          />
+        </div>
+      )}
+
+      {/* 会话历史页面 - 全页面覆盖 */}
+      {currentView === 'sessions' && (
+        <div className="absolute inset-0 z-50">
+          <SessionList
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSessionFromList}
+            onDeleteSession={handleDeleteSession}
+            onSearch={handleSearchSessions}
+            onBack={() => setCurrentView('main')}
           />
         </div>
       )}
