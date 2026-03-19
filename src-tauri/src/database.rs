@@ -167,10 +167,11 @@ pub fn save_message(
 /// 更新会话标题
 pub fn update_session_title(db: &Database, session_id: &str, title: &str) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
     
     conn.execute(
-        "UPDATE sessions SET title = ?1 WHERE id = ?2",
-        params![title, session_id]
+        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+        params![title, now, session_id]
     ).map_err(|e| e.to_string())?;
     
     Ok(())

@@ -31,7 +31,7 @@ export async function listSessions(): Promise<Session[]> {
 
 // 获取会话的所有消息
 export async function getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
-  return await invoke('get_session_messages', { session_id: sessionId });
+  return await invoke('get_session_messages', { sessionId });
 }
 
 // 保存消息到数据库
@@ -41,17 +41,17 @@ export async function saveMessage(
   content: string,
   image?: string,
 ): Promise<SessionMessage> {
-  return await invoke('save_message', { session_id: sessionId, role, content, image: image || null });
+  return await invoke('save_message', { sessionId, role, content, image: image || null });
 }
 
 // 更新会话标题
 export async function updateSessionTitle(sessionId: string, title: string): Promise<void> {
-  return await invoke('update_session_title', { session_id: sessionId, title });
+  return await invoke('update_session_title', { sessionId, title });
 }
 
 // 删除会话及其所有消息
 export async function deleteSession(sessionId: string): Promise<void> {
-  return await invoke('delete_session', { session_id: sessionId });
+  return await invoke('delete_session', { sessionId });
 }
 
 // 搜索会话（按消息内容关键词）
