@@ -2,6 +2,7 @@
 
 use tauri::Manager;
 
+mod ai;
 mod audio;
 mod commands;
 mod database;
@@ -20,15 +21,27 @@ pub fn run() {
             let db = database::init_database(&app_data_dir)
                 .expect("数据库初始化失败");
             app.manage(db);
+            
+            // 初始化 Provider 注册表
+            app.manage(ai::ProviderRegistry::new());
+            
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // 音频命令
             commands::start_audio_recording,
             commands::stop_audio_recording,
             commands::nls_recognize_speech,
+            // 统一 AI 命令（新增）
+            commands::ai_chat,
+            commands::ai_chat_stream,
+            commands::ai_test_connection,
+            commands::ai_list_providers,
+            // 向下兼容：保留原有千问命令
             commands::qwen_chat,
             commands::qwen_chat_stream,
             commands::qwen_chat_stream_vision,
+            // 数据库命令
             commands::create_session,
             commands::list_sessions,
             commands::get_session_messages,
@@ -37,6 +50,7 @@ pub fn run() {
             commands::delete_session,
             commands::search_sessions,
             commands::get_last_active_session,
+            // 截图命令
             screenshot::capture_full_screen,
             screenshot::crop_screenshot,
             screenshot::cancel_screenshot,

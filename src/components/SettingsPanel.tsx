@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
-import { loadConfig, saveConfig, QWEN_MODELS, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig } from '../store/config';
+import { ProviderSelector } from './ProviderSelector';
+import { loadConfig, saveConfig, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig, ProviderType, ProviderConfig } from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -18,7 +19,6 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [errorMessage, setErrorMessage] = useState('');
   
   // 下拉框展开状态
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isNlsRegionDropdownOpen, setIsNlsRegionDropdownOpen] = useState(false);
   const [isPromptDropdownOpen, setIsPromptDropdownOpen] = useState(false);
 
@@ -61,8 +61,26 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     }
   };
 
-  // 获取当前选中模型的描述
-  const selectedModel = QWEN_MODELS.find(m => m.id === config.model);
+  // 处理 Provider 切换
+  const handleProviderChange = (newProvider: ProviderType) => {
+    setConfig(prev => ({
+      ...prev,
+      activeProvider: newProvider,
+    }));
+    if (errorMessage) setErrorMessage('');
+  };
+
+  // 处理 Provider 配置变更
+  const handleProviderConfigChange = (newConfig: ProviderConfig) => {
+    setConfig(prev => ({
+      ...prev,
+      providerConfigs: {
+        ...prev.providerConfigs,
+        [prev.activeProvider]: newConfig,
+      },
+    }));
+    if (errorMessage) setErrorMessage('');
+  };
 
   if (!isOpen) return null;
 
@@ -94,75 +112,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </div>
         ) : (
           <>
-            {/* API Key 设置（必填） */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
-                API Key <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="password"
-                value={config.apiKey}
-                onChange={(e) => {
-                  setConfig(prev => ({ ...prev, apiKey: e.target.value }));
-                  if (errorMessage) setErrorMessage('');
-                }}
-                placeholder="输入阿里云 DashScope API Key"
-                className={`w-full px-3 py-2.5 bg-white/80 border rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 transition-colors ${
-                  saveStatus === 'error' && !config.apiKey 
-                    ? 'border-red-400' 
-                    : 'border-amber-300'
-                }`}
-              />
-              <p className="text-[10px] text-amber-600">
-                必填，请从阿里云 DashScope 控制台获取
-              </p>
-            </div>
-
-            {/* 模型版本选择 */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
-                千问模型 <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <button
-                  onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 hover:border-amber-400 transition-colors"
-                >
-                  <span>{selectedModel?.name || config.model}</span>
-                  <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {/* Model 下拉菜单 */}
-                {isModelDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-white border border-amber-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto scrollbar-hide">
-                    {QWEN_MODELS.map((model) => (
-                      <button
-                        key={model.id}
-                        onClick={() => {
-                          setConfig(prev => ({ ...prev, model: model.id }));
-                          setIsModelDropdownOpen(false);
-                        }}
-                        className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-2 ${
-                          config.model === model.id 
-                            ? 'bg-amber-100 text-amber-900' 
-                            : 'text-amber-800 hover:bg-amber-50'
-                        }`}
-                      >
-                        {config.model === model.id && <Check className="w-4 h-4 text-amber-600" />}
-                        <span className={config.model === model.id ? '' : 'pl-6'}>{model.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              
-              {/* 模型描述 */}
-              {selectedModel && (
-                <p className="text-xs text-amber-600 leading-relaxed">
-                  {selectedModel.description}
-                </p>
-              )}
-            </div>
+            {/* AI Provider 选择（新增） */}
+            <ProviderSelector
+              activeProvider={config.activeProvider}
+              providerConfig={config.providerConfigs[config.activeProvider]}
+              onProviderChange={handleProviderChange}
+              onConfigChange={handleProviderConfigChange}
+            />
 
             {/* 分隔线 */}
             <div className="border-t border-amber-200" />

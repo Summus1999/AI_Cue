@@ -1,6 +1,73 @@
 // 配置管理 - 使用 Tauri Store 插件持久化（带 localStorage 备用）
 import { Store } from '@tauri-apps/plugin-store';
 
+// ==================== Provider 配置类型（新增）====================
+
+export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
+
+export interface ProviderConfig {
+  apiKey: string;
+  baseUrl?: string;             // 自定义 Base URL
+  model: string;                // 当前选中的模型
+  customModels?: string[];      // 用户自定义模型 ID 列表
+}
+
+// Provider 元信息（用于前端展示）
+export interface ProviderMeta {
+  id: ProviderType;
+  name: string;
+  description: string;
+  defaultBaseUrl: string;
+  supportsCustomUrl: boolean;
+}
+
+// Provider 列表
+export const PROVIDERS: ProviderMeta[] = [
+  {
+    id: 'qwen',
+    name: '阿里云千问 (DashScope)',
+    description: '阿里云大模型平台，支持 qwen 系列模型',
+    defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    supportsCustomUrl: true,
+  },
+  {
+    id: 'openai_compat',
+    name: 'OpenAI 兼容接口',
+    description: '支持 OpenAI、DeepSeek、Ollama 等兼容接口',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    supportsCustomUrl: true,
+  },
+  {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    description: 'Anthropic Claude API',
+    defaultBaseUrl: 'https://api.anthropic.com',
+    supportsCustomUrl: true,
+  },
+];
+
+// Provider 默认模型
+export const PROVIDER_MODELS: Record<ProviderType, { id: string; name: string; description: string }[]> = {
+  qwen: [
+    { id: 'qwen-turbo', name: 'Qwen Turbo', description: '快速响应，成本低，适合简单问题' },
+    { id: 'qwen-plus', name: 'Qwen Plus', description: '平衡性能与质量，适合大多数场景' },
+    { id: 'qwen-max', name: 'Qwen Max', description: '最强性能，适合复杂推理和代码问题' },
+    { id: 'qwen-coder-plus', name: 'Qwen Coder Plus', description: '专门针对编程优化' },
+    { id: 'qwen-vl-max', name: 'Qwen VL Max', description: '视觉理解模型，支持截图识别' },
+  ],
+  openai_compat: [
+    { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI 多模态旗舰模型' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '轻量级，性价比高' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'DeepSeek 对话模型' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek R1', description: 'DeepSeek 推理模型' },
+  ],
+  claude: [
+    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: '平衡性能与质量' },
+    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', description: '最强推理能力' },
+    { id: 'claude-haiku-3-5-20241022', name: 'Claude 3.5 Haiku', description: '快速响应' },
+  ],
+};
+
 // 快捷键配置接口
 export interface ShortcutConfig {
   toggleRecording: string;  // 录制音频开始/停止
@@ -51,7 +118,8 @@ export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
   toggleCompactMode: '切换紧凑模式',
 };
 
-// 支持的千问模型列表
+// 支持的千问模型列表（已弃用，请使用 PROVIDER_MODELS）
+/** @deprecated 请使用 PROVIDER_MODELS */
 export const QWEN_MODELS = [
   { id: 'qwen-turbo', name: 'qwen-turbo', description: '快速响应，成本低，适合简单问题' },
   { id: 'qwen-plus', name: 'qwen-plus', description: '平衡性能与质量，适合大多数场景' },
@@ -129,9 +197,17 @@ export const PROMPT_TEMPLATES = [
 
 // 配置类型定义
 export interface AppConfig {
-  provider: 'qwen';
-  model: string;
-  apiKey: string;  // DashScope API Key
+  // ==================== 多 Provider 配置（新增）====================
+  activeProvider: ProviderType;                       // 当前激活的 Provider
+  providerConfigs: Record<ProviderType, ProviderConfig>;  // 每个 Provider 独立配置
+  
+  // ==================== 废弃字段（保留兼容）====================
+  /** @deprecated 使用 providerConfigs.qwen.apiKey */
+  apiKey?: string;
+  /** @deprecated 使用 providerConfigs.qwen.model */
+  model?: string;
+  
+  // ==================== 其他配置 ====================
   speechThreshold: number;  // 语音识别阈值，范围 0-100
   // NLS speech recognition (optional, for voice input)
   nlsAppKey: string;
@@ -153,9 +229,26 @@ export interface AppConfig {
 
 // 默认配置
 export const DEFAULT_CONFIG: AppConfig = {
-  provider: 'qwen',
-  model: 'qwen-turbo',
-  apiKey: '',
+  // 多 Provider 配置
+  activeProvider: 'qwen',
+  providerConfigs: {
+    qwen: {
+      apiKey: '',
+      model: 'qwen-plus',
+      baseUrl: '',
+    },
+    openai_compat: {
+      apiKey: '',
+      model: 'gpt-4o',
+      baseUrl: '',
+    },
+    claude: {
+      apiKey: '',
+      model: 'claude-sonnet-4-20250514',
+      baseUrl: '',
+    },
+  },
+  // 其他配置
   speechThreshold: 30,
   nlsAppKey: '',
   nlsAccessKeyId: '',
@@ -196,6 +289,54 @@ async function getStore(): Promise<Store | null> {
   return store;
 }
 
+// 配置迁移：从旧配置格式迁移到新格式
+function migrateConfig(parsed: any): AppConfig {
+  // 如果是旧配置格式（存在顶层 apiKey 且没有 providerConfigs），自动迁移
+  if (parsed.apiKey !== undefined && !parsed.providerConfigs) {
+    console.log('检测到旧配置格式，自动迁移...');
+    return {
+      ...DEFAULT_CONFIG,
+      activeProvider: 'qwen',
+      providerConfigs: {
+        qwen: {
+          apiKey: parsed.apiKey || '',
+          model: parsed.model || 'qwen-plus',
+        },
+        openai_compat: { apiKey: '', model: 'gpt-4o' },
+        claude: { apiKey: '', model: 'claude-sonnet-4-20250514' },
+      },
+      speechThreshold: parsed.speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
+      nlsAppKey: parsed.nlsAppKey || '',
+      nlsAccessKeyId: parsed.nlsAccessKeyId || '',
+      nlsAccessKeySecret: parsed.nlsAccessKeySecret || '',
+      nlsRegion: parsed.nlsRegion || DEFAULT_CONFIG.nlsRegion,
+      promptTemplateId: parsed.promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
+      customPrompt: parsed.customPrompt || '',
+      highQualityRepoUrls: parsed.highQualityRepoUrls || '',
+      localDocPath: parsed.localDocPath || '',
+      shortcutConfig: {
+        ...DEFAULT_SHORTCUT_CONFIG,
+        ...(parsed.shortcutConfig || {}),
+      },
+      window: parsed.window || DEFAULT_CONFIG.window,
+    };
+  }
+  
+  // 新配置格式，直接合并
+  return {
+    ...DEFAULT_CONFIG,
+    ...parsed,
+    providerConfigs: {
+      ...DEFAULT_CONFIG.providerConfigs,
+      ...(parsed.providerConfigs || {}),
+    },
+    shortcutConfig: {
+      ...DEFAULT_SHORTCUT_CONFIG,
+      ...(parsed.shortcutConfig || {}),
+    },
+  };
+}
+
 // 从 localStorage 加载
 function loadFromLocalStorage(): AppConfig {
   try {
@@ -203,25 +344,7 @@ function loadFromLocalStorage(): AppConfig {
     if (saved) {
       const parsed = JSON.parse(saved);
       console.log('从 localStorage 加载配置:', parsed);
-      const config: AppConfig = {
-        provider: 'qwen',
-        model: parsed.model || DEFAULT_CONFIG.model,
-        apiKey: parsed.apiKey || '',
-        speechThreshold: parsed.speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
-        nlsAppKey: parsed.nlsAppKey || '',
-        nlsAccessKeyId: parsed.nlsAccessKeyId || '',
-        nlsAccessKeySecret: parsed.nlsAccessKeySecret || '',
-        nlsRegion: parsed.nlsRegion || DEFAULT_CONFIG.nlsRegion,
-        promptTemplateId: parsed.promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
-        customPrompt: parsed.customPrompt || '',
-        highQualityRepoUrls: parsed.highQualityRepoUrls || '',
-        localDocPath: parsed.localDocPath || '',
-        shortcutConfig: {
-          ...DEFAULT_SHORTCUT_CONFIG,
-          ...(parsed.shortcutConfig || {}),
-        },
-        window: parsed.window || DEFAULT_CONFIG.window,
-      };
+      const config = migrateConfig(parsed);
       return validateAndFixConfig(config);
     }
   } catch (err) {
@@ -251,16 +374,20 @@ export async function loadConfig(): Promise<AppConfig> {
   
   try {
     console.log('从 Tauri Store 加载配置...');
-    const model = await store.get<string>('model');
-    const apiKey = await store.get<string>('apiKey');
-    const speechThreshold = await store.get<number>('speechThreshold');
-    console.log('Store 数据:', { model, hasApiKey: !!apiKey, speechThreshold });
     
+    // 加载旧字段用于迁移检测
+    const oldApiKey = await store.get<string>('apiKey');
+    const oldModel = await store.get<string>('model');
+    
+    // 加载新配置字段
+    const activeProvider = await store.get<ProviderType>('activeProvider');
+    const providerConfigs = await store.get<Record<ProviderType, ProviderConfig>>('providerConfigs');
+    
+    const speechThreshold = await store.get<number>('speechThreshold');
     const nlsAppKey = await store.get<string>('nlsAppKey');
     const nlsAccessKeyId = await store.get<string>('nlsAccessKeyId');
     const nlsAccessKeySecret = await store.get<string>('nlsAccessKeySecret');
     const nlsRegion = await store.get<string>('nlsRegion');
-
     const promptTemplateId = await store.get<string>('promptTemplateId');
     const customPrompt = await store.get<string>('customPrompt');
     const highQualityRepoUrls = await store.get<string>('highQualityRepoUrls');
@@ -268,10 +395,30 @@ export async function loadConfig(): Promise<AppConfig> {
     const shortcutConfig = await store.get<ShortcutConfig>('shortcutConfig');
     const windowConfig = await store.get<WindowConfig>('window');
 
-    return {
-      provider: 'qwen',
-      model: model || DEFAULT_CONFIG.model,
-      apiKey: apiKey || '',
+    // 检测是否需要迁移（有旧字段但没有新字段）
+    if (oldApiKey !== undefined && oldApiKey !== null && !providerConfigs) {
+      console.log('检测到旧 Store 格式，执行迁移...');
+      return migrateConfig({
+        apiKey: oldApiKey,
+        model: oldModel,
+        speechThreshold,
+        nlsAppKey,
+        nlsAccessKeyId,
+        nlsAccessKeySecret,
+        nlsRegion,
+        promptTemplateId,
+        customPrompt,
+        highQualityRepoUrls,
+        localDocPath,
+        shortcutConfig,
+        window: windowConfig,
+      });
+    }
+
+    // 新格式配置
+    const config: AppConfig = {
+      activeProvider: activeProvider || DEFAULT_CONFIG.activeProvider,
+      providerConfigs: providerConfigs || DEFAULT_CONFIG.providerConfigs,
       speechThreshold: speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
       nlsAppKey: nlsAppKey || '',
       nlsAccessKeyId: nlsAccessKeyId || '',
@@ -287,6 +434,8 @@ export async function loadConfig(): Promise<AppConfig> {
       },
       window: windowConfig || DEFAULT_CONFIG.window,
     };
+
+    return validateAndFixConfig(config);
   } catch (error) {
     console.error('从 Store 加载失败，切换到 localStorage:', error);
     useLocalStorage = true;
@@ -304,9 +453,15 @@ export async function saveConfig(config: AppConfig): Promise<void> {
   }
   
   try {
-    await store.set('provider', config.provider);
-    await store.set('model', config.model);
-    await store.set('apiKey', config.apiKey);
+    // 新格式配置
+    await store.set('activeProvider', config.activeProvider);
+    await store.set('providerConfigs', config.providerConfigs);
+    
+    // 保留旧字段兼容（可选）
+    const currentProviderConfig = config.providerConfigs[config.activeProvider];
+    await store.set('apiKey', currentProviderConfig.apiKey);
+    await store.set('model', currentProviderConfig.model);
+    
     await store.set('speechThreshold', config.speechThreshold);
     await store.set('nlsAppKey', config.nlsAppKey);
     await store.set('nlsAccessKeyId', config.nlsAccessKeyId);
@@ -354,10 +509,21 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
   return validatedConfig;
 }
 
-// 验证配置是否完整（API Key 必填）
+// 验证配置是否完整（当前 Provider 的 API Key 必填）
 export function validateConfig(config: AppConfig): { valid: boolean; message?: string } {
+  const providerConfig = config.providerConfigs[config.activeProvider];
+  if (!providerConfig.apiKey || providerConfig.apiKey.trim() === '') {
+    const providerName = PROVIDERS.find(p => p.id === config.activeProvider)?.name || config.activeProvider;
+    return { valid: false, message: `请输入 ${providerName} 的 API Key` };
+  }
+  return { valid: true };
+}
+
+// 验证特定 Provider 配置
+export function validateProviderConfig(provider: ProviderType, config: ProviderConfig): { valid: boolean; message?: string } {
   if (!config.apiKey || config.apiKey.trim() === '') {
-    return { valid: false, message: '请输入阿里云 DashScope API Key' };
+    const providerName = PROVIDERS.find(p => p.id === provider)?.name || provider;
+    return { valid: false, message: `请输入 ${providerName} 的 API Key` };
   }
   return { valid: true };
 }

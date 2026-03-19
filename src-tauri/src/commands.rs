@@ -1,7 +1,10 @@
 // Tauri 命令 - 音频录制、语音识别、AI 对话和数据库操作
 
+use crate::ai::{ProviderRegistry, ProviderType, types::ProviderConfig};
 use crate::qwen::ChatMessage;
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
+
+// ==================== 音频命令 ====================
 
 // 开始录音
 #[tauri::command]
@@ -34,7 +37,64 @@ pub async fn nls_recognize_speech(
     .await
 }
 
-// 千问 AI 对话（通过 Rust 后端调用 DashScope API）
+// ==================== 统一 AI 命令（新增）====================
+
+/// 统一流式聊天命令
+#[tauri::command]
+pub async fn ai_chat_stream(
+    app: AppHandle,
+    registry: State<'_, ProviderRegistry>,
+    provider: ProviderType,
+    config: ProviderConfig,
+    model: String,
+    messages: Vec<crate::ai::types::ChatMessage>,
+) -> Result<(), String> {
+    registry
+        .chat_stream(app, &provider, &config, &model, messages)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 统一非流式聊天命令
+#[tauri::command]
+pub async fn ai_chat(
+    registry: State<'_, ProviderRegistry>,
+    provider: ProviderType,
+    config: ProviderConfig,
+    model: String,
+    messages: Vec<crate::ai::types::ChatMessage>,
+) -> Result<String, String> {
+    registry
+        .chat(&provider, &config, &model, messages)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 连通性测试命令
+#[tauri::command]
+pub async fn ai_test_connection(
+    registry: State<'_, ProviderRegistry>,
+    provider: ProviderType,
+    config: ProviderConfig,
+) -> Result<crate::ai::types::ConnectionTestResult, String> {
+    registry
+        .test_connection(&provider, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取可用 Provider 列表
+#[tauri::command]
+pub fn ai_list_providers(
+    registry: State<'_, ProviderRegistry>,
+) -> Vec<crate::ai::types::ProviderMeta> {
+    registry.list_providers()
+}
+
+// ==================== 向下兼容：保留原有千问命令（已弃用）====================
+
+/// 千问 AI 对话（已弃用，请使用 ai_chat）
+#[deprecated(since = "0.2.0", note = "请使用 ai_chat 命令")]
 #[tauri::command]
 pub async fn qwen_chat(
     api_key: String,
@@ -44,7 +104,8 @@ pub async fn qwen_chat(
     crate::qwen::chat(&api_key, &model, messages).await
 }
 
-// 千问 AI 流式对话（通过 Tauri Event 发送 chunk）
+/// 千问 AI 流式对话（已弃用，请使用 ai_chat_stream）
+#[deprecated(since = "0.2.0", note = "请使用 ai_chat_stream 命令")]
 #[tauri::command]
 pub async fn qwen_chat_stream(
     app: AppHandle,
@@ -56,6 +117,7 @@ pub async fn qwen_chat_stream(
 }
 
 // 千问视觉 API 流式对话（截图识别，固定使用 qwen-vl-max）
+// 注意：截图视觉功能仍使用千问专用逻辑
 #[tauri::command]
 pub async fn qwen_chat_stream_vision(
     app: AppHandle,

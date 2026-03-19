@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { AppConfig } from '../store/config';
+import type { AppConfig, ProviderType, ProviderConfig } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
 
 export interface ChatMessage {
@@ -48,6 +48,7 @@ async function streamWithEvent(
   invokeCommand: string,
   invokeArgs: Record<string, unknown>,
   onChunk: (content: string, done: boolean) => void,
+  eventName: string = 'ai-stream',
 ): Promise<void> {
   const charQueue: string[] = [];
   let isProcessing = false;
@@ -77,7 +78,7 @@ async function streamWithEvent(
     }, 30);
   };
 
-  const unlisten = await listen<StreamEvent>('qwen-stream', (event) => {
+  const unlisten = await listen<StreamEvent>(eventName, (event) => {
     if (event.payload.done) {
       isDone = true;
       if (charQueue.length === 0) {
@@ -105,12 +106,121 @@ async function streamWithEvent(
   }
 }
 
+// ==================== 统一 AI 接口（新增）====================
+
+/**
+ * 统一流式聊天接口 - 根据 config.activeProvider 自动路由到对应后端 Provider
+ */
+export async function sendStream(
+  question: string,
+  config: AppConfig,
+  onChunk: (content: string, done: boolean) => void,
+  history: ChatMessage[] = [],
+): Promise<void> {
+  const provider = config.activeProvider;
+  const providerConfig = config.providerConfigs[provider];
+
+  if (!providerConfig.apiKey?.trim()) {
+    throw new Error(`请先配置 ${provider} 的 API Key`);
+  }
+
+  const systemPrompt = getSystemPrompt(config);
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: question },
+  ];
+
+  await streamWithEvent(
+    'ai_chat_stream',
+    {
+      provider,
+      config: {
+        apiKey: providerConfig.apiKey,
+        baseUrl: providerConfig.baseUrl || null,
+      },
+      model: providerConfig.model,
+      messages,
+    },
+    onChunk,
+    'ai-stream',
+  );
+}
+
+/**
+ * 统一非流式聊天接口
+ */
+export async function sendChat(
+  question: string,
+  config: AppConfig,
+  history: ChatMessage[] = [],
+): Promise<string> {
+  const provider = config.activeProvider;
+  const providerConfig = config.providerConfigs[provider];
+
+  if (!providerConfig.apiKey?.trim()) {
+    throw new Error(`请先配置 ${provider} 的 API Key`);
+  }
+
+  const systemPrompt = getSystemPrompt(config);
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: question },
+  ];
+
+  return invoke<string>('ai_chat', {
+    provider,
+    config: {
+      apiKey: providerConfig.apiKey,
+      baseUrl: providerConfig.baseUrl || null,
+    },
+    model: providerConfig.model,
+    messages,
+  });
+}
+
+/**
+ * 连通性测试
+ */
+export async function testConnection(
+  provider: ProviderType,
+  config: ProviderConfig,
+): Promise<{ success: boolean; latencyMs: number; message: string }> {
+  const result = await invoke<{
+    success: boolean;
+    latency_ms: number;
+    message: string;
+  }>('ai_test_connection', {
+    provider,
+    config: {
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl || null,
+    },
+  });
+  
+  return {
+    success: result.success,
+    latencyMs: result.latency_ms,
+    message: result.message,
+  };
+}
+
+// ==================== 向下兼容：保留原有千问接口（已弃用）====================
+
+/**
+ * @deprecated 请使用 sendChat
+ */
 export async function sendToQwen(
   question: string,
   config: AppConfig,
   history: ChatMessage[] = [],
 ): Promise<string> {
-  if (!config.apiKey?.trim()) {
+  // 兼容旧配置格式
+  const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
+  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
+  
+  if (!apiKey?.trim()) {
     throw new Error('请先在设置中配置 DashScope API Key');
   }
 
@@ -120,20 +230,23 @@ export async function sendToQwen(
     { role: 'user', content: question },
   ];
 
-  return invoke<string>('qwen_chat', {
-    apiKey: config.apiKey,
-    model: config.model || 'qwen-turbo',
-    messages,
-  });
+  return invoke<string>('qwen_chat', { apiKey, model, messages });
 }
 
+/**
+ * @deprecated 请使用 sendStream
+ */
 export async function sendToQwenStream(
   question: string,
   config: AppConfig,
   onChunk: (content: string, done: boolean) => void,
   history: ChatMessage[] = [],
 ): Promise<void> {
-  if (!config.apiKey?.trim()) {
+  // 兼容旧配置格式
+  const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
+  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
+  
+  if (!apiKey?.trim()) {
     throw new Error('请先在设置中配置 DashScope API Key');
   }
 
@@ -145,34 +258,38 @@ export async function sendToQwenStream(
 
   await streamWithEvent(
     'qwen_chat_stream',
-    {
-      apiKey: config.apiKey,
-      model: config.model || 'qwen-turbo',
-      messages,
-    },
+    { apiKey, model, messages },
     onChunk,
+    'qwen-stream',
   );
 }
 
+/**
+ * 截图视觉识别 - 始终使用千问 VL Max（千问专属能力）
+ */
 export async function sendToQwenStreamWithImage(
   prompt: string,
   imageBase64: string,
   config: AppConfig,
   onChunk: (content: string, done: boolean) => void,
 ): Promise<void> {
-  if (!config.apiKey?.trim()) {
+  // 截图视觉始终使用千问
+  const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
+  
+  if (!apiKey?.trim()) {
     throw new Error('请先在设置中配置 DashScope API Key');
   }
 
   await streamWithEvent(
     'qwen_chat_stream_vision',
     {
-      apiKey: config.apiKey,
+      apiKey,
       imageBase64,
       prompt,
       repoUrls: parseRepoUrls(config.highQualityRepoUrls || ''),
       localDocPath: config.localDocPath?.trim() || null,
     },
     onChunk,
+    'qwen-stream',
   );
 }

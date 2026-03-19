@@ -43,14 +43,14 @@
 
 ### P0 - 多模型适配框架
 
-15.Rust 后端设计并实现统一 AI Provider trait 接口 ❌
-16.将现有千问调用重构为 QwenProvider 实现 ❌
-17.实现 OpenAI 兼容接口 Provider（覆盖 GPT-5/DeepSeek/本地 Ollama/Claude code等）❌
-18.实现 Claude Provider ❌
-19.设置界面增加模型提供商选择（切换后动态显示对应配置项）❌
-20.支持自定义 Base URL 输入（接入私有化部署模型）❌
-21.模型连通性一键测试按钮 ❌
-22.前端 aiChat 服务层适配多 Provider 调用 ❌
+15.Rust 后端设计并实现统一 AI Provider trait 接口 ✅
+16.将现有千问调用重构为 QwenProvider 实现 ✅
+17.实现 OpenAI 兼容接口 Provider（覆盖 GPT-5/DeepSeek/本地 Ollama/Claude code等）✅
+18.实现 Claude Provider ✅
+19.设置界面增加模型提供商选择（切换后动态显示对应配置项）✅
+20.支持自定义 Base URL 输入（接入私有化部署模型）✅
+21.模型连通性一键测试按钮 ✅
+22.前端 aiChat 服务层适配多 Provider 调用 ✅
 
 ### P1 - 面试上下文感知
 
