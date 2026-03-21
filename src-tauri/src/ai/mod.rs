@@ -66,7 +66,7 @@ impl ProviderRegistry {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
-    ) -> Result<(), traits::AIError> {
+    ) -> Result<bool, traits::AIError> {
         match provider_type {
             ProviderType::Qwen => self.qwen.chat_stream(app, config, model, messages).await,
             ProviderType::OpenAICompat => self.openai_compat.chat_stream(app, config, model, messages).await,

@@ -41,6 +41,10 @@ export function buildContextHistory(
 interface StreamEvent {
   content: string;
   done: boolean;
+  /** 新增：流是否正常完成 */
+  isComplete?: boolean;
+  /** 新增：完成原因 */
+  finishReason?: string;
 }
 
 export const SCREENSHOT_ANALYSIS_PROMPT =
@@ -106,26 +110,47 @@ function getSystemPrompt(config: AppConfig): string {
   return basePrompt;
 }
 
+/** 流结果 */
+export interface StreamResult {
+  /** 是否正常完成 */
+  isComplete: boolean;
+  /** 完成原因 */
+  finishReason?: string;
+}
+
+/** 流超时时间（毫秒）：2分钟 */
+const STREAM_TIMEOUT_MS = 2 * 60 * 1000;
+
 async function streamWithEvent(
   invokeCommand: string,
   invokeArgs: Record<string, unknown>,
-  onChunk: (content: string, done: boolean) => void,
+  onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
   eventName: string = 'ai-stream',
-): Promise<void> {
+): Promise<StreamResult> {
   const charQueue: string[] = [];
   let isProcessing = false;
   let isDone = false;
-  let resolveDone: (() => void) | null = null;
+  let resolveDone: ((result: StreamResult) => void) | null = null;
+  let rejectDone: ((error: Error) => void) | null = null;
+  let streamResult: StreamResult = { isComplete: true };
 
-  const donePromise = new Promise<void>((resolve) => {
+  const donePromise = new Promise<StreamResult>((resolve, reject) => {
     resolveDone = resolve;
+    rejectDone = reject;
   });
+
+  // 设置超时保护
+  const timeoutId = setTimeout(() => {
+    if (!isDone) {
+      rejectDone?.(new Error(`流响应超时（>${STREAM_TIMEOUT_MS / 1000}秒），请检查网络连接或稍后重试`));
+    }
+  }, STREAM_TIMEOUT_MS);
 
   const processQueue = () => {
     if (isProcessing || charQueue.length === 0) {
       if (isDone && charQueue.length === 0) {
-        onChunk('', true);
-        resolveDone?.();
+        onChunk('', true, streamResult.isComplete, streamResult.finishReason);
+        resolveDone?.(streamResult);
       }
       return;
     }
@@ -143,9 +168,14 @@ async function streamWithEvent(
   const unlisten = await listen<StreamEvent>(eventName, (event) => {
     if (event.payload.done) {
       isDone = true;
+      // 保存流完成状态
+      streamResult = {
+        isComplete: event.payload.isComplete ?? true,
+        finishReason: event.payload.finishReason,
+      };
       if (charQueue.length === 0) {
-        onChunk('', true);
-        resolveDone?.();
+        onChunk('', true, streamResult.isComplete, streamResult.finishReason);
+        resolveDone?.(streamResult);
       }
       return;
     }
@@ -160,8 +190,11 @@ async function streamWithEvent(
 
   try {
     await invoke(invokeCommand, invokeArgs);
-    await donePromise;
+    const result = await donePromise;
+    clearTimeout(timeoutId);
+    return result;
   } catch (error) {
+    clearTimeout(timeoutId);
     throw error;
   } finally {
     unlisten();
@@ -172,13 +205,14 @@ async function streamWithEvent(
 
 /**
  * 统一流式聊天接口 - 根据 config.activeProvider 自动路由到对应后端 Provider
+ * 返回流完成状态，用于判断是否需要显示"继续生成"按钮
  */
 export async function sendStream(
   question: string,
   config: AppConfig,
-  onChunk: (content: string, done: boolean) => void,
+  onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
   history: ChatMessage[] = [],
-): Promise<void> {
+): Promise<StreamResult> {
   const provider = config.activeProvider;
   const providerConfig = config.providerConfigs[provider];
 
@@ -193,7 +227,7 @@ export async function sendStream(
     { role: 'user', content: question },
   ];
 
-  await streamWithEvent(
+  return streamWithEvent(
     'ai_chat_stream',
     {
       provider,

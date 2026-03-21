@@ -98,7 +98,7 @@ impl AIProvider for OpenAICompatProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
-    ) -> Result<(), AIError> {
+    ) -> Result<bool, AIError> {
         let base_url = Self::base_url(config);
         let url = format!("{}/chat/completions", base_url);
         let client = create_http_client(120)?;

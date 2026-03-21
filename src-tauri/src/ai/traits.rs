@@ -50,13 +50,14 @@ pub trait AIProvider: Send + Sync {
     ) -> Result<String, AIError>;
 
     /// 流式调用（通过 Tauri Event 推送）
+    /// 返回: 流是否正常完成（true = 正常完成，false = 中断）
     async fn chat_stream(
         &self,
         app: AppHandle,
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
-    ) -> Result<(), AIError>;
+    ) -> Result<bool, AIError>;
 
     /// 连通性测试（轻量级，用于设置页一键检测）
     async fn test_connection(

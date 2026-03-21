@@ -25,6 +25,37 @@ pub struct ChatMessage {
 pub struct StreamEvent {
     pub content: String,
     pub done: bool,
+    /// 新增：流是否正常完成（向后兼容：Option 类型）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_complete: Option<bool>,
+    /// 新增：完成原因（向后兼容：Option 类型）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+}
+
+/// 网络健康状态
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkHealthStatus {
+    /// 基础网络连通
+    pub internet_connected: bool,
+    /// Provider API 可达
+    pub provider_reachable: bool,
+    /// RTT 延迟
+    pub latency_ms: Option<u64>,
+    /// ISO 8601 时间戳
+    pub last_check: String,
+    /// 错误详情（可选）
+    pub error_detail: Option<String>,
+}
+
+/// Token 使用统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
 }
 
 /// 模型元信息

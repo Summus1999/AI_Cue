@@ -148,7 +148,7 @@ impl AIProvider for ClaudeProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
-    ) -> Result<(), AIError> {
+    ) -> Result<bool, AIError> {
         let base_url = Self::base_url(config);
         let url = format!("{}/v1/messages", base_url);
         let client = create_http_client(120)?;

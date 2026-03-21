@@ -1,9 +1,12 @@
 // Tauri 命令 - 音频录制、语音识别、AI 对话和数据库操作
 
-use crate::ai::{ProviderRegistry, ProviderType, types::ProviderConfig};
+use crate::ai::{ProviderRegistry, ProviderType, types::{ProviderConfig, NetworkHealthStatus}};
 use crate::export::{ExportData, ExportInterviewContext, ExportMessage, ExportMetadata, ExportOptions, ExportResult};
 use crate::qwen::ChatMessage;
 use tauri::{AppHandle, State};
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
+use chrono::Utc;
 
 // ==================== 音频命令 ====================
 
@@ -49,7 +52,7 @@ pub async fn ai_chat_stream(
     config: ProviderConfig,
     model: String,
     messages: Vec<crate::ai::types::ChatMessage>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     registry
         .chat_stream(app, &provider, &config, &model, messages)
         .await
@@ -90,6 +93,88 @@ pub fn ai_list_providers(
     registry: State<'_, ProviderRegistry>,
 ) -> Vec<crate::ai::types::ProviderMeta> {
     registry.list_providers()
+}
+
+/// 网络健康检查命令
+/// 检测互联网连通性和 Provider API 可达性
+#[tauri::command]
+pub async fn check_network_health(
+    provider_type: String,
+    base_url: Option<String>,
+) -> Result<NetworkHealthStatus, String> {
+    let start = Instant::now();
+
+    // 1. 确定检测目标 URL
+    let target_url = base_url.unwrap_or_else(|| {
+        match provider_type.as_str() {
+            "qwen" => "https://dashscope.aliyuncs.com".to_string(),
+            "openai_compat" => "https://api.openai.com".to_string(),
+            "claude" => "https://api.anthropic.com".to_string(),
+            _ => "https://www.google.com".to_string(),
+        }
+    });
+
+    // 2. 创建 HTTP 客户端
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 3. HEAD 请求检测 Provider 可达性（不带 API Key，仅检测网络层）
+    let internet_check = timeout(
+        Duration::from_secs(5),
+        client.head(&target_url).send()
+    ).await;
+
+    let latency = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let now = Utc::now().to_rfc3339();
+
+    match internet_check {
+        Ok(Ok(response)) => {
+            // 精确的状态码判断逻辑
+            // 注意：能收到任何 HTTP 响应都说明网络和服务都是通的
+            let provider_reachable = match response.status().as_u16() {
+                200..=299 => true,  // 2xx 成功
+                300..=399 => true,  // 3xx 重定向（服务可达）
+                400 | 404 => true,  // 400/404 说明服务可达，只是根路径无资源
+                401 | 403 => true,  // 认证失败但服务可达
+                429 => true,        // 频率限制但服务可达
+                500..=599 => false, // 服务端错误，服务有问题
+                _ => true,          // 其他状态码也说明服务可达
+            };
+            Ok(NetworkHealthStatus {
+                internet_connected: true,
+                provider_reachable,
+                latency_ms: Some(latency),
+                last_check: now,
+                error_detail: if !provider_reachable {
+                    Some(format!("HTTP {}", response.status()))
+                } else {
+                    None
+                },
+            })
+        }
+        Ok(Err(e)) => {
+            // 网络错误
+            Ok(NetworkHealthStatus {
+                internet_connected: false,
+                provider_reachable: false,
+                latency_ms: None,
+                last_check: now,
+                error_detail: Some(e.to_string()),
+            })
+        }
+        Err(_) => {
+            // 超时
+            Ok(NetworkHealthStatus {
+                internet_connected: false,
+                provider_reachable: false,
+                latency_ms: None,
+                last_check: now,
+                error_detail: Some("连接超时".to_string()),
+            })
+        }
+    }
 }
 
 // ==================== 向下兼容：保留原有千问命令（已弃用）====================

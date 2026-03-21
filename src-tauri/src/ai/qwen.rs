@@ -97,7 +97,7 @@ impl AIProvider for QwenProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
-    ) -> Result<(), AIError> {
+    ) -> Result<bool, AIError> {
         let url = format!("{}/chat/completions", Self::base_url(config));
         let client = create_http_client(120)?;
 

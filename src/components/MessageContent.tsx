@@ -1,6 +1,14 @@
 interface MessageContentProps {
   content: string;
   variant: "user" | "assistant";
+  /** 消息是否完整生成 */
+  isComplete?: boolean;
+  /** 中断原因 */
+  interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
+  /** 继续生成回调 */
+  onContinue?: () => void;
+  /** 是否正在生成中 */
+  isGenerating?: boolean;
 }
 
 interface ContentSegment {
@@ -42,12 +50,30 @@ function parseContent(content: string): ContentSegment[] {
   return segments.length > 0 ? segments : [{ type: "text", content }];
 }
 
-export function MessageContent({ content, variant }: MessageContentProps) {
+export function MessageContent({
+  content,
+  variant,
+  isComplete = true,
+  interruptReason,
+  onContinue,
+  isGenerating,
+}: MessageContentProps) {
   const segments = parseContent(content);
   const codeWrapperClass =
     variant === "assistant"
       ? "bg-stone-50 text-stone-900 border border-stone-200"
       : "bg-white/80 text-amber-900 border border-amber-300";
+
+  // 中断原因显示文本
+  const getInterruptReasonText = (reason?: string): string => {
+    switch (reason) {
+      case 'timeout': return '超时';
+      case 'network': return '网络中断';
+      case 'error': return '出错';
+      case 'user_abort': return '用户中断';
+      default: return '';
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -84,6 +110,36 @@ export function MessageContent({ content, variant }: MessageContentProps) {
           </div>
         );
       })}
+
+      {/* 未完成提示 + 继续生成按钮（仅对 assistant 消息显示） */}
+      {variant === 'assistant' && !isComplete && !isGenerating && (
+        <div className="mt-3 pt-3 border-t border-amber-200/30">
+          <div className="flex items-center gap-2 text-xs text-amber-300">
+            <span>⚠️ 回答未完成</span>
+            {interruptReason && (
+              <span className="text-amber-400">
+                ({getInterruptReasonText(interruptReason)})
+              </span>
+            )}
+          </div>
+          {onContinue && (
+            <button
+              onClick={onContinue}
+              disabled={isGenerating}
+              className={`mt-2 flex items-center gap-1.5 px-3 py-1.5 text-white text-xs rounded-lg transition-colors ${
+                isGenerating
+                  ? 'bg-amber-400 cursor-not-allowed opacity-60'
+                  : 'bg-amber-600 hover:bg-amber-500 active:bg-amber-700'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
+              </svg>
+              继续生成
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -6,14 +6,17 @@ import SessionList from "./components/SessionList";
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
 import { ExportDialog } from "./components/export/ExportDialog";
+import { NetworkStatusIndicator } from "./components/NetworkStatusIndicator";
+import { FriendlyErrorCard } from "./components/FriendlyErrorCard";
 import { invoke } from "@tauri-apps/api/core";
-import { recognizeSpeech } from "./services/speechRecognition";
+import { recognizeSpeech, getSpeechErrorMessage } from "./services/speechRecognition";
 import {
   buildScreenshotFollowUpPrompt,
   SCREENSHOT_ANALYSIS_PROMPT,
   sendToQwenStreamWithImage,
   sendStream,
   buildContextHistory,
+  StreamResult,
 } from "./services/aiChat";
 import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
@@ -23,6 +26,8 @@ import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, g
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { errorClassifier } from './services/errorClassifier';
+import { useNetworkResilience, getWaitingHint } from './store/networkResilience';
 
 // 消息类型定义
 interface Message {
@@ -30,6 +35,10 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  /** 新增：消息是否完整生成 */
+  isComplete?: boolean;
+  /** 新增：中断原因 */
+  interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
 }
 
 interface ScreenshotContext {
@@ -66,26 +75,21 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-// 获取语音识别错误的友好提示
-function getSpeechErrorMessage(error: unknown): string {
-  const errStr = String(error);
-  // 没有录到有效音频
-  if (errStr.includes("NO_VALID_AUDIO_ERROR") || errStr.includes("NO_VALID_AUDIO")) {
-    return "抱歉，我没有听清楚，请再试一次";
-  }
-  // 音频太短
-  if (errStr.includes("AUDIO_TOO_SHORT") || errStr.includes("TOO_SHORT")) {
-    return "录音时间太短了，请多说一些";
-  }
-  // 音频质量问题
-  if (errStr.includes("AUDIO_QUALITY") || errStr.includes("QUALITY")) {
-    return "音频质量不太好，请调整麦克风或环境后重试";
-  }
-  // 默认错误
-  return "语音识别出现问题，请检查麦克风后重试";
+// 注意：getSpeechErrorMessage 现在从 speechRecognition.ts 导入
+
+// 将 finishReason 转换为 interruptReason
+function getInterruptReason(finishReason?: string): Message['interruptReason'] {
+  if (!finishReason) return 'error';
+  if (finishReason === 'timeout') return 'timeout';
+  if (finishReason === 'interrupted') return 'network';
+  if (finishReason === 'error') return 'error';
+  return undefined;
 }
 
 function App() {
+  // 网络韧性状态管理
+  const networkResilience = useNetworkResilience();
+
   // 穿透模式状态
   const [passthroughActive, setPassthroughActive] = useState(false);
 
@@ -177,7 +181,7 @@ function App() {
   ) => {
     // 在添加新消息之前，先捕获当前消息列表用于构建上下文历史
     const currentMessages = [...messages];
-    
+
     const assistantId = generateId();
     setMessages((prev) => [
       ...prev,
@@ -192,15 +196,17 @@ function App() {
         role: "assistant",
         content: "",
         timestamp: Date.now(),
+        isComplete: false, // 初始状态为未完成
       },
     ]);
 
     setIsGenerating(true);
-    
+    networkResilience.setWaiting(assistantId);
+
     // 捕获当前会话 ID，处理闭包问题
     let sessionId = currentSessionId;
     let isNewSession = false;
-    
+
     // 保存用户消息到数据库（延迟创建会话）
     try {
       if (!sessionId) {
@@ -217,7 +223,7 @@ function App() {
     } catch (dbError) {
       console.error('Failed to save user message:', dbError);
     }
-    
+
     // 用于收集完整的 AI 回复
     let fullAssistantContent = '';
 
@@ -225,17 +231,32 @@ function App() {
       const config = await loadConfig();
       let hasReceivedContent = false;
 
-      const onChunk = (content: string, done: boolean) => {
+      const onChunk = (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => {
         if (!done && content) {
           hasReceivedContent = true;
           fullAssistantContent += content;
           appendAssistantChunk(assistantId, content);
         }
         // AI 回复完成时保存到数据库
-        if (done && sessionId && fullAssistantContent) {
-          saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
-            console.error('Failed to save assistant message:', err);
-          });
+        if (done) {
+          // 更新消息完成状态
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    isComplete: isComplete ?? true,
+                    interruptReason: isComplete ? undefined : getInterruptReason(finishReason),
+                  }
+                : msg
+            )
+          );
+          // 保存到数据库
+          if (sessionId && fullAssistantContent) {
+            saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
+              console.error('Failed to save assistant message:', err);
+            });
+          }
         }
       };
 
@@ -249,23 +270,34 @@ function App() {
         if (imageBase64) {
           // 截图识别仍使用千问专用接口
           await sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk);
-          return;
+          return { isComplete: true } as StreamResult;
         }
         // 使用新的统一流式接口，传递上下文历史
-        await sendStream(requestText, config, onChunk, contextHistory);
+        return sendStream(requestText, config, onChunk, contextHistory);
       };
 
       try {
         await send();
       } catch (error) {
+        // 分类错误并显示友好提示
+        const friendlyError = errorClassifier.classify(
+          error instanceof Error ? error.message : String(error)
+        );
+        networkResilience.setError(assistantId, friendlyError);
+
         if (imageBase64 && !hasReceivedContent) {
           updateAssistantMessage(assistantId, "");
           fullAssistantContent = '';
           hasReceivedContent = false;
           try {
             await send();
+            networkResilience.clearError(assistantId);
             return;
           } catch (retryError) {
+            const retryFriendlyError = errorClassifier.classify(
+              retryError instanceof Error ? retryError.message : String(retryError)
+            );
+            networkResilience.setError(assistantId, retryFriendlyError);
             updateAssistantMessage(
               assistantId,
               "❌ 图片识别失败: " + (retryError instanceof Error ? retryError.message : String(retryError)),
@@ -277,19 +309,24 @@ function App() {
         updateAssistantMessage(
           assistantId,
           (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
-            (error instanceof Error ? error.message : String(error)),
+            friendlyError.message,
         );
       }
     } catch (error) {
+      const friendlyError = errorClassifier.classify(
+        error instanceof Error ? error.message : String(error)
+      );
+      networkResilience.setError(assistantId, friendlyError);
       updateAssistantMessage(
         assistantId,
         (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
-          (error instanceof Error ? error.message : String(error)),
+          friendlyError.message,
       );
     } finally {
       setIsGenerating(false);
+      networkResilience.setWaiting(null);
     }
-  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId]);
+  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId, networkResilience]);
 
   // 判断是否在底部附近
   const isNearBottom = useCallback((element: HTMLDivElement) => {
@@ -621,7 +658,23 @@ function App() {
 
         try {
           const config = await loadConfig();
-          const text = await recognizeSpeech(audioData, config);
+          const recognizingMsgId = messages[messages.length - 1]?.id || generateId();
+
+          const text = await recognizeSpeech(audioData, config, {
+            onRetry: (state) => {
+              if (state.isRetrying) {
+                setMessages(prev => prev.map(m =>
+                  m.id === recognizingMsgId
+                    ? {
+                        ...m,
+                        content: `🎤 识别失败，正在重试 (${state.attempt}/3)...\n${state.lastError || ''}`,
+                      }
+                    : m
+                ));
+              }
+            },
+          });
+
           if (text.trim()) {
             setMessages((prev) => prev.slice(0, -1));
             const imageBase64 = latestScreenshotContext?.imageBase64;
@@ -798,6 +851,109 @@ function App() {
     handleScreenshotRef.current = handleScreenshot;
   });
 
+  // 继续生成功能
+  const handleContinueGeneration = useCallback(async (messageId: string) => {
+    const targetMessage = messages.find(m => m.id === messageId);
+    if (!targetMessage || targetMessage.role !== 'assistant') return;
+
+    const messageIndex = messages.findIndex(m => m.id === messageId);
+    const historyMessages = messages.slice(0, messageIndex);
+
+    setIsGenerating(true);
+    networkResilience.setWaiting(messageId);
+
+    try {
+      const config = await loadConfig();
+
+      // 构建续接 prompt
+      const continuePrompt = buildContinuePrompt(targetMessage.content, historyMessages, 5);
+
+      let continuedContent = '';
+
+      await sendStream(continuePrompt, config, (content, done, isComplete) => {
+        if (!done && content) {
+          continuedContent += content;
+          setMessages(prev => prev.map(m =>
+            m.id === messageId
+              ? { ...m, content: m.content + content }
+              : m
+          ));
+        }
+        if (done) {
+          setMessages(prev => prev.map(m =>
+            m.id === messageId
+              ? { ...m, isComplete: isComplete ?? true, interruptReason: undefined }
+              : m
+          ));
+          // 保存续接内容到数据库
+          if (currentSessionId && continuedContent) {
+            const finalContent = targetMessage.content + continuedContent;
+            saveMessage(currentSessionId, 'assistant', finalContent).catch(console.error);
+          }
+        }
+      }, buildContextHistory(historyMessages, config.contextWindowSize ?? 5));
+
+    } catch (error) {
+      console.error('Continue generation failed:', error);
+      const friendlyError = errorClassifier.classify(
+        error instanceof Error ? error.message : String(error)
+      );
+      networkResilience.setError(messageId, friendlyError);
+    } finally {
+      setIsGenerating(false);
+      networkResilience.setWaiting(null);
+    }
+  }, [messages, currentSessionId, networkResilience]);
+
+  // 构建续接 prompt
+  const buildContinuePrompt = (
+    lastContent: string,
+    history: Message[],
+    contextSize: number = 5
+  ): string => {
+    const contextMessages = history.slice(-(contextSize * 2)).map(m =>
+      `${m.role === 'user' ? '用户' : 'AI'}：${m.content.slice(0, 500)}`
+    ).join('\n---\n');
+
+    return `这是之前的对话历史：\n${contextMessages}\n\n你的回答在这里中断了：\n"${lastContent.slice(-500)}"\n\n请继续完成这个回答，不要重复已说内容。`;
+  };
+
+  // 重试消息功能
+  const handleRetryMessage = useCallback(async (messageId: string) => {
+    // 找到对应的用户消息（在当前 assistant 消息之前）
+    const messageIndex = messages.findIndex(m => m.id === messageId);
+    if (messageIndex <= 0) return;
+
+    // 向前查找用户消息
+    let userMessageIndex = -1;
+    for (let i = messageIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userMessageIndex = i;
+        break;
+      }
+    }
+    if (userMessageIndex === -1) return;
+
+    const userMessage = messages[userMessageIndex];
+
+    // 清除错误状态
+    networkResilience.clearError(messageId);
+
+    // 更新 assistant 消息为初始状态
+    setMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, content: '', isComplete: false, interruptReason: undefined }
+        : m
+    ));
+
+    // 重新发送请求
+    await requestAssistantReply(
+      userMessage.content,
+      userMessage.content,
+      undefined
+    );
+  }, [messages, networkResilience, requestAssistantReply]);
+
   // 最小化窗口
   const handleMinimize = () => {};
 
@@ -848,6 +1004,8 @@ function App() {
           <span className="text-xs font-medium text-amber-800 tracking-wide">
             AI Cue
           </span>
+          {/* 网络状态指示灯 */}
+          <NetworkStatusIndicator className="ml-1" />
           {isRecording && (
             <span className="text-xs text-red-400 font-mono ml-2">
               ● {formatDuration(recordingDuration)}
@@ -984,7 +1142,21 @@ function App() {
               <MessageContent
                 content={message.content}
                 variant={message.role}
+                isComplete={message.isComplete}
+                interruptReason={message.interruptReason}
+                isGenerating={isGenerating}
+                onContinue={() => handleContinueGeneration(message.id)}
               />
+              {/* 友好错误卡片 */}
+              {networkResilience.activeErrors[message.id] && (
+                <div className="mt-2">
+                  <FriendlyErrorCard
+                    error={networkResilience.activeErrors[message.id]}
+                    onRetry={() => handleRetryMessage(message.id)}
+                    onDismiss={() => networkResilience.clearError(message.id)}
+                  />
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -992,10 +1164,18 @@ function App() {
         {/* 生成中指示器 */}
         {isGenerating && (
           <div className="message-enter flex justify-start">
-            <div className="flex items-center gap-1 px-4 py-2.5 bg-amber-800 rounded-2xl rounded-bl-md">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "0ms" }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "150ms" }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "300ms" }} />
+            <div className="flex flex-col gap-1 px-4 py-2.5 bg-amber-800 rounded-2xl rounded-bl-md">
+              <div className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "0ms" }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "150ms" }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-200 animate-bounce" style={{ animationDelay: "300ms" }} />
+              </div>
+              {/* 等待提示 */}
+              {networkResilience.waitingMessageId && (
+                <span className="text-[10px] text-amber-300/80">
+                  {getWaitingHint(networkResilience.getWaitingSeconds())}
+                </span>
+              )}
             </div>
           </div>
         )}
