@@ -1,7 +1,8 @@
 // 会话列表组件 - 全页面进出式设计
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Search, Trash2, Plus, MessageSquare } from 'lucide-react';
-import { Session } from '../services/sessionManager';
+import { ArrowLeft, Search, Trash2, Plus, MessageSquare, Download } from 'lucide-react';
+import { Session, getSessionMessages } from '../services/sessionManager';
+import { ExportDialog } from './export/ExportDialog';
 
 interface SessionListProps {
   sessions: Session[];
@@ -39,6 +40,8 @@ export function SessionList({
 }: SessionListProps) {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [exportSession, setExportSession] = useState<Session | null>(null);
+  const [exportMessageCount, setExportMessageCount] = useState(0);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 组件卸载时清理定时器
@@ -74,6 +77,24 @@ export function SessionList({
         setDeletingId((prev) => (prev === sessionId ? null : prev));
       }, 3000);
     }
+  };
+
+  // 处理导出
+  const handleExport = async (session: Session, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const messages = await getSessionMessages(session.id);
+      setExportSession(session);
+      setExportMessageCount(messages.length);
+    } catch (error) {
+      console.error('加载会话消息失败:', error);
+    }
+  };
+
+  // 关闭导出对话框
+  const handleCloseExport = () => {
+    setExportSession(null);
+    setExportMessageCount(0);
   };
 
   return (
@@ -129,7 +150,7 @@ export function SessionList({
               <div
                 key={session.id}
                 onClick={() => onSelectSession(session)}
-                className={`relative group p-3 rounded-xl border cursor-pointer transition-all duration-150 ${
+                className={`relative group p-3 rounded-xl border cursor-pointer transition-all duration-150 overflow-visible ${
                   isActive
                     ? 'bg-amber-200/80 border-amber-400 shadow-sm'
                     : 'bg-amber-100/50 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
@@ -154,18 +175,29 @@ export function SessionList({
                   </p>
                 )}
 
-                {/* 删除按钮 - 悬停时显示 */}
-                <button
-                  onClick={(e) => handleDelete(session.id, e)}
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-7 h-7 rounded-lg transition-all duration-150 ${
-                    isDeleting
-                      ? 'bg-red-100 text-red-500 border border-red-300 opacity-100'
-                      : 'bg-amber-200/80 text-amber-600 border border-amber-300 opacity-0 group-hover:opacity-100'
-                  }`}
-                  title={isDeleting ? '再次点击确认删除' : '删除会话'}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {/* 操作按钮组 */}
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                  {/* 导出按钮 */}
+                  <button
+                    onClick={(e) => handleExport(session, e)}
+                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-amber-200/80 text-amber-600 border border-amber-300 opacity-0 group-hover:opacity-100 transition-all duration-150 hover:bg-amber-300 hover:text-amber-800"
+                    title="导出会话"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                  {/* 删除按钮 */}
+                  <button
+                    onClick={(e) => handleDelete(session.id, e)}
+                    className={`flex items-center justify-center w-7 h-7 rounded-lg border transition-all duration-150 ${
+                      isDeleting
+                        ? 'bg-red-100 text-red-500 border-red-300 opacity-100'
+                        : 'bg-amber-200/80 text-amber-600 border-amber-300 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 hover:border-red-300'
+                    }`}
+                    title={isDeleting ? '再次点击确认删除' : '删除会话'}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             );
           })
@@ -182,6 +214,16 @@ export function SessionList({
           <span>新建会话</span>
         </button>
       </div>
+
+      {/* 导出对话框 */}
+      {exportSession && (
+        <ExportDialog
+          isOpen={!!exportSession}
+          onClose={handleCloseExport}
+          session={exportSession}
+          messageCount={exportMessageCount}
+        />
+      )}
     </div>
   );
 }

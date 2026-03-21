@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 
+// 面试背景信息
+export interface InterviewContext {
+  company: string;
+  position: string;
+  jdHighlights: string;
+}
+
 // 扩展现有 Message 类型，增加持久化字段
 export interface SessionMessage {
   id?: string;           // UUID
@@ -10,13 +17,19 @@ export interface SessionMessage {
   created_at?: number;   // Unix 时间戳(毫秒)
 }
 
-// 会话元数据
+// 会话元数据（增强版）
 export interface Session {
   id: string;
   title: string;
   created_at: number;
   updated_at: number;
   preview?: string;      // 最后一条消息预览（前端计算，不存数据库）
+  // 新增元数据字段（可为空，兼容历史数据）
+  provider?: string;
+  model?: string;
+  prompt_template_id?: string;
+  prompt_content?: string;
+  interview_context?: InterviewContext;
 }
 
 // 创建新会话

@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
+import { ExportDialog } from "./components/export/ExportDialog";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech } from "./services/speechRecognition";
 import {
@@ -118,6 +119,9 @@ function App() {
   
   // 会话列表状态
   const [sessions, setSessions] = useState<Session[]>([]);
+  
+  // 导出对话框状态
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -501,6 +505,18 @@ function App() {
     }
   };
 
+  // 打开导出对话框
+  const handleOpenExport = () => {
+    if (currentSessionId && messages.length > 0) {
+      setExportDialogOpen(true);
+    }
+  };
+
+  // 关闭导出对话框
+  const handleCloseExport = () => {
+    setExportDialogOpen(false);
+  };
+
   // 打开设置页面（紧凑模式下自动切换回完整模式）
   const handleOpenSettings = async () => {
     if (compactMode) {
@@ -857,6 +873,15 @@ function App() {
           >
             <History className="w-3.5 h-3.5 text-amber-700" />
           </button>
+          {/* 导出按钮 */}
+          <button
+            onClick={handleOpenExport}
+            disabled={!currentSessionId || messages.length === 0}
+            className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors duration-150"
+            title="导出当前会话"
+          >
+            <Download className="w-3.5 h-3.5 text-amber-700" />
+          </button>
           {/* 穿透模式切换按钮 */}
           <button
             onClick={async () => {
@@ -1075,6 +1100,21 @@ function App() {
             onBack={() => setCurrentView('main')}
           />
         </div>
+      )}
+
+      {/* 导出对话框 */}
+      {exportDialogOpen && currentSessionId && (
+        <ExportDialog
+          isOpen={exportDialogOpen}
+          onClose={handleCloseExport}
+          session={{
+            id: currentSessionId,
+            title: sessions.find(s => s.id === currentSessionId)?.title || '当前会话',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          }}
+          messageCount={messages.length}
+        />
       )}
     </div>
   );

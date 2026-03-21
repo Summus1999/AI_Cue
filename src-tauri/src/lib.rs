@@ -6,6 +6,7 @@ mod ai;
 mod audio;
 mod commands;
 mod database;
+mod export;
 mod nls;
 mod qwen;
 mod screenshot;
@@ -54,6 +55,14 @@ pub fn run() {
             screenshot::capture_full_screen,
             screenshot::crop_screenshot,
             screenshot::cancel_screenshot,
+            // 导出命令（新增）
+            commands::export_session,
+            commands::write_text_file,
+            commands::write_binary_file,
+            commands::show_in_folder,
+            commands::open_file_with_default_app,
+            commands::delete_file,
+            commands::convert_html_to_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
