@@ -1,3 +1,5 @@
+import { CodeBlock } from './CodeBlock';
+
 interface MessageContentProps {
   content: string;
   variant: "user" | "assistant";
@@ -59,10 +61,6 @@ export function MessageContent({
   isGenerating,
 }: MessageContentProps) {
   const segments = parseContent(content);
-  const codeWrapperClass =
-    variant === "assistant"
-      ? "bg-stone-50 text-stone-900 border border-stone-200"
-      : "bg-white/80 text-amber-900 border border-amber-300";
 
   // 中断原因显示文本
   const getInterruptReasonText = (reason?: string): string => {
@@ -80,19 +78,12 @@ export function MessageContent({
       {segments.map((segment, index) => {
         if (segment.type === "code") {
           return (
-            <div
+            <CodeBlock
               key={`code-${index}`}
-              className={`overflow-hidden rounded-xl ${codeWrapperClass}`}
-            >
-              {segment.language && (
-                <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide border-b border-black/10">
-                  {segment.language}
-                </div>
-              )}
-              <pre className="overflow-x-auto px-3 py-3 text-[13px] leading-6 font-mono">
-                <code>{segment.content}</code>
-              </pre>
-            </div>
+              content={segment.content}
+              language={segment.language}
+              variant={variant}
+            />
           );
         }
 

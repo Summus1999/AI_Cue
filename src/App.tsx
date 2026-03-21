@@ -28,6 +28,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { errorClassifier } from './services/errorClassifier';
 import { useNetworkResilience, getWaitingHint } from './store/networkResilience';
+import { useCodeEditor } from './store/codeEditor';
+import { CodeEditorPanel } from './components/CodeEditorPanel';
+import { codeDetector } from './services/codeDetector';
 
 // 消息类型定义
 interface Message {
@@ -89,6 +92,9 @@ function getInterruptReason(finishReason?: string): Message['interruptReason'] {
 function App() {
   // 网络韧性状态管理
   const networkResilience = useNetworkResilience();
+  
+  // 代码编辑器状态
+  const codeEditor = useCodeEditor();
 
   // 穿透模式状态
   const [passthroughActive, setPassthroughActive] = useState(false);
@@ -257,6 +263,16 @@ function App() {
               console.error('Failed to save assistant message:', err);
             });
           }
+          // 检测代码模式（自动展开编辑器）
+          if (isComplete && codeEditor.codeModeAutoDetect && fullAssistantContent) {
+            const detection = codeDetector.detect(fullAssistantContent);
+            if (detection.suggestion === 'code_mode' && detection.codeBlocks.length > 0) {
+              codeEditor.setShowEditor(true);
+              // 预填充第一个代码块
+              const firstBlock = detection.codeBlocks[0];
+              codeEditor.insertCode(firstBlock.content, firstBlock.language, 'replace');
+            }
+          }
         }
       };
 
@@ -326,7 +342,7 @@ function App() {
       setIsGenerating(false);
       networkResilience.setWaiting(null);
     }
-  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId, networkResilience]);
+  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId, networkResilience, codeEditor]);
 
   // 判断是否在底部附近
   const isNearBottom = useCallback((element: HTMLDivElement) => {
@@ -1040,6 +1056,20 @@ function App() {
           >
             <Download className="w-3.5 h-3.5 text-amber-700" />
           </button>
+          {/* 代码编辑器切换按钮 */}
+          <button
+            onClick={() => codeEditor.toggleEditor()}
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors duration-150 ${
+              codeEditor.showEditor 
+                ? 'bg-amber-600 text-white' 
+                : 'hover:bg-amber-200/50'
+            }`}
+            title={codeEditor.showEditor ? '关闭代码编辑器' : '打开代码编辑器'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-amber-700" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
           {/* 穿透模式切换按钮 */}
           <button
             onClick={async () => {
@@ -1118,13 +1148,15 @@ function App() {
         </div>
       </div>
 
-      {/* 消息列表区域 */}
-      <div
-        ref={scrollRef}
-        data-interactive="true"
-        className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4"
-        onScroll={handleScroll}
-      >
+      {/* 主内容区域：消息列表 + 代码编辑器 */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* 消息列表区域 */}
+        <div
+          ref={scrollRef}
+          data-interactive="true"
+          className={`overflow-y-auto scrollbar-hide p-4 space-y-4 transition-all duration-300 ${codeEditor.showEditor ? 'w-[60%]' : 'flex-1'}`}
+          onScroll={handleScroll}
+        >
         {messages.map((message) => (
           <div
             key={message.id}
@@ -1178,6 +1210,18 @@ function App() {
               )}
             </div>
           </div>
+        )}
+        </div>
+
+        {/* 代码编辑器侧栏 */}
+        {codeEditor.showEditor && (
+          <CodeEditorPanel
+            className="w-[40%] h-full"
+            onClose={() => codeEditor.setShowEditor(false)}
+            onInsertToInput={(code) => {
+              setInput((prev) => prev + '\n\n```\n' + code + '\n```\n');
+            }}
+          />
         )}
       </div>
 
