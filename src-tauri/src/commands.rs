@@ -235,10 +235,13 @@ pub fn create_session(
     crate::database::create_session(&db, metadata)
 }
 
-// 列出所有会话
+// 列出所有会话（支持按 prompt_mode 筛选）
 #[tauri::command]
-pub fn list_sessions(db: tauri::State<'_, crate::database::Database>) -> Result<Vec<serde_json::Value>, String> {
-    crate::database::list_sessions(&db)
+pub fn list_sessions(
+    db: tauri::State<'_, crate::database::Database>,
+    prompt_mode: Option<String>
+) -> Result<Vec<serde_json::Value>, String> {
+    crate::database::list_sessions(&db, prompt_mode.as_deref())
 }
 
 // 获取会话的所有消息
@@ -265,16 +268,23 @@ pub fn delete_session(db: tauri::State<'_, crate::database::Database>, session_i
     crate::database::delete_session(&db, &session_id)
 }
 
-// 搜索会话
+// 搜索会话（支持按 prompt_mode 筛选）
 #[tauri::command]
-pub fn search_sessions(db: tauri::State<'_, crate::database::Database>, keyword: String) -> Result<Vec<serde_json::Value>, String> {
-    crate::database::search_sessions(&db, &keyword)
+pub fn search_sessions(
+    db: tauri::State<'_, crate::database::Database>,
+    keyword: String,
+    prompt_mode: Option<String>
+) -> Result<Vec<serde_json::Value>, String> {
+    crate::database::search_sessions(&db, &keyword, prompt_mode.as_deref())
 }
 
-// 获取最近活跃的会话
+// 获取最近活跃的会话（支持按 prompt_mode 筛选）
 #[tauri::command]
-pub fn get_last_active_session(db: tauri::State<'_, crate::database::Database>) -> Result<Option<serde_json::Value>, String> {
-    crate::database::get_last_active_session(&db)
+pub fn get_last_active_session(
+    db: tauri::State<'_, crate::database::Database>,
+    prompt_mode: Option<String>
+) -> Result<Option<serde_json::Value>, String> {
+    crate::database::get_last_active_session(&db, prompt_mode.as_deref())
 }
 
 // 结束面试（写入 completed_at 时间戳）
@@ -301,7 +311,7 @@ pub async fn export_session(
     options: ExportOptions,
 ) -> Result<ExportResult, String> {
     // 获取会话数据
-    let sessions = crate::database::list_sessions(&db)?;
+    let sessions = crate::database::list_sessions(&db, None)?;
     let session = sessions
         .into_iter()
         .find(|s| s.get("id").and_then(|id| id.as_str()) == Some(&options.session_id))

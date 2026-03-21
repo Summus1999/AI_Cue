@@ -7,6 +7,7 @@ use super::types::*;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use std::collections::HashSet;
+use std::sync::Arc;
 use futures_util::stream::{self, StreamExt};
 
 /// 最大并发评分数
@@ -238,10 +239,19 @@ pub async fn score_session_messages(
     });
     
     // 6. 使用 buffer_unordered 控制并发（最多 MAX_CONCURRENT_SCORES 个并发）
+    // 使用 tokio::sync::Mutex 保证进度计数的线程安全
+    use tokio::sync::Mutex;
+    let progress_count = Arc::new(Mutex::new(0usize));
+    let total_clone = total;
+    
     let results: Vec<_> = stream::iter(qa_pairs.into_iter().enumerate())
         .map(|(index, qa)| {
             let provider_type = provider_type.clone();
             let config = config.clone();
+            let progress_count = Arc::clone(&progress_count);
+            let total_len = total_clone;
+            let app_clone = app.clone();
+            
             async move {
                 let result = score_single_message(
                     providers,
@@ -253,6 +263,25 @@ pub async fn score_session_messages(
                     interview_context,
                 ).await;
                 
+                // 线程安全地递增进度计数
+                let current = {
+                    let mut count = progress_count.lock().await;
+                    *count += 1;
+                    *count
+                };
+                
+                // 推送进度（使用线程安全的计数）
+                let message = match &result {
+                    Ok(_) => format!("已完成 {}/{} 条评分", current, total_len),
+                    Err(e) => format!("第 {} 条评分失败: {}", current, e),
+                };
+                let _ = app_clone.emit("review-progress", ReviewProgress {
+                    phase: ReviewPhase::Scoring,
+                    current,
+                    total: total_len,
+                    message,
+                });
+                
                 (index, qa.message_id, result)
             }
         })
@@ -260,13 +289,10 @@ pub async fn score_session_messages(
         .collect()
         .await;
     
-    // 7. 收集结果
+    // 7. 收集结果（按原始索引顺序）
     let mut scores = Vec::new();
-    let mut completed = 0;
     
     for (index, message_id, result) in results {
-        completed += 1;
-        
         match result {
             Ok(ai_response) => {
                 let now = std::time::SystemTime::now()
@@ -288,34 +314,26 @@ pub async fn score_session_messages(
                 };
                 
                 scores.push(score);
-                
-                // 推送进度
-                let _ = app.emit("review-progress", ReviewProgress {
-                    phase: ReviewPhase::Scoring,
-                    current: completed,
-                    total,
-                    message: format!("已完成 {}/{} 条评分", completed, total),
-                });
             }
             Err(e) => {
                 // 单条评分失败，记录但不中断整体流程
-                eprintln!("评分失败 (message_id: {}): {}", message_id, e);
-                
-                let _ = app.emit("review-progress", ReviewProgress {
-                    phase: ReviewPhase::Scoring,
-                    current: completed,
-                    total,
-                    message: format!("第 {} 条评分失败: {}", index + 1, e),
-                });
+                eprintln!("评分失败 (message_id: {}, index {}): {}", message_id, index, e);
             }
         }
     }
     
-    // 8. 将评分结果写入数据库
-    for score in &scores {
-        let db_score = to_db_message_score(score);
-        if let Err(e) = database::insert_message_score(db, &db_score) {
-            eprintln!("写入评分失败: {}", e);
+    // 8. 批量将评分结果写入数据库（使用事务保证原子性）
+    if !scores.is_empty() {
+        let db_scores: Vec<_> = scores.iter().map(to_db_message_score).collect();
+        if let Err(e) = database::insert_message_scores_batch(db, &db_scores) {
+            eprintln!("批量写入评分失败: {}, 尝试逐条写入", e);
+            // 回退到逐条写入
+            for score in &scores {
+                let db_score = to_db_message_score(score);
+                if let Err(e) = database::insert_message_score(db, &db_score) {
+                    eprintln!("写入评分失败: {}", e);
+                }
+            }
         }
     }
     

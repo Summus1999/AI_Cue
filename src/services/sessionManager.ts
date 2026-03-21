@@ -30,6 +30,7 @@ export interface Session {
   prompt_template_id?: string;
   prompt_content?: string;
   interview_context?: InterviewContext;
+  prompt_mode?: string;  // 'assistant' | 'interviewer'，默认 'assistant'
   // 复盘相关字段
   review_status?: string | null;   // 'in_progress' | 'completed' | null
   overall_score?: number | null;   // 综合评分 0-100
@@ -41,9 +42,9 @@ export async function createSession(): Promise<Session> {
   return await invoke('create_session');
 }
 
-// 列出所有会话（按更新时间降序）
-export async function listSessions(): Promise<Session[]> {
-  return await invoke('list_sessions');
+// 列出所有会话（按更新时间降序，支持按 prompt_mode 筛选）
+export async function listSessions(promptMode?: string): Promise<Session[]> {
+  return await invoke<Session[]>('list_sessions', { prompt_mode: promptMode });
 }
 
 // 获取会话的所有消息
@@ -71,14 +72,14 @@ export async function deleteSession(sessionId: string): Promise<void> {
   return await invoke('delete_session', { sessionId });
 }
 
-// 搜索会话（按消息内容关键词）
-export async function searchSessions(keyword: string): Promise<Session[]> {
-  return await invoke('search_sessions', { keyword });
+// 搜索会话（按消息内容关键词，支持按 prompt_mode 筛选）
+export async function searchSessions(keyword: string, promptMode?: string): Promise<Session[]> {
+  return await invoke<Session[]>('search_sessions', { keyword, prompt_mode: promptMode });
 }
 
-// 获取最近活跃的会话
-export async function getLastActiveSession(): Promise<Session | null> {
-  return await invoke('get_last_active_session');
+// 获取最近活跃的会话（支持按 prompt_mode 筛选）
+export async function getLastActiveSession(promptMode?: string): Promise<Session | null> {
+  return await invoke<Session | null>('get_last_active_session', { prompt_mode: promptMode });
 }
 
 // 结束面试（写入 completed_at 时间戳）

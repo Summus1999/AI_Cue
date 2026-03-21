@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ProviderSelector } from './ProviderSelector';
-import { loadConfig, saveConfig, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig, ProviderType, ProviderConfig } from '../store/config';
+import { loadConfig, saveConfig, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig, ProviderType, ProviderConfig, PromptMode } from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -157,6 +157,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                       >
                         {config.promptTemplateId === template.id && <Check className="w-4 h-4 text-amber-600" />}
                         <span className={config.promptTemplateId === template.id ? '' : 'pl-6'}>{template.name}</span>
+                        {template.id !== 'custom' && (
+                          template.mode === 'interviewer' ? (
+                            <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full bg-amber-600/20 text-amber-700 font-medium">面试官</span>
+                          ) : (
+                            <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-500">助手</span>
+                          )
+                        )}
                       </button>
                     ))}
                   </div>
@@ -165,14 +172,48 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               
               {/* 模板描述 */}
               {config.promptTemplateId !== 'custom' && (
-                <p className="text-xs text-amber-600 leading-relaxed">
-                  {PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.description}
-                </p>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-amber-600 leading-relaxed">
+                    {PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.description}
+                  </p>
+                  {PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId)?.mode === 'interviewer' && (
+                    <p className="text-xs text-amber-700 bg-amber-100 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                      💡 AI 将作为面试官向你提问，面试结束后可生成复盘报告
+                    </p>
+                  )}
+                </div>
               )}
               
               {/* 自定义 Prompt 输入框 */}
               {config.promptTemplateId === 'custom' && (
                 <div className="space-y-2">
+                  {/* 面试官模式切换开关 */}
+                  <div className="flex items-center justify-between py-2 px-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <label className="text-sm text-amber-800">
+                      启用面试官模式（AI提问，你回答）
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newMode: PromptMode = config.customPromptMode === 'interviewer' ? 'assistant' : 'interviewer';
+                        setConfig(prev => ({ ...prev, customPromptMode: newMode }));
+                      }}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+                        config.customPromptMode === 'interviewer' ? 'bg-amber-600' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
+                          config.customPromptMode === 'interviewer' ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {config.customPromptMode === 'interviewer' && (
+                    <p className="text-xs text-amber-700 bg-amber-100 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                      💡 AI 将作为面试官向你提问，面试结束后可生成复盘报告
+                    </p>
+                  )}
                   <textarea
                     value={config.customPrompt}
                     onChange={(e) => setConfig(prev => ({ ...prev, customPrompt: e.target.value }))}
@@ -213,13 +254,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     <input
                       type="number"
                       min={0}
-                      max={20}
+                      max={40}
                       value={config.contextWindowSize ?? 5}
                       onChange={(e) => {
                         const value = parseInt(e.target.value, 10);
                         setConfig(prev => ({ 
                           ...prev, 
-                          contextWindowSize: Math.max(0, Math.min(20, isNaN(value) ? 5 : value))
+                          contextWindowSize: Math.max(0, Math.min(40, isNaN(value) ? 5 : value))
                         }));
                       }}
                       className="w-14 px-2 py-1 text-center bg-white/80 border border-amber-300 rounded text-sm text-amber-900"
@@ -227,7 +268,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     <button
                       onClick={() => setConfig(prev => ({ 
                         ...prev, 
-                        contextWindowSize: Math.min(20, (prev.contextWindowSize ?? 5) + 1) 
+                        contextWindowSize: Math.min(40, (prev.contextWindowSize ?? 5) + 1) 
                       }))}
                       className="w-7 h-7 flex items-center justify-center bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors"
                     >
@@ -236,7 +277,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   </div>
                 </div>
                 <p className="text-xs text-amber-600">
-                  每次发送消息时携带最近 {(config.contextWindowSize ?? 5)} 轮对话历史（范围：0-20，0 表示不传递历史）
+                  每次发送消息时携带最近 {(config.contextWindowSize ?? 5)} 轮对话历史（范围：0-40，0 表示不传递历史）
                 </p>
               </div>
             </div>

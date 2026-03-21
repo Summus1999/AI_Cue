@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReviewReport, TrendData, ReviewProgress, ReviewStatus } from '../types/review';
 import * as reviewService from '../services/reviewService';
 
@@ -12,35 +12,37 @@ export function useReviewStore() {
   const [trend, setTrend] = useState<TrendData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 使用 ref 存储 unlisten 函数和卸载标志，确保异步安全访问
+  const unlistenRef = useRef<(() => void) | null>(null);
+  const isUnmountedRef = useRef(false);
+
   // 监听进度事件
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
+    isUnmountedRef.current = false;
 
-    (async () => {
-      const disposer = await reviewService.onReviewProgress((prog) => {
-        if (cancelled) return; // 组件已卸载，忽略事件
-        setProgress(prog);
-        if (prog.phase === 'completed') {
-          setReviewStatus('completed');
-        } else if (prog.phase === 'failed') {
-          setReviewStatus('error');
-          setError(prog.message);
-        }
-      });
+    // 异步注册事件监听
+    reviewService.onReviewProgress((prog) => {
+      // 组件已卸载，忽略事件
+      if (isUnmountedRef.current) return;
 
-      if (cancelled) {
-        disposer(); // 组件已卸载，立即释放
-      } else {
-        unlisten = disposer;
+      setProgress(prog);
+      if (prog.phase === 'completed') {
+        setReviewStatus('completed');
+      } else if (prog.phase === 'failed') {
+        setReviewStatus('error');
+        setError(prog.message);
       }
-    })();
+    }).then((unlisten) => {
+      // 注册完成后才存储 unlisten 函数
+      unlistenRef.current = unlisten;
+    });
 
+    // 清理函数
     return () => {
-      cancelled = true;
-      if (unlisten) {
-        unlisten();
-        unlisten = null;
+      isUnmountedRef.current = true;
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
       }
     };
   }, []);

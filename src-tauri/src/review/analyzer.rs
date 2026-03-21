@@ -237,9 +237,9 @@ pub async fn analyze_session(
         .collect();
     database::insert_session_insights(db, &db_insights)?;
     
-    // 11. 推送完成进度
+    // 11. 推送分析阶段完成进度（进入报告生成阶段）
     let _ = app.emit("review-progress", ReviewProgress {
-        phase: ReviewPhase::Analyzing,
+        phase: ReviewPhase::Summarizing,
         current: 1,
         total: 1,
         message: format!("分析完成，发现 {} 条洞察", insights.len()),

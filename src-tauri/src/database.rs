@@ -60,6 +60,12 @@ pub struct SessionMetadata {
     pub prompt_template_id: Option<String>,
     pub prompt_content: Option<String>,
     pub interview_context: Option<InterviewContext>,
+    #[serde(default = "default_prompt_mode")]
+    pub prompt_mode: String,  // "assistant" 或 "interviewer"
+}
+
+fn default_prompt_mode() -> String {
+    "assistant".to_string()
 }
 
 /// 数据库封装结构
@@ -176,6 +182,35 @@ fn migrate_v2_to_v3(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v3 到 v4（添加 prompt_mode 字段）
+fn migrate_v3_to_v4(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    
+    if version < 4 {
+        println!("执行数据库迁移 v3 -> v4...");
+        
+        let tx = conn.unchecked_transaction()?;
+        
+        // 添加 prompt_mode 字段
+        if let Err(e) = tx.execute(
+            "ALTER TABLE sessions ADD COLUMN prompt_mode TEXT NOT NULL DEFAULT 'assistant'",
+            []
+        ) {
+            let err_msg = e.to_string();
+            if !err_msg.contains("duplicate column name") {
+                return Err(e.into());
+            }
+        }
+        
+        tx.pragma_update(None, "user_version", 4)?;
+        tx.commit()?;
+        
+        println!("数据库迁移 v3 -> v4 完成");
+    }
+    
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -216,6 +251,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     // 执行数据库迁移
     migrate_v1_to_v2(&conn)?;
     migrate_v2_to_v3(&conn)?;
+    migrate_v3_to_v4(&conn)?;
     
     Ok(Database(Mutex::new(conn)))
 }
@@ -244,19 +280,25 @@ pub fn create_session(
     let interview_context_json = metadata.interview_context
         .map(|ctx| serde_json::to_string(&ctx).ok())
         .flatten();
+    let prompt_mode = if metadata.prompt_mode.is_empty() {
+        "assistant".to_string()
+    } else {
+        metadata.prompt_mode.clone()
+    };
     
     conn.execute(
         "INSERT INTO sessions (
             id, title, created_at, updated_at,
-            provider, model, prompt_template_id, prompt_content, interview_context
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            provider, model, prompt_template_id, prompt_content, interview_context, prompt_mode
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             id, title, now, now,
             metadata.provider,
             metadata.model,
             metadata.prompt_template_id,
             metadata.prompt_content,
-            interview_context_json
+            interview_context_json,
+            prompt_mode
         ]
     ).map_err(|e| e.to_string())?;
     
@@ -269,24 +311,22 @@ pub fn create_session(
         "model": metadata.model,
         "prompt_template_id": metadata.prompt_template_id,
         "prompt_content": metadata.prompt_content,
-        "interview_context": interview_context_clone
+        "interview_context": interview_context_clone,
+        "prompt_mode": prompt_mode
     }))
 }
 
-/// 列出所有会话
-pub fn list_sessions(db: &Database) -> Result<Vec<serde_json::Value>, String> {
+/// 列出所有会话（支持按 prompt_mode 筛选）
+pub fn list_sessions(db: &Database, prompt_mode: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, updated_at, provider, model, 
-                prompt_template_id, prompt_content, interview_context 
-         FROM sessions ORDER BY updated_at DESC"
-    ).map_err(|e| e.to_string())?;
-    
-    let sessions = stmt.query_map([], |row| {
+    // 辅助函数：将行转换为 JSON
+    fn row_to_json(row: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
         let interview_context_str: Option<String> = row.get(8)?;
         let interview_context: Option<InterviewContext> = interview_context_str
             .and_then(|s| serde_json::from_str(&s).ok());
+        let prompt_mode_val: String = row.get::<_, Option<String>>(9)?
+            .unwrap_or_else(|| "assistant".to_string());
         
         Ok(json!({
             "id": row.get::<_, String>(0)?,
@@ -297,13 +337,40 @@ pub fn list_sessions(db: &Database) -> Result<Vec<serde_json::Value>, String> {
             "model": row.get::<_, Option<String>>(5)?,
             "prompt_template_id": row.get::<_, Option<String>>(6)?,
             "prompt_content": row.get::<_, Option<String>>(7)?,
-            "interview_context": interview_context
+            "interview_context": interview_context,
+            "prompt_mode": prompt_mode_val,
+            "completed_at": row.get::<_, Option<i64>>(10)?,
+            "review_status": row.get::<_, Option<String>>(11)?,
+            "overall_score": row.get::<_, Option<f64>>(12)?
         }))
-    }).map_err(|e| e.to_string())?;
+    }
     
     let mut result = Vec::new();
-    for session in sessions {
-        result.push(session.map_err(|e| e.to_string())?);
+    
+    if let Some(mode) = prompt_mode {
+        // 有筛选条件时使用参数化查询
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, provider, model, 
+                    prompt_template_id, prompt_content, interview_context, prompt_mode,
+                    completed_at, review_status, overall_score
+             FROM sessions WHERE prompt_mode = ?1 ORDER BY updated_at DESC"
+        ).map_err(|e| e.to_string())?;
+        let sessions = stmt.query_map(params![mode], row_to_json).map_err(|e| e.to_string())?;
+        for session in sessions {
+            result.push(session.map_err(|e| e.to_string())?);
+        }
+    } else {
+        // 无筛选条件时返回所有
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, provider, model, 
+                    prompt_template_id, prompt_content, interview_context, prompt_mode,
+                    completed_at, review_status, overall_score
+             FROM sessions ORDER BY updated_at DESC"
+        ).map_err(|e| e.to_string())?;
+        let sessions = stmt.query_map([], row_to_json).map_err(|e| e.to_string())?;
+        for session in sessions {
+            result.push(session.map_err(|e| e.to_string())?);
+        }
     }
     
     Ok(result)
@@ -396,23 +463,17 @@ pub fn delete_session(db: &Database, session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 搜索会话（按消息内容）
-pub fn search_sessions(db: &Database, keyword: &str) -> Result<Vec<serde_json::Value>, String> {
+/// 搜索会话（按消息内容，支持按 prompt_mode 筛选）
+pub fn search_sessions(db: &Database, keyword: &str, prompt_mode: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT s.id, s.title, s.created_at, s.updated_at,
-                s.provider, s.model, s.prompt_template_id, s.prompt_content, s.interview_context
-         FROM sessions s 
-         JOIN messages m ON s.id = m.session_id 
-         WHERE m.content LIKE '%' || ?1 || '%' 
-         ORDER BY s.updated_at DESC"
-    ).map_err(|e| e.to_string())?;
-    
-    let sessions = stmt.query_map(params![keyword], |row| {
+    // 辅助函数：将行转换为 JSON
+    fn row_to_json(row: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
         let interview_context_str: Option<String> = row.get(8)?;
         let interview_context: Option<InterviewContext> = interview_context_str
             .and_then(|s| serde_json::from_str(&s).ok());
+        let prompt_mode_val: String = row.get::<_, Option<String>>(9)?
+            .unwrap_or_else(|| "assistant".to_string());
         
         Ok(json!({
             "id": row.get::<_, String>(0)?,
@@ -423,36 +484,65 @@ pub fn search_sessions(db: &Database, keyword: &str) -> Result<Vec<serde_json::V
             "model": row.get::<_, Option<String>>(5)?,
             "prompt_template_id": row.get::<_, Option<String>>(6)?,
             "prompt_content": row.get::<_, Option<String>>(7)?,
-            "interview_context": interview_context
+            "interview_context": interview_context,
+            "prompt_mode": prompt_mode_val,
+            "completed_at": row.get::<_, Option<i64>>(10)?,
+            "review_status": row.get::<_, Option<String>>(11)?,
+            "overall_score": row.get::<_, Option<f64>>(12)?
         }))
-    }).map_err(|e| e.to_string())?;
+    }
     
     let mut result = Vec::new();
-    for session in sessions {
-        result.push(session.map_err(|e| e.to_string())?);
+    
+    if let Some(mode) = prompt_mode {
+        // 有 prompt_mode 筛选条件
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT s.id, s.title, s.created_at, s.updated_at,
+                    s.provider, s.model, s.prompt_template_id, s.prompt_content, 
+                    s.interview_context, s.prompt_mode, s.completed_at, s.review_status, s.overall_score
+             FROM sessions s 
+             JOIN messages m ON s.id = m.session_id 
+             WHERE m.content LIKE '%' || ?1 || '%' AND s.prompt_mode = ?2
+             ORDER BY s.updated_at DESC"
+        ).map_err(|e| e.to_string())?;
+        let sessions = stmt.query_map(params![keyword, mode], row_to_json).map_err(|e| e.to_string())?;
+        for session in sessions {
+            result.push(session.map_err(|e| e.to_string())?);
+        }
+    } else {
+        // 无 prompt_mode 筛选条件
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT s.id, s.title, s.created_at, s.updated_at,
+                    s.provider, s.model, s.prompt_template_id, s.prompt_content, 
+                    s.interview_context, s.prompt_mode, s.completed_at, s.review_status, s.overall_score
+             FROM sessions s 
+             JOIN messages m ON s.id = m.session_id 
+             WHERE m.content LIKE '%' || ?1 || '%' 
+             ORDER BY s.updated_at DESC"
+        ).map_err(|e| e.to_string())?;
+        let sessions = stmt.query_map(params![keyword], row_to_json).map_err(|e| e.to_string())?;
+        for session in sessions {
+            result.push(session.map_err(|e| e.to_string())?);
+        }
     }
     
     Ok(result)
 }
 
-/// 获取最近活跃的会话
-pub fn get_last_active_session(db: &Database) -> Result<Option<serde_json::Value>, String> {
+/// 获取最近活跃的会话（支持按 prompt_mode 筛选）
+pub fn get_last_active_session(db: &Database, prompt_mode: Option<&str>) -> Result<Option<serde_json::Value>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, updated_at, provider, model,
-                prompt_template_id, prompt_content, interview_context 
-         FROM sessions ORDER BY updated_at DESC LIMIT 1"
-    ).map_err(|e| e.to_string())?;
-    
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    
-    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+    // 辅助函数：将行转换为 JSON
+    fn row_to_json(row: &rusqlite::Row) -> Result<serde_json::Value, String> {
         let interview_context_str: Option<String> = row.get(8).map_err(|e| e.to_string())?;
         let interview_context: Option<InterviewContext> = interview_context_str
             .and_then(|s| serde_json::from_str(&s).ok());
+        let prompt_mode_val: String = row.get::<_, Option<String>>(9)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "assistant".to_string());
         
-        Ok(Some(json!({
+        Ok(json!({
             "id": row.get::<_, String>(0).map_err(|e| e.to_string())?,
             "title": row.get::<_, String>(1).map_err(|e| e.to_string())?,
             "created_at": row.get::<_, i64>(2).map_err(|e| e.to_string())?,
@@ -461,11 +551,41 @@ pub fn get_last_active_session(db: &Database) -> Result<Option<serde_json::Value
             "model": row.get::<_, Option<String>>(5).map_err(|e| e.to_string())?,
             "prompt_template_id": row.get::<_, Option<String>>(6).map_err(|e| e.to_string())?,
             "prompt_content": row.get::<_, Option<String>>(7).map_err(|e| e.to_string())?,
-            "interview_context": interview_context
-        })))
-    } else {
-        Ok(None)
+            "interview_context": interview_context,
+            "prompt_mode": prompt_mode_val,
+            "completed_at": row.get::<_, Option<i64>>(10).map_err(|e| e.to_string())?,
+            "review_status": row.get::<_, Option<String>>(11).map_err(|e| e.to_string())?,
+            "overall_score": row.get::<_, Option<f64>>(12).map_err(|e| e.to_string())?
+        }))
     }
+    
+    if let Some(mode) = prompt_mode {
+        // 有 prompt_mode 筛选条件
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, provider, model,
+                    prompt_template_id, prompt_content, interview_context, prompt_mode,
+                    completed_at, review_status, overall_score
+             FROM sessions WHERE prompt_mode = ?1 ORDER BY updated_at DESC LIMIT 1"
+        ).map_err(|e| e.to_string())?;
+        let mut rows = stmt.query(params![mode]).map_err(|e| e.to_string())?;
+        if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            return Ok(Some(row_to_json(row)?));
+        }
+    } else {
+        // 无 prompt_mode 筛选条件
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, provider, model,
+                    prompt_template_id, prompt_content, interview_context, prompt_mode,
+                    completed_at, review_status, overall_score
+             FROM sessions ORDER BY updated_at DESC LIMIT 1"
+        ).map_err(|e| e.to_string())?;
+        let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+        if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            return Ok(Some(row_to_json(row)?));
+        }
+    }
+    
+    Ok(None)
 }
 
 // ==================== Review CRUD Functions ====================
@@ -495,6 +615,43 @@ pub fn insert_message_score(db: &Database, score: &MessageScore) -> Result<(), S
             score.created_at
         ]
     ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 批量插入消息评分（使用事务保证原子性）
+pub fn insert_message_scores_batch(db: &Database, scores: &[MessageScore]) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    // 开始事务
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    
+    for score in scores {
+        let topic_tags_json = serde_json::to_string(&score.topic_tags)
+            .map_err(|e| e.to_string())?;
+        
+        tx.execute(
+            "INSERT INTO message_scores (
+                id, session_id, message_id, completeness_score, accuracy_score,
+                clarity_score, overall_score, feedback, topic_tags, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                score.id,
+                score.session_id,
+                score.message_id,
+                score.completeness_score,
+                score.accuracy_score,
+                score.clarity_score,
+                score.overall_score,
+                score.feedback,
+                topic_tags_json,
+                score.created_at
+            ]
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    // 提交事务
+    tx.commit().map_err(|e| e.to_string())?;
     
     Ok(())
 }

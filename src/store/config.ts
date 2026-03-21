@@ -5,6 +5,8 @@ import { Store } from '@tauri-apps/plugin-store';
 
 export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
 
+export type PromptMode = 'assistant' | 'interviewer';
+
 export interface ProviderConfig {
   apiKey: string;
   baseUrl?: string;             // 自定义 Base URL
@@ -146,25 +148,22 @@ export const NLS_REGIONS = [
   { id: 'cn-shenzhen', name: '华南1（深圳）' },
 ] as const;
 
-// 预设 Prompt 模板
-export const PROMPT_TEMPLATES = [
-  {
-    id: 'default',
-    name: '通用面试助手',
-    description: '适合各类面试场景，平衡技术与行为问题',
-    prompt: `你是一个专业的面试助手。用户会向你提供面试官的问题，你需要：
-1. 理解问题的核心考察点
-2. 给出清晰、有条理的回答要点
-3. 回答应简洁有力，突出重点
-4. 如果是技术问题，给出准确的技术解答
-5. 如果是行为面试问题，使用 STAR 法则组织回答
+// PromptTemplate 接口定义
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  mode: PromptMode;
+}
 
-请用中文回答，保持专业但友好的语气。重要：回答时请使用纯文本格式，不要使用 Markdown 标记（如**粗体**、*斜体*、列表符号等）。`,
-  },
+// 预设 Prompt 模板
+export const PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'tech',
-    name: '技术面试专家',
-    description: '扮演技术能力和软技能都很强的应聘者，回答面试官的问题',
+    name: '技术专家',
+    description: '作为技术应聘者，深度回答技术问题，展现扎实功底与项目经验',
+    mode: 'assistant',
     prompt: `你是一位技术能力扎实且软技能出色的优秀应聘者，正在参加一场技术面试。当面试官向你提问时，你需要：
 
 1. 理解问题意图：快速识别面试官想考察的技术点或软技能
@@ -185,27 +184,34 @@ export const PROMPT_TEMPLATES = [
   },
   {
     id: 'behavioral',
-    name: '行为面试教练',
-    description: '使用STAR法则，突出软技能和领导力',
-    prompt: `你是专业的行为面试教练，擅长指导候选人回答行为类面试问题。针对用户提供的问题：
-1. 识别问题考察的核心软技能（如沟通、领导力、团队协作、问题解决等）
-2. 使用 STAR 法则构建回答框架：
-   - Situation（情境）：简要描述背景
-   - Task（任务）：明确你的职责
-   - Action（行动）：详细说明你采取的行动
-   - Result（结果）：量化或具体化成果
-3. 提供一个示例回答作为参考
-4. 给出回答技巧和注意事项
+    name: '大厂面试官',
+    description: 'AI扮演大厂面试官，按设定方向逐题提问',
+    mode: 'interviewer',
+    prompt: `你是一位来自国内一线互联网大厂的资深技术面试官，正在对一位候选人进行正式的技术面试。
 
-请用中文回答，帮助用户展现最佳的职业形象。重要：回答时请使用纯文本格式，不要使用 Markdown 标记（如**粗体**、*斜体*、列表符号等）。`,
+面试规则：
+1. 每次只提出一个问题，等待候选人回答后再继续
+2. 根据候选人的回答质量决定是追问细节还是进入下一题
+3. 面试覆盖以下领域，根据面试进展灵活调整比重：
+   - 编程基础与算法（数据结构、复杂度分析、常见算法）
+   - 系统设计与架构（高并发、分布式、缓存、消息队列）
+   - 项目经验深挖（技术选型、难点攻克、性能优化）
+   - 工程实践（代码规范、测试策略、CI/CD、故障排查）
+   - 软技能（团队协作、技术决策、沟通表达）
+4. 难度从中等开始，根据回答水平动态调整，优秀回答后提升难度，薄弱回答适当降低
+5. 保持专业严谨但不刻板的面试风格，适当给予简短反馈
+6. 不要直接给出标准答案，通过追问引导候选人深入思考
+
+请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后提出第一个面试问题。`,
   },
   {
     id: 'custom',
     name: '自定义',
     description: '完全自定义提示词，满足特殊需求',
+    mode: 'assistant',
     prompt: '',
   },
-] as const;
+];
 
 // 配置类型定义
 export interface AppConfig {
@@ -229,6 +235,7 @@ export interface AppConfig {
   // Prompt 配置
   promptTemplateId: string;  // 选中的模板ID
   customPrompt: string;      // 自定义 prompt 内容
+  customPromptMode?: PromptMode;  // 自定义模板的模式，默认 'assistant'
   // 高质量题解仓库（每行一个 URL）
   highQualityRepoUrls: string;
   // 本地题解文档路径（Markdown，支持 ## 到 ###### 的题号标题）
@@ -270,8 +277,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   nlsAccessKeyId: '',
   nlsAccessKeySecret: '',
   nlsRegion: 'cn-shanghai',
-  promptTemplateId: 'default',
+  promptTemplateId: 'tech',
   customPrompt: '',
+  customPromptMode: 'assistant',
   highQualityRepoUrls: '',
   localDocPath: '',
   shortcutConfig: DEFAULT_SHORTCUT_CONFIG,
@@ -375,6 +383,15 @@ function loadFromLocalStorage(): AppConfig {
       const parsed = JSON.parse(saved);
       console.log('从 localStorage 加载配置:', parsed);
       const config = migrateConfig(parsed);
+      // 补充 customPromptMode 默认值
+      if (!config.customPromptMode) {
+        config.customPromptMode = 'assistant';
+      }
+      // 迁移：default 模板已删除，自动切换到 tech
+      if (config.promptTemplateId === 'default') {
+        config.promptTemplateId = 'tech';
+      }
+    
       return validateAndFixConfig(config);
     }
   } catch (err) {
@@ -449,6 +466,8 @@ export async function loadConfig(): Promise<AppConfig> {
     const contextWindowSize = await store.get<number>('contextWindowSize');
     const interviewBackground = await store.get<InterviewBackground>('interviewBackground');
 
+    const customPromptMode = await store.get<PromptMode>('customPromptMode');
+
     const config: AppConfig = {
       activeProvider: activeProvider || DEFAULT_CONFIG.activeProvider,
       providerConfigs: providerConfigs || DEFAULT_CONFIG.providerConfigs,
@@ -459,6 +478,7 @@ export async function loadConfig(): Promise<AppConfig> {
       nlsRegion: nlsRegion || DEFAULT_CONFIG.nlsRegion,
       promptTemplateId: promptTemplateId || DEFAULT_CONFIG.promptTemplateId,
       customPrompt: customPrompt || '',
+      customPromptMode: customPromptMode || 'assistant',
       highQualityRepoUrls: highQualityRepoUrls || '',
       localDocPath: localDocPath || '',
       shortcutConfig: {
@@ -469,6 +489,16 @@ export async function loadConfig(): Promise<AppConfig> {
       contextWindowSize: contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
       interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
     };
+
+    // 补充 customPromptMode 默认值
+    if (!config.customPromptMode) {
+      config.customPromptMode = 'assistant';
+    }
+
+    // 迁移：default 模板已删除，自动切换到 tech
+    if (config.promptTemplateId === 'default') {
+      config.promptTemplateId = 'tech';
+    }
 
     return validateAndFixConfig(config);
   } catch (error) {
@@ -504,6 +534,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('nlsRegion', config.nlsRegion);
     await store.set('promptTemplateId', config.promptTemplateId);
     await store.set('customPrompt', config.customPrompt);
+    await store.set('customPromptMode', config.customPromptMode);
     await store.set('highQualityRepoUrls', config.highQualityRepoUrls);
     await store.set('localDocPath', config.localDocPath);
     await store.set('shortcutConfig', config.shortcutConfig);
@@ -543,10 +574,10 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
     }
   }
 
-  // 验证 contextWindowSize（范围：0-20）
+  // 验证 contextWindowSize（范围：0-40）
   if (typeof validatedConfig.contextWindowSize !== 'number' ||
       validatedConfig.contextWindowSize < 0 ||
-      validatedConfig.contextWindowSize > 20 ||
+      validatedConfig.contextWindowSize > 40 ||
       !Number.isInteger(validatedConfig.contextWindowSize)) {
     validatedConfig.contextWindowSize = DEFAULT_CONFIG.contextWindowSize;
   }
@@ -572,6 +603,15 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
   }
   
   return validatedConfig;
+}
+
+// 获取当前配置的 Prompt 模式
+export function getPromptMode(config: AppConfig): PromptMode {
+  if (config.promptTemplateId === 'custom') {
+    return config.customPromptMode || 'assistant';
+  }
+  const template = PROMPT_TEMPLATES.find(t => t.id === config.promptTemplateId);
+  return template?.mode || 'assistant';
 }
 
 // 验证配置是否完整（当前 Provider 的 API Key 必填）

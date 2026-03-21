@@ -160,11 +160,18 @@ export function SessionList({
               >
                 {/* 标题行 */}
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className={`text-sm font-medium truncate flex-1 ${
-                    isActive ? 'text-amber-900' : 'text-amber-800'
-                  }`}>
-                    {session.title || '新会话'}
-                  </h3>
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <h3 className={`text-sm font-medium truncate ${
+                      isActive ? 'text-amber-900' : 'text-amber-800'
+                    }`}>
+                      {session.title || '新会话'}
+                    </h3>
+                    {session.prompt_mode === 'interviewer' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-700 border border-amber-300 whitespace-nowrap flex-shrink-0">
+                        模拟面试
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[10px] text-amber-500 whitespace-nowrap flex-shrink-0">
                     {formatRelativeTime(session.updated_at)}
                   </span>
@@ -177,8 +184,8 @@ export function SessionList({
                   </p>
                 )}
 
-                {/* 复盘评分标签 */}
-                {session.review_status === 'completed' && session.overall_score != null && (
+                {/* 复盘评分标签 - 仅面试模式显示 */}
+                {session.prompt_mode === 'interviewer' && session.review_status === 'completed' && session.overall_score != null && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -197,8 +204,8 @@ export function SessionList({
 
                 {/* 操作按钮组 */}
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                  {/* 复盘按钮 - 未复盘时显示 */}
-                  {session.review_status !== 'completed' && onReview && (
+                  {/* 复盘按钮 - 仅面试模式且未复盘时显示 */}
+                  {session.prompt_mode === 'interviewer' && session.review_status !== 'completed' && onReview && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

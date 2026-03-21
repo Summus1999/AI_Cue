@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
@@ -19,11 +19,11 @@ import {
   buildContextHistory,
   StreamResult,
 } from "./services/aiChat";
-import { loadConfig } from "./store/config";
+import { loadConfig, PromptMode, getPromptMode } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
 import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
 import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
-import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
+import { saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -139,8 +139,15 @@ function App() {
   const [reviewSessionId, setReviewSessionId] = useState<string | null>(null);
   const [reviewSessionTitle, setReviewSessionTitle] = useState('');
   
-  // 面试结束状态
+  // 面试状态
+  const [isInterviewStarted, setIsInterviewStarted] = useState(false);
   const [isInterviewEnded, setIsInterviewEnded] = useState(false);
+  
+  // Prompt 模式状态
+  const [promptMode, setPromptMode] = useState<PromptMode>('assistant');
+  
+  // 会话恢复/切换时间戳（用于上下文隔离）
+  const [sessionResumeTimestamp, setSessionResumeTimestamp] = useState<number>(Date.now());
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -225,7 +232,12 @@ function App() {
     // 保存用户消息到数据库（延迟创建会话）
     try {
       if (!sessionId) {
-        const newSession = await createSession();
+        // 创建新会话时传递 promptMode
+        const newSession = await invoke<{ id: string }>('create_session', {
+          metadata: {
+            prompt_mode: promptMode,
+          },
+        });
         sessionId = newSession.id;
         setCurrentSessionId(sessionId);
         isNewSession = true;
@@ -266,6 +278,10 @@ function App() {
                 : msg
             )
           );
+          // 面试官模式下自动开始面试
+          if (promptMode === 'interviewer' && !isInterviewStarted) {
+            setIsInterviewStarted(true);
+          }
           // 保存到数据库
           if (sessionId && fullAssistantContent) {
             saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
@@ -285,9 +301,10 @@ function App() {
         }
       };
 
-      // 构建上下文历史（使用 setMessages 之前捕获的消息列表，取最近 N 轮）
+      // 构建上下文历史（只取本次打开/切换后的消息用于上下文）
+      const recentMessages = currentMessages.filter(m => m.timestamp >= sessionResumeTimestamp);
       const contextHistory = buildContextHistory(
-        currentMessages,
+        recentMessages,
         config.contextWindowSize ?? 5,
       );
 
@@ -421,7 +438,13 @@ function App() {
   useEffect(() => {
     async function restoreLastSession() {
       try {
-        const lastSession = await getLastActiveSession();
+        // 先加载 config 获取 promptMode
+        const config = await loadConfig();
+        const mode = getPromptMode(config);
+        setPromptMode(mode);
+        
+        // 根据当前模式获取最近活跃会话
+        const lastSession = await getLastActiveSession(mode);
         if (lastSession) {
           const msgs = await getSessionMessages(lastSession.id);
           setMessages(msgs.map(m => ({
@@ -431,8 +454,11 @@ function App() {
             timestamp: m.created_at || Date.now(),
           })));
           setCurrentSessionId(lastSession.id);
-          // 检查会话是否已结束
-          setIsInterviewEnded(!!lastSession.completed_at);
+          // 记录恢复时间戳（用于上下文隔离）
+          setSessionResumeTimestamp(Date.now());
+          // 默认为"面试未开始"状态，每次打开应用都重置
+          setIsInterviewStarted(false);
+          setIsInterviewEnded(false);
         }
       } catch (error) {
         console.error('Failed to restore last session:', error);
@@ -446,6 +472,8 @@ function App() {
     async function restoreWindowOpacity() {
       try {
         const config = await loadConfig();
+        // 同步更新 promptMode
+        setPromptMode(getPromptMode(config));
         if (config.window?.opacity) {
           await initWindowOpacity(config.window.opacity);
         }
@@ -544,6 +572,7 @@ function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setLatestScreenshotContext(null);
+    setIsInterviewStarted(false);
     setIsInterviewEnded(false);
   };
 
@@ -559,10 +588,10 @@ function App() {
     return null;
   }, [messages]);
 
-  // 打开会话列表
+  // 打开会话列表（按当前模式筛选）
   const handleOpenSessions = async () => {
     try {
-      const sessionList = await listSessions();
+      const sessionList = await listSessions(promptMode);
       setSessions(sessionList);
       setCurrentView('sessions');
     } catch (error) {
@@ -591,6 +620,7 @@ function App() {
 
   // 结束面试
   const handleEndInterview = async () => {
+    if (promptMode !== 'interviewer') return;
     if (!currentSessionId || isGenerating) return;
     
     try {
@@ -648,8 +678,13 @@ function App() {
         timestamp: m.created_at || Date.now(),
       })));
       setCurrentSessionId(session.id);
-      // 检查会话是否已结束
-      setIsInterviewEnded(!!session.completed_at);
+      // 同步 promptMode 到该会话的模式
+      setPromptMode((session.prompt_mode as PromptMode) || 'assistant');
+      // 记录切换时间戳（用于上下文隔离）
+      setSessionResumeTimestamp(Date.now());
+      // 默认为"面试未开始"状态
+      setIsInterviewStarted(false);
+      setIsInterviewEnded(false);
       setCurrentView('main');
     } catch (error) {
       console.error('Failed to load session messages:', error);
@@ -660,8 +695,8 @@ function App() {
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await deleteSession(sessionId);
-      // 刷新列表
-      const sessionList = await listSessions();
+      // 刷新列表（按当前模式筛选）
+      const sessionList = await listSessions(promptMode);
       setSessions(sessionList);
       // 如果删的是当前活跃会话，重置
       if (sessionId === currentSessionId) {
@@ -673,14 +708,14 @@ function App() {
     }
   };
 
-  // 搜索会话
+  // 搜索会话（按当前模式筛选）
   const handleSearchSessions = async (keyword: string) => {
     try {
       if (keyword.trim()) {
-        const results = await searchSessions(keyword);
+        const results = await searchSessions(keyword, promptMode);
         setSessions(results);
       } else {
-        const sessionList = await listSessions();
+        const sessionList = await listSessions(promptMode);
         setSessions(sessionList);
       }
     } catch (error) {
@@ -693,7 +728,10 @@ function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setLatestScreenshotContext(null);
+    setIsInterviewStarted(false);
     setIsInterviewEnded(false);
+    // 记录新建时间戳（用于上下文隔离）
+    setSessionResumeTimestamp(Date.now());
     setCurrentView('main');
   };
 
@@ -1108,8 +1146,19 @@ function App() {
           >
             <Download className="w-3.5 h-3.5 text-amber-700" />
           </button>
-          {/* 结束面试按钮 */}
-          {currentSessionId && !isInterviewEnded && (
+          {/* 面试官模式：开始面试按钮 */}
+          {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && currentSessionId && (
+            <button
+              onClick={() => setIsInterviewStarted(true)}
+              className="flex items-center justify-center px-2 h-6 rounded hover:bg-green-200/50 transition-colors duration-150 gap-1"
+              title="开始面试"
+            >
+              <PlayCircle className="w-3.5 h-3.5 text-green-600" />
+              <span className="text-xs text-green-600 font-medium">开始</span>
+            </button>
+          )}
+          {/* 面试官模式：结束面试按钮 */}
+          {promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentSessionId && (
             <button
               onClick={handleEndInterview}
               disabled={isGenerating}
@@ -1120,7 +1169,8 @@ function App() {
               <span className="text-xs text-red-600 font-medium">结束</span>
             </button>
           )}
-          {isInterviewEnded && (
+          {/* 面试官模式：面试已结束 */}
+          {promptMode === 'interviewer' && isInterviewEnded && (
             <span className="text-xs text-amber-500 px-2">面试已结束</span>
           )}
           {/* 代码编辑器切换按钮 */}
@@ -1326,16 +1376,16 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isInterviewEnded ? "面试已结束" : isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
+            placeholder={promptMode === 'interviewer' && isInterviewEnded ? "面试已结束" : isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
             rows={1}
-            disabled={isRecording || isInterviewEnded}
+            disabled={isGenerating || (promptMode === 'interviewer' && isInterviewEnded)}
             className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-white/80 text-amber-900 text-sm placeholder:text-amber-400 rounded-xl border border-amber-300 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
           {/* 截图按钮 */}
           <button
             onClick={handleScreenshot}
-            disabled={isRecording || isGenerating || isInterviewEnded}
+            disabled={isRecording || isGenerating || (promptMode === 'interviewer' && isInterviewEnded)}
             className="flex items-center justify-center w-10 h-10 bg-amber-100 hover:bg-amber-200 disabled:opacity-30 disabled:cursor-not-allowed text-amber-700 rounded-xl border border-amber-300 transition-all duration-150"
             title="区域截图"
           >
@@ -1343,7 +1393,7 @@ function App() {
           </button>
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isGenerating || isRecording || isInterviewEnded}
+            disabled={!input.trim() || isGenerating || isRecording || (promptMode === 'interviewer' && isInterviewEnded)}
             className="flex items-center justify-center w-10 h-10 bg-amber-600 hover:bg-amber-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl border border-amber-700 transition-all duration-150"
           >
             <Send className="w-4 h-4" />
@@ -1363,7 +1413,11 @@ function App() {
         <div className="absolute inset-0 z-50">
           <SettingsPanel
             isOpen={true}
-            onClose={() => setCurrentView('main')}
+            onClose={async () => {
+              setCurrentView('main');
+              const config = await loadConfig();
+              setPromptMode(getPromptMode(config));
+            }}
           />
         </div>
       )}
@@ -1410,7 +1464,7 @@ function App() {
       )}
 
       {/* 复盘对话框 */}
-      {reviewDialogOpen && reviewSessionId && (
+      {promptMode === 'interviewer' && reviewDialogOpen && reviewSessionId && (
         <ReviewDialog
           isOpen={reviewDialogOpen}
           onClose={handleCloseReview}
