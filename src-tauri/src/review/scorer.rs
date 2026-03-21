@@ -1,0 +1,341 @@
+//! AI 评分引擎 - 对会话中的 user 消息（应聘者回答）进行评分
+
+use crate::ai::types::{ChatMessage, ProviderConfig};
+use crate::ai::{ProviderRegistry, ProviderType};
+use crate::database::{self, Database};
+use super::types::*;
+use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
+use std::collections::HashSet;
+use futures_util::stream::{self, StreamExt};
+
+/// 最大并发评分数
+const MAX_CONCURRENT_SCORES: usize = 3;
+/// 单条消息评分最大重试次数
+const MAX_RETRY_COUNT: usize = 2;
+
+/// 评分 System Prompt
+const SCORE_SYSTEM_PROMPT: &str = r#"你是一位资深技术面试官。请从面试官的专业角度，对应聘者的以下回答进行评分。
+
+请严格按照以下 JSON 格式返回评分结果（不要输出任何其他内容）:
+{
+  "completeness": <0-100 完整性: 回答是否覆盖了问题的核心要点>,
+  "accuracy": <0-100 准确性: 技术概念和术语是否正确>,
+  "clarity": <0-100 表达清晰度: 回答的逻辑条理和表达是否清晰>,
+  "feedback": "<50字以内的改进建议，从面试官角度给出>",
+  "topic_tags": ["<话题标签1>", "<话题标签2>"]
+}"#;
+
+/// 将字符串 provider 转换为 ProviderType
+fn parse_provider_type(provider: &str) -> Result<ProviderType, String> {
+    match provider.to_lowercase().as_str() {
+        "qwen" => Ok(ProviderType::Qwen),
+        "openai_compat" | "openaicompat" | "openai" => Ok(ProviderType::OpenAICompat),
+        "claude" => Ok(ProviderType::Claude),
+        _ => Err(format!("Unknown provider: {}", provider)),
+    }
+}
+
+/// 从 AI 返回内容中提取 JSON
+fn extract_json(content: &str) -> &str {
+    let trimmed = content.trim();
+    
+    // 尝试提取 ```json...``` 代码块
+    if let Some(start) = trimmed.find("```json") {
+        let json_start = start + 7;
+        if let Some(end) = trimmed[json_start..].find("```") {
+            return trimmed[json_start..json_start + end].trim();
+        }
+    }
+    
+    // 尝试提取 ```...``` 代码块
+    if let Some(start) = trimmed.find("```") {
+        let json_start = start + 3;
+        // 跳过可能的语言标识行
+        let actual_start = if let Some(newline) = trimmed[json_start..].find('\n') {
+            json_start + newline + 1
+        } else {
+            json_start
+        };
+        if let Some(end) = trimmed[actual_start..].find("```") {
+            return trimmed[actual_start..actual_start + end].trim();
+        }
+    }
+    
+    // 直接返回 trimmed 内容
+    trimmed
+}
+
+/// Q&A 对结构
+struct QAPair {
+    message_id: String,  // user 消息的 ID（评分对象）
+    question: String,    // assistant 消息内容（面试官提问）
+    answer: String,      // user 消息内容（应聘者回答）
+}
+
+/// 从消息列表中提取 Q&A 对
+/// 遍历消息列表，找到 assistant（面试官提问）后面紧跟的 user（应聘者回答）
+fn extract_qa_pairs(messages: &[serde_json::Value], scored_ids: &HashSet<String>) -> Vec<QAPair> {
+    let mut pairs = Vec::new();
+    let mut i = 0;
+    
+    while i < messages.len() {
+        let msg = &messages[i];
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        
+        if role == "assistant" {
+            // 找到 assistant 消息（面试官提问），寻找下一个 user 消息（应聘者回答）
+            let question = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            
+            // 查找后续的 user 消息
+            if i + 1 < messages.len() {
+                let next_msg = &messages[i + 1];
+                let next_role = next_msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                
+                if next_role == "user" {
+                    // message_id 是 user 消息的 ID（评分对象）
+                    let message_id = next_msg.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    // 跳过已评分的消息
+                    if !scored_ids.contains(&message_id) {
+                        let answer = next_msg.get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        
+                        pairs.push(QAPair {
+                            message_id,
+                            question,
+                            answer,
+                        });
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    
+    pairs
+}
+
+/// 对单条 Q&A 进行 AI 评分
+async fn score_single_message(
+    providers: &ProviderRegistry,
+    provider_type: &ProviderType,
+    config: &ProviderConfig,
+    model: &str,
+    question: &str,
+    answer: &str,
+    interview_context: Option<&str>,
+) -> Result<AIScoreResponse, String> {
+    let context_text = interview_context.unwrap_or("无");
+    let user_message = format!(
+        "面试背景: {}\n面试官提问: {}\n应聘者回答: {}",
+        context_text, question, answer
+    );
+    
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: SCORE_SYSTEM_PROMPT.to_string(),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user_message,
+        },
+    ];
+    
+    let mut last_error = String::new();
+    
+    for attempt in 0..=MAX_RETRY_COUNT {
+        match providers.chat(provider_type, config, model, messages.clone()).await {
+            Ok(response) => {
+                let json_str = extract_json(&response);
+                match serde_json::from_str::<AIScoreResponse>(json_str) {
+                    Ok(mut score_response) => {
+                        score_response.validate_and_clamp();
+                        return Ok(score_response);
+                    }
+                    Err(e) => {
+                        last_error = format!("JSON 解析失败: {} (原始: {})", e, json_str);
+                        if attempt < MAX_RETRY_COUNT {
+                            continue;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                last_error = e.to_string();
+                if attempt < MAX_RETRY_COUNT {
+                    // 短暂延迟后重试
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+            }
+        }
+    }
+    
+    Err(last_error)
+}
+
+/// 将 review::types::MessageScore 转换为 database::MessageScore
+fn to_db_message_score(score: &MessageScore) -> database::MessageScore {
+    database::MessageScore {
+        id: score.id.clone(),
+        session_id: score.session_id.clone(),
+        message_id: score.message_id.clone(),
+        completeness_score: score.completeness_score,
+        accuracy_score: score.accuracy_score,
+        clarity_score: score.clarity_score,
+        overall_score: score.overall_score,
+        feedback: score.feedback.clone(),
+        topic_tags: score.topic_tags.clone(),
+        created_at: score.created_at,
+    }
+}
+
+/// 评分引擎：对会话中的 user 消息（应聘者回答）进行 AI 评分
+pub async fn score_session_messages(
+    app: &AppHandle,
+    db: &Database,
+    providers: &ProviderRegistry,
+    session_id: &str,
+    provider: &str,
+    config: &ProviderConfig,
+    model: &str,
+    interview_context: Option<&str>,
+) -> Result<Vec<MessageScore>, String> {
+    // 1. 解析 provider 类型
+    let provider_type = parse_provider_type(provider)?;
+    
+    // 2. 从数据库加载所有消息
+    let messages = database::get_session_messages(db, session_id)?;
+    
+    // 3. 获取已评分的 message_ids
+    let scored_ids: HashSet<String> = database::get_scored_message_ids(db, session_id)?
+        .into_iter()
+        .collect();
+    
+    // 4. 提取 Q&A 对
+    let qa_pairs = extract_qa_pairs(&messages, &scored_ids);
+    let total = qa_pairs.len();
+    
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    
+    // 5. 推送初始进度
+    let _ = app.emit("review-progress", ReviewProgress {
+        phase: ReviewPhase::Scoring,
+        current: 0,
+        total,
+        message: format!("开始评分，共 {} 条问答", total),
+    });
+    
+    // 6. 使用 buffer_unordered 控制并发（最多 MAX_CONCURRENT_SCORES 个并发）
+    let results: Vec<_> = stream::iter(qa_pairs.into_iter().enumerate())
+        .map(|(index, qa)| {
+            let provider_type = provider_type.clone();
+            let config = config.clone();
+            async move {
+                let result = score_single_message(
+                    providers,
+                    &provider_type,
+                    &config,
+                    model,
+                    &qa.question,
+                    &qa.answer,
+                    interview_context,
+                ).await;
+                
+                (index, qa.message_id, result)
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT_SCORES)
+        .collect()
+        .await;
+    
+    // 7. 收集结果
+    let mut scores = Vec::new();
+    let mut completed = 0;
+    
+    for (index, message_id, result) in results {
+        completed += 1;
+        
+        match result {
+            Ok(ai_response) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+                
+                let score = MessageScore {
+                    id: Uuid::new_v4().to_string(),
+                    session_id: session_id.to_string(),
+                    message_id: message_id.clone(),
+                    completeness_score: ai_response.completeness,
+                    accuracy_score: ai_response.accuracy,
+                    clarity_score: ai_response.clarity,
+                    overall_score: ai_response.calculate_overall(),
+                    feedback: ai_response.feedback,
+                    topic_tags: ai_response.topic_tags,
+                    created_at: now,
+                };
+                
+                scores.push(score);
+                
+                // 推送进度
+                let _ = app.emit("review-progress", ReviewProgress {
+                    phase: ReviewPhase::Scoring,
+                    current: completed,
+                    total,
+                    message: format!("已完成 {}/{} 条评分", completed, total),
+                });
+            }
+            Err(e) => {
+                // 单条评分失败，记录但不中断整体流程
+                eprintln!("评分失败 (message_id: {}): {}", message_id, e);
+                
+                let _ = app.emit("review-progress", ReviewProgress {
+                    phase: ReviewPhase::Scoring,
+                    current: completed,
+                    total,
+                    message: format!("第 {} 条评分失败: {}", index + 1, e),
+                });
+            }
+        }
+    }
+    
+    // 8. 将评分结果写入数据库
+    for score in &scores {
+        let db_score = to_db_message_score(score);
+        if let Err(e) = database::insert_message_score(db, &db_score) {
+            eprintln!("写入评分失败: {}", e);
+        }
+    }
+    
+    Ok(scores)
+}
+
+/// 获取已有评分（从数据库读取并转换类型）
+pub fn get_existing_scores(db: &Database, session_id: &str) -> Result<Vec<MessageScore>, String> {
+    let db_scores = database::get_message_scores(db, session_id)?;
+    
+    Ok(db_scores.into_iter().map(|s| MessageScore {
+        id: s.id,
+        session_id: s.session_id,
+        message_id: s.message_id,
+        completeness_score: s.completeness_score,
+        accuracy_score: s.accuracy_score,
+        clarity_score: s.clarity_score,
+        overall_score: s.overall_score,
+        feedback: s.feedback,
+        topic_tags: s.topic_tags,
+        created_at: s.created_at,
+    }).collect())
+}

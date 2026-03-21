@@ -3,7 +3,7 @@
 /**
  * 导出格式枚举
  */
-export type ExportFormat = 'markdown' | 'pdf' | 'json';
+export type ExportFormat = 'markdown' | 'pdf' | 'json' | 'review_pdf';
 
 /**
  * 面试背景信息

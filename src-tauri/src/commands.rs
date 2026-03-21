@@ -277,6 +277,21 @@ pub fn get_last_active_session(db: tauri::State<'_, crate::database::Database>) 
     crate::database::get_last_active_session(&db)
 }
 
+// 结束面试（写入 completed_at 时间戳）
+#[tauri::command]
+pub fn end_interview(
+    db: tauri::State<'_, crate::database::Database>,
+    session_id: String,
+) -> Result<i64, String> {
+    let completed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as i64;
+    
+    crate::database::update_completed_at(&db, &session_id, completed_at)?;
+    Ok(completed_at)
+}
+
 // ==================== 导出命令（新增）====================
 
 /// 导出会话
@@ -562,4 +577,228 @@ fn validate_path(path: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ==================== 复盘命令（新增）====================
+
+/// 启动复盘 - 编排评分和分析流程
+#[tauri::command]
+pub async fn start_review(
+    app: AppHandle,
+    db: State<'_, crate::database::Database>,
+    providers: State<'_, crate::ai::ProviderRegistry>,
+    session_id: String,
+    provider: String,
+    config: crate::ai::types::ProviderConfig,
+    model: String,
+) -> Result<(), String> {
+    use crate::review::types::{ReviewProgress, ReviewPhase};
+    use tauri::Emitter;
+    
+    // 1. 更新 review_status 为 "in_progress"
+    crate::database::update_review_status(&db, &session_id, "in_progress")?;
+    
+    // 2. 获取 interview_context
+    let interview_context = get_interview_context(&db, &session_id)?;
+    
+    // 3. 调用 scorer::score_session_messages() 获取评分
+    let message_scores = match crate::review::scorer::score_session_messages(
+        &app,
+        &db,
+        &providers,
+        &session_id,
+        &provider,
+        &config,
+        &model,
+        interview_context.as_deref(),
+    ).await {
+        Ok(scores) => scores,
+        Err(e) => {
+            // 重置状态并推送失败事件
+            let _ = reset_review_status(&db, &session_id);
+            let _ = app.emit("review-progress", ReviewProgress {
+                phase: ReviewPhase::Failed,
+                current: 0,
+                total: 0,
+                message: format!("评分失败: {}", e),
+            });
+            return Err(e);
+        }
+    };
+    
+    // 4. 准备 messages 列表（配对 question + answer）给 analyzer
+    let messages_json = crate::database::get_session_messages(&db, &session_id)?;
+    let qa_messages = extract_qa_messages(&messages_json);
+    
+    // 5. 调用 analyzer::analyze_session() 获取洞察
+    let _insights = match crate::review::analyzer::analyze_session(
+        &app,
+        &db,
+        &providers,
+        &session_id,
+        &provider,
+        &config,
+        &model,
+        &message_scores,
+        &qa_messages,
+    ).await {
+        Ok(insights) => insights,
+        Err(e) => {
+            // 重置状态并推送失败事件
+            let _ = reset_review_status(&db, &session_id);
+            let _ = app.emit("review-progress", ReviewProgress {
+                phase: ReviewPhase::Failed,
+                current: 0,
+                total: 0,
+                message: format!("分析失败: {}", e),
+            });
+            return Err(e);
+        }
+    };
+    
+    // 6. 计算总体评分（所有 message_scores 的 overall_score 平均值）
+    let overall_score = if message_scores.is_empty() {
+        0.0
+    } else {
+        let sum: f64 = message_scores.iter().map(|s| s.overall_score).sum();
+        (sum / message_scores.len() as f64 * 100.0).round() / 100.0
+    };
+    
+    // 7. 获取当前时间戳
+    let completed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    
+    // 8. 更新 sessions 表：overall_score, review_status="completed", completed_at
+    crate::database::update_overall_score(&db, &session_id, overall_score)?;
+    crate::database::update_completed_at(&db, &session_id, completed_at)?;
+    crate::database::update_review_status(&db, &session_id, "completed")?;
+    
+    // 9. 推送完成进度事件
+    let _ = app.emit("review-progress", ReviewProgress {
+        phase: ReviewPhase::Completed,
+        current: 1,
+        total: 1,
+        message: format!("复盘完成，综合评分: {:.1}", overall_score),
+    });
+    
+    Ok(())
+}
+
+/// 获取复盘报告
+#[tauri::command]
+pub async fn get_review_report(
+    db: State<'_, crate::database::Database>,
+    session_id: String,
+) -> Result<crate::review::types::ReviewReport, String> {
+    crate::review::report::build_review_report(&db, &session_id)
+}
+
+/// 获取趋势对比数据
+#[tauri::command]
+pub async fn get_review_trend(
+    db: State<'_, crate::database::Database>,
+) -> Result<crate::review::types::TrendData, String> {
+    crate::review::trend::calculate_trend(&db)
+}
+
+/// 删除复盘数据
+#[tauri::command]
+pub async fn delete_review(
+    db: State<'_, crate::database::Database>,
+    session_id: String,
+) -> Result<(), String> {
+    // 1. 删除 message_scores
+    crate::database::delete_message_scores(&db, &session_id)?;
+    
+    // 2. 删除 session_insights
+    crate::database::delete_session_insights(&db, &session_id)?;
+    
+    // 3. 重置 sessions 的 review_status 和 overall_score 为 NULL
+    reset_review_status(&db, &session_id)?;
+    
+    Ok(())
+}
+
+/// 辅助函数：获取会话的 interview_context
+fn get_interview_context(
+    db: &crate::database::Database,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT interview_context FROM sessions WHERE id = ?1"
+    ).map_err(|e| e.to_string())?;
+    
+    let mut rows = stmt.query(rusqlite::params![session_id])
+        .map_err(|e| e.to_string())?;
+    
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let ctx: Option<String> = row.get(0).map_err(|e| e.to_string())?;
+        Ok(ctx)
+    } else {
+        Err(format!("会话不存在: {}", session_id))
+    }
+}
+
+/// 辅助函数：重置复盘状态
+fn reset_review_status(
+    db: &crate::database::Database,
+    session_id: &str,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "UPDATE sessions SET review_status = NULL, overall_score = NULL, completed_at = NULL WHERE id = ?1",
+        rusqlite::params![session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 辅助函数：从消息列表中提取 Q&A 对（用于 analyzer）
+/// 返回 (message_id, question, answer) 元组列表
+/// message_id 是 user 消息的 ID（评分对象）
+/// question 是 assistant 消息（面试官提问）
+/// answer 是 user 消息（应聘者回答）
+fn extract_qa_messages(messages: &[serde_json::Value]) -> Vec<(String, String, String)> {
+    let mut pairs = Vec::new();
+    let mut i = 0;
+    
+    while i < messages.len() {
+        let msg = &messages[i];
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        
+        if role == "assistant" {
+            // 找到 assistant 消息（面试官提问）
+            let question = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            
+            // 查找后续的 user 消息（应聘者回答）
+            if i + 1 < messages.len() {
+                let next_msg = &messages[i + 1];
+                let next_role = next_msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                
+                if next_role == "user" {
+                    // message_id 是 user 消息的 ID（评分对象）
+                    let message_id = next_msg.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let answer = next_msg.get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    pairs.push((message_id, question, answer));
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    
+    pairs
 }

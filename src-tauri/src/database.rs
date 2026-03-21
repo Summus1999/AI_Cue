@@ -14,6 +14,44 @@ pub struct InterviewContext {
     pub jd_highlights: String,
 }
 
+/// 消息评分（复盘功能）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageScore {
+    pub id: String,
+    pub session_id: String,
+    pub message_id: String,
+    pub completeness_score: f64,
+    pub accuracy_score: f64,
+    pub clarity_score: f64,
+    pub overall_score: f64,
+    pub feedback: String,
+    pub topic_tags: Vec<String>,
+    pub created_at: i64,
+}
+
+/// 会话洞察（复盘功能）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInsight {
+    pub id: String,
+    pub session_id: String,
+    pub insight_type: String, // 'knowledge_gap' | 'strength' | 'suggestion'
+    pub title: String,
+    pub detail: String,
+    pub related_message_ids: Vec<String>,
+    pub priority: i32,
+    pub created_at: i64,
+}
+
+/// 已复盘会话摘要（用于趋势分析）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewedSession {
+    pub session_id: String,
+    pub title: String,
+    pub overall_score: f64,
+    pub completed_at: i64,
+    pub review_status: String,
+}
+
 /// 会话元数据参数（创建会话时使用）
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SessionMetadata {
@@ -67,6 +105,77 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v2 到 v3（面试复盘功能）
+fn migrate_v2_to_v3(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    
+    if version < 3 {
+        println!("执行数据库迁移 v2 -> v3...");
+        
+        let tx = conn.unchecked_transaction()?;
+        
+        // 1. sessions 表扩展字段
+        let alter_migrations = [
+            "ALTER TABLE sessions ADD COLUMN review_status TEXT DEFAULT NULL",
+            "ALTER TABLE sessions ADD COLUMN overall_score REAL DEFAULT NULL",
+            "ALTER TABLE sessions ADD COLUMN completed_at INTEGER DEFAULT NULL",
+        ];
+        
+        for sql in &alter_migrations {
+            if let Err(e) = tx.execute(sql, []) {
+                let err_msg = e.to_string();
+                if !err_msg.contains("duplicate column name") {
+                    return Err(e.into());
+                }
+            }
+        }
+        
+        // 2. 创建消息评分表
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS message_scores (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                completeness_score REAL NOT NULL,
+                accuracy_score REAL NOT NULL,
+                clarity_score REAL NOT NULL,
+                overall_score REAL NOT NULL,
+                feedback TEXT NOT NULL DEFAULT '',
+                topic_tags TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_message_scores_session ON message_scores(session_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_message_scores_message ON message_scores(message_id);"
+        )?;
+        
+        // 3. 创建会话洞察表
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_insights (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                insight_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                related_message_ids TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_insights_session
+                ON session_insights(session_id, insight_type);"
+        )?;
+        
+        tx.pragma_update(None, "user_version", 3)?;
+        tx.commit()?;
+        
+        println!("数据库迁移 v2 -> v3 完成");
+    }
+    
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -106,6 +215,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     
     // 执行数据库迁移
     migrate_v1_to_v2(&conn)?;
+    migrate_v2_to_v3(&conn)?;
     
     Ok(Database(Mutex::new(conn)))
 }
@@ -356,4 +466,267 @@ pub fn get_last_active_session(db: &Database) -> Result<Option<serde_json::Value
     } else {
         Ok(None)
     }
+}
+
+// ==================== Review CRUD Functions ====================
+
+/// 插入单条消息评分
+pub fn insert_message_score(db: &Database, score: &MessageScore) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let topic_tags_json = serde_json::to_string(&score.topic_tags)
+        .map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "INSERT INTO message_scores (
+            id, session_id, message_id, completeness_score, accuracy_score,
+            clarity_score, overall_score, feedback, topic_tags, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            score.id,
+            score.session_id,
+            score.message_id,
+            score.completeness_score,
+            score.accuracy_score,
+            score.clarity_score,
+            score.overall_score,
+            score.feedback,
+            topic_tags_json,
+            score.created_at
+        ]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 查询会话下所有消息评分
+pub fn get_message_scores(db: &Database, session_id: &str) -> Result<Vec<MessageScore>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, message_id, completeness_score, accuracy_score,
+                clarity_score, overall_score, feedback, topic_tags, created_at
+         FROM message_scores WHERE session_id = ?1 ORDER BY created_at ASC"
+    ).map_err(|e| e.to_string())?;
+    
+    let scores = stmt.query_map(params![session_id], |row| {
+        let topic_tags_str: String = row.get(8)?;
+        let topic_tags: Vec<String> = serde_json::from_str(&topic_tags_str)
+            .unwrap_or_default();
+        
+        Ok(MessageScore {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            message_id: row.get(2)?,
+            completeness_score: row.get(3)?,
+            accuracy_score: row.get(4)?,
+            clarity_score: row.get(5)?,
+            overall_score: row.get(6)?,
+            feedback: row.get(7)?,
+            topic_tags,
+            created_at: row.get(9)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for score in scores {
+        result.push(score.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
+}
+
+/// 查询已评分的消息 ID 列表（用于增量评分跳过）
+pub fn get_scored_message_ids(db: &Database, session_id: &str) -> Result<Vec<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT message_id FROM message_scores WHERE session_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    
+    let ids = stmt.query_map(params![session_id], |row| {
+        row.get::<_, String>(0)
+    }).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for id in ids {
+        result.push(id.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
+}
+
+/// 删除会话下所有消息评分
+pub fn delete_message_scores(db: &Database, session_id: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "DELETE FROM message_scores WHERE session_id = ?1",
+        params![session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 批量插入会话洞察
+pub fn insert_session_insights(db: &Database, insights: &[SessionInsight]) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    for insight in insights {
+        let related_ids_json = serde_json::to_string(&insight.related_message_ids)
+            .map_err(|e| e.to_string())?;
+        
+        conn.execute(
+            "INSERT INTO session_insights (
+                id, session_id, insight_type, title, detail,
+                related_message_ids, priority, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                insight.id,
+                insight.session_id,
+                insight.insight_type,
+                insight.title,
+                insight.detail,
+                related_ids_json,
+                insight.priority,
+                insight.created_at
+            ]
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+/// 查询会话洞察（按类型和优先级排序）
+pub fn get_session_insights(db: &Database, session_id: &str) -> Result<Vec<SessionInsight>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, insight_type, title, detail,
+                related_message_ids, priority, created_at
+         FROM session_insights WHERE session_id = ?1
+         ORDER BY insight_type ASC, priority DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let insights = stmt.query_map(params![session_id], |row| {
+        let related_ids_str: String = row.get(5)?;
+        let related_message_ids: Vec<String> = serde_json::from_str(&related_ids_str)
+            .unwrap_or_default();
+        
+        Ok(SessionInsight {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            insight_type: row.get(2)?,
+            title: row.get(3)?,
+            detail: row.get(4)?,
+            related_message_ids,
+            priority: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for insight in insights {
+        result.push(insight.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
+}
+
+/// 删除会话下所有洞察
+pub fn delete_session_insights(db: &Database, session_id: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "DELETE FROM session_insights WHERE session_id = ?1",
+        params![session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 更新会话复盘状态
+pub fn update_review_status(db: &Database, session_id: &str, status: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "UPDATE sessions SET review_status = ?1 WHERE id = ?2",
+        params![status, session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 更新会话综合评分
+pub fn update_overall_score(db: &Database, session_id: &str, score: f64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "UPDATE sessions SET overall_score = ?1 WHERE id = ?2",
+        params![score, session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 更新面试完成时间
+pub fn update_completed_at(db: &Database, session_id: &str, completed_at: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "UPDATE sessions SET completed_at = ?1 WHERE id = ?2",
+        params![completed_at, session_id]
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+/// 获取所有已完成复盘的会话（用于趋势分析）
+pub fn get_reviewed_sessions(db: &Database) -> Result<Vec<ReviewedSession>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, title, overall_score, completed_at, review_status
+         FROM sessions WHERE review_status = 'completed' AND overall_score IS NOT NULL
+         ORDER BY completed_at DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let sessions = stmt.query_map([], |row| {
+        Ok(ReviewedSession {
+            session_id: row.get(0)?,
+            title: row.get(1)?,
+            overall_score: row.get(2)?,
+            completed_at: row.get(3)?,
+            review_status: row.get(4)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for session in sessions {
+        result.push(session.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
+}
+
+/// 获取会话的所有 knowledge_gap 类型洞察标题（用于趋势对比）
+pub fn get_knowledge_gap_titles(db: &Database, session_id: &str) -> Result<Vec<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT title FROM session_insights 
+         WHERE session_id = ?1 AND insight_type = 'knowledge_gap'
+         ORDER BY priority DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let titles = stmt.query_map(params![session_id], |row| {
+        row.get::<_, String>(0)
+    }).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    for title in titles {
+        result.push(title.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(result)
 }

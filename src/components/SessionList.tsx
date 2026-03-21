@@ -1,6 +1,6 @@
 // 会话列表组件 - 全页面进出式设计
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Search, Trash2, Plus, MessageSquare, Download } from 'lucide-react';
+import { ArrowLeft, Search, Trash2, Plus, MessageSquare, Download, ClipboardCheck } from 'lucide-react';
 import { Session, getSessionMessages } from '../services/sessionManager';
 import { ExportDialog } from './export/ExportDialog';
 
@@ -12,6 +12,7 @@ interface SessionListProps {
   onDeleteSession: (sessionId: string) => void;
   onSearch: (keyword: string) => void;
   onBack: () => void;
+  onReview?: (sessionId: string, sessionTitle: string) => void;
 }
 
 // 相对时间格式化函数
@@ -37,6 +38,7 @@ export function SessionList({
   onDeleteSession,
   onSearch,
   onBack,
+  onReview,
 }: SessionListProps) {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -175,8 +177,39 @@ export function SessionList({
                   </p>
                 )}
 
+                {/* 复盘评分标签 */}
+                {session.review_status === 'completed' && session.overall_score != null && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onReview?.(session.id, session.title || '会话');
+                    }}
+                    className={`absolute left-3 bottom-2 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      session.overall_score >= 80 ? 'bg-green-100 text-green-700 border border-green-200' :
+                      session.overall_score >= 60 ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                      'bg-red-100 text-red-600 border border-red-200'
+                    }`}
+                    title="查看复盘报告"
+                  >
+                    {session.overall_score}分
+                  </button>
+                )}
+
                 {/* 操作按钮组 */}
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                  {/* 复盘按钮 - 未复盘时显示 */}
+                  {session.review_status !== 'completed' && onReview && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onReview(session.id, session.title || '会话');
+                      }}
+                      className="flex items-center justify-center w-7 h-7 rounded-lg bg-amber-200/80 text-amber-600 border border-amber-300 opacity-0 group-hover:opacity-100 transition-all duration-150 hover:bg-amber-500 hover:text-white hover:border-amber-500"
+                      title="复盘"
+                    >
+                      <ClipboardCheck className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   {/* 导出按钮 */}
                   <button
                     onClick={(e) => handleExport(session, e)}

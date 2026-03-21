@@ -1,10 +1,12 @@
 import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { ExportOptions, ExportResult, ExportFormat } from '../../types/export';
+import type { ReviewReport } from '../../types/review';
 import { ExporterFactory } from './types';
 import { MarkdownExporter } from './markdownExporter';
 import { PDFExporter } from './pdfExporter';
 import { JSONExporter } from './jsonExporter';
+import { ReviewPdfExporter, ReviewExportData } from './reviewPdfExporter';
 
 /**
  * 后端导出结果
@@ -26,6 +28,7 @@ export class ExportService {
     ExporterFactory.register(new MarkdownExporter());
     ExporterFactory.register(new PDFExporter());
     ExporterFactory.register(new JSONExporter());
+    ExporterFactory.register(new ReviewPdfExporter());
   }
 
   /**
@@ -160,6 +163,80 @@ export class ExportService {
   }
 
   /**
+   * 导出复盘报告为 PDF
+   */
+  async exportReviewReport(report: ReviewReport): Promise<ExportResult> {
+    try {
+      // 获取复盘报告 PDF 导出器
+      const exporter = ExporterFactory.getExporter('review_pdf');
+      
+      // 生成 HTML 内容
+      const exportData: ReviewExportData = { reviewReport: report };
+      const htmlContent = await exporter.export(exportData as any, {} as ExportOptions);
+      
+      // 获取默认文件名
+      const defaultFileName = exporter.getDefaultFileName(report.session_title);
+      
+      // 弹出保存对话框
+      const savedPath = await save({
+        defaultPath: defaultFileName,
+        filters: [{
+          name: 'PDF 文件',
+          extensions: ['pdf'],
+        }],
+      });
+      
+      if (!savedPath) {
+        return { success: false, error: '用户取消了导出' };
+      }
+      
+      const filePath = savedPath;
+      
+      // PDF 导出流程：使用 Edge headless 模式转换
+      // 1. 生成临时 HTML 文件路径
+      const tempHtmlPath = filePath.replace(/\.pdf$/i, '_temp.html');
+      
+      // 2. 写入临时 HTML 文件
+      await invoke('write_text_file', {
+        path: tempHtmlPath,
+        content: htmlContent,
+      });
+      
+      try {
+        // 3. 调用 Edge headless 将 HTML 转换为 PDF
+        await invoke('convert_html_to_pdf', {
+          htmlPath: tempHtmlPath,
+          pdfPath: filePath,
+        });
+      } finally {
+        // 4. 清理临时 HTML 文件
+        try {
+          await invoke('delete_file', { path: tempHtmlPath });
+        } catch (e) {
+          console.warn('清理临时文件失败:', e);
+        }
+      }
+      
+      // 5. 打开生成的 PDF 文件
+      try {
+        await invoke('open_file_with_default_app', { path: filePath });
+      } catch (e) {
+        console.warn('无法自动打开 PDF:', e);
+      }
+      
+      return {
+        success: true,
+        filePath,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
    * 获取过滤器名称
    */
   private getFilterName(format: ExportFormat): string {
@@ -167,6 +244,7 @@ export class ExportService {
       markdown: 'Markdown 文件',
       pdf: 'PDF 文件',
       json: 'JSON 文件',
+      review_pdf: 'PDF 文件',
     };
     return names[format];
   }

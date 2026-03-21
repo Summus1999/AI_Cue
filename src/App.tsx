@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
 import { ExportDialog } from "./components/export/ExportDialog";
+import { ReviewDialog } from "./components/review/ReviewDialog";
 import { NetworkStatusIndicator } from "./components/NetworkStatusIndicator";
 import { FriendlyErrorCard } from "./components/FriendlyErrorCard";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +23,7 @@ import { loadConfig } from "./store/config";
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
 import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
 import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
-import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, Session } from './services/sessionManager';
+import { createSession, saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -132,6 +133,14 @@ function App() {
   
   // 导出对话框状态
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  
+  // 复盘对话框状态
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewSessionId, setReviewSessionId] = useState<string | null>(null);
+  const [reviewSessionTitle, setReviewSessionTitle] = useState('');
+  
+  // 面试结束状态
+  const [isInterviewEnded, setIsInterviewEnded] = useState(false);
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -422,6 +431,8 @@ function App() {
             timestamp: m.created_at || Date.now(),
           })));
           setCurrentSessionId(lastSession.id);
+          // 检查会话是否已结束
+          setIsInterviewEnded(!!lastSession.completed_at);
         }
       } catch (error) {
         console.error('Failed to restore last session:', error);
@@ -533,6 +544,7 @@ function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setLatestScreenshotContext(null);
+    setIsInterviewEnded(false);
   };
 
   // 获取最新 AI 回答（用于紧凑模式显示）
@@ -570,6 +582,43 @@ function App() {
     setExportDialogOpen(false);
   };
 
+  // 处理复盘
+  const handleReview = (sessionId: string, sessionTitle: string) => {
+    setReviewSessionId(sessionId);
+    setReviewSessionTitle(sessionTitle);
+    setReviewDialogOpen(true);
+  };
+
+  // 结束面试
+  const handleEndInterview = async () => {
+    if (!currentSessionId || isGenerating) return;
+    
+    try {
+      const completedAt = await endInterview(currentSessionId);
+      
+      // 更新本地 sessions 列表中的 completed_at
+      setSessions(prev => prev.map(s => 
+        s.id === currentSessionId ? { ...s, completed_at: completedAt } : s
+      ));
+      
+      // 设置面试结束状态
+      setIsInterviewEnded(true);
+      
+      // 自动弹出复盘对话框
+      const currentSession = sessions.find(s => s.id === currentSessionId);
+      handleReview(currentSessionId, currentSession?.title || '当前会话');
+    } catch (error) {
+      console.error('结束面试失败:', error);
+    }
+  };
+
+  // 关闭复盘对话框
+  const handleCloseReview = () => {
+    setReviewDialogOpen(false);
+    setReviewSessionId(null);
+    setReviewSessionTitle('');
+  };
+
   // 打开设置页面（紧凑模式下自动切换回完整模式）
   const handleOpenSettings = async () => {
     if (compactMode) {
@@ -599,6 +648,8 @@ function App() {
         timestamp: m.created_at || Date.now(),
       })));
       setCurrentSessionId(session.id);
+      // 检查会话是否已结束
+      setIsInterviewEnded(!!session.completed_at);
       setCurrentView('main');
     } catch (error) {
       console.error('Failed to load session messages:', error);
@@ -642,6 +693,7 @@ function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setLatestScreenshotContext(null);
+    setIsInterviewEnded(false);
     setCurrentView('main');
   };
 
@@ -1056,6 +1108,21 @@ function App() {
           >
             <Download className="w-3.5 h-3.5 text-amber-700" />
           </button>
+          {/* 结束面试按钮 */}
+          {currentSessionId && !isInterviewEnded && (
+            <button
+              onClick={handleEndInterview}
+              disabled={isGenerating}
+              className="flex items-center justify-center px-2 h-6 rounded hover:bg-red-200/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors duration-150 gap-1"
+              title="结束面试"
+            >
+              <StopCircle className="w-3.5 h-3.5 text-red-600" />
+              <span className="text-xs text-red-600 font-medium">结束</span>
+            </button>
+          )}
+          {isInterviewEnded && (
+            <span className="text-xs text-amber-500 px-2">面试已结束</span>
+          )}
           {/* 代码编辑器切换按钮 */}
           <button
             onClick={() => codeEditor.toggleEditor()}
@@ -1259,16 +1326,16 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
+            placeholder={isInterviewEnded ? "面试已结束" : isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
             rows={1}
-            disabled={isRecording}
+            disabled={isRecording || isInterviewEnded}
             className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-white/80 text-amber-900 text-sm placeholder:text-amber-400 rounded-xl border border-amber-300 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
           {/* 截图按钮 */}
           <button
             onClick={handleScreenshot}
-            disabled={isRecording || isGenerating}
+            disabled={isRecording || isGenerating || isInterviewEnded}
             className="flex items-center justify-center w-10 h-10 bg-amber-100 hover:bg-amber-200 disabled:opacity-30 disabled:cursor-not-allowed text-amber-700 rounded-xl border border-amber-300 transition-all duration-150"
             title="区域截图"
           >
@@ -1276,7 +1343,7 @@ function App() {
           </button>
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isGenerating || isRecording}
+            disabled={!input.trim() || isGenerating || isRecording || isInterviewEnded}
             className="flex items-center justify-center w-10 h-10 bg-amber-600 hover:bg-amber-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl border border-amber-700 transition-all duration-150"
           >
             <Send className="w-4 h-4" />
@@ -1322,6 +1389,7 @@ function App() {
             onDeleteSession={handleDeleteSession}
             onSearch={handleSearchSessions}
             onBack={() => setCurrentView('main')}
+            onReview={handleReview}
           />
         </div>
       )}
@@ -1338,6 +1406,16 @@ function App() {
             updated_at: Date.now(),
           }}
           messageCount={messages.length}
+        />
+      )}
+
+      {/* 复盘对话框 */}
+      {reviewDialogOpen && reviewSessionId && (
+        <ReviewDialog
+          isOpen={reviewDialogOpen}
+          onClose={handleCloseReview}
+          sessionId={reviewSessionId}
+          sessionTitle={reviewSessionTitle}
         />
       )}
     </div>

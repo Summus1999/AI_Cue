@@ -25,6 +25,8 @@ export type { ImageHandlerOptions, ProcessedImage } from './imageHandler';
 export { MarkdownExporter } from './markdownExporter';
 export { PDFExporter } from './pdfExporter';
 export { JSONExporter } from './jsonExporter';
+export { ReviewPdfExporter } from './reviewPdfExporter';
+export type { ReviewExportData } from './reviewPdfExporter';
 
 // 导出服务
 export { ExportService, exportService } from './exportService';

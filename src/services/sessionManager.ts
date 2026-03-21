@@ -30,6 +30,10 @@ export interface Session {
   prompt_template_id?: string;
   prompt_content?: string;
   interview_context?: InterviewContext;
+  // 复盘相关字段
+  review_status?: string | null;   // 'in_progress' | 'completed' | null
+  overall_score?: number | null;   // 综合评分 0-100
+  completed_at?: number | null;    // 面试完成时间戳
 }
 
 // 创建新会话
@@ -75,4 +79,9 @@ export async function searchSessions(keyword: string): Promise<Session[]> {
 // 获取最近活跃的会话
 export async function getLastActiveSession(): Promise<Session | null> {
   return await invoke('get_last_active_session');
+}
+
+// 结束面试（写入 completed_at 时间戳）
+export async function endInterview(sessionId: string): Promise<number> {
+  return await invoke('end_interview', { sessionId });
 }

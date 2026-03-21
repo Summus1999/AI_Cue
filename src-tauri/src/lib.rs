@@ -9,6 +9,7 @@ mod database;
 mod export;
 mod nls;
 mod qwen;
+mod review;
 mod screenshot;
 
 pub fn run() {
@@ -53,6 +54,7 @@ pub fn run() {
             commands::delete_session,
             commands::search_sessions,
             commands::get_last_active_session,
+            commands::end_interview,
             // 截图命令
             screenshot::capture_full_screen,
             screenshot::crop_screenshot,
@@ -65,6 +67,11 @@ pub fn run() {
             commands::open_file_with_default_app,
             commands::delete_file,
             commands::convert_html_to_pdf,
+            // 复盘命令（新增）
+            commands::start_review,
+            commands::get_review_report,
+            commands::get_review_trend,
+            commands::delete_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

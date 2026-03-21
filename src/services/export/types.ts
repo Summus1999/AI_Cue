@@ -3,7 +3,7 @@ import { ExportData, ExportOptions } from '../../types/export';
 /**
  * 导出格式
  */
-export type ExportFormat = 'markdown' | 'pdf' | 'json';
+export type ExportFormat = 'markdown' | 'pdf' | 'json' | 'review_pdf';
 
 /**
  * 导出策略接口
