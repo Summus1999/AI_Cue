@@ -17,6 +17,8 @@ interface ScreenshotSelectorProps {
   logicalHeight: number;
   physicalWidth: number;
   physicalHeight: number;
+  onImageReady?: () => void;
+  onInteractive?: () => void;
 }
 
 interface CropScreenshotResult {
@@ -32,6 +34,8 @@ export function ScreenshotSelector({
   logicalHeight,
   physicalWidth,
   physicalHeight,
+  onImageReady,
+  onInteractive,
 }: ScreenshotSelectorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<SelectionRect | null>(null);
@@ -179,6 +183,13 @@ export function ScreenshotSelector({
     return () => window.removeEventListener('resize', updateRenderSize);
   }, []);
 
+  // 当图片加载完成时，触发交互就绪事件
+  useEffect(() => {
+    if (imageLoaded && !selection) {
+      onInteractive?.();
+    }
+  }, [imageLoaded, selection, onInteractive]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -294,6 +305,7 @@ export function ScreenshotSelector({
         onLoad={() => {
           setImageLoaded(true);
           setLoadError(false);
+          onImageReady?.();
         }}
         onError={() => {
           setLoadError(true);

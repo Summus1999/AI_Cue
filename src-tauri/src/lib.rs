@@ -9,6 +9,7 @@ mod database;
 mod export;
 mod logging;  // 日志系统
 mod nls;
+mod perf;       // 性能埋点
 mod qwen;
 mod review;
 mod screenshot;
@@ -19,6 +20,9 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            // 记录后端启动开始
+            let _setup_timer = perf::perf_setup_start();
+
             // 初始化日志系统
             let app_data_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
             let log_dir = app_data_dir.join("logs");
@@ -30,6 +34,7 @@ pub fn run() {
             };
             let _log_guard = logging::init_logging(log_config)
                 .expect("日志系统初始化失败");
+            perf::perf_logging_done();
 
             tracing::info!(
                 app_version = env!("CARGO_PKG_VERSION"),
@@ -40,8 +45,10 @@ pub fn run() {
             let db = database::init_database(&app_data_dir)
                 .expect("数据库初始化失败");
             app.manage(db);
+            perf::perf_database_done();
 
             // 初始化 Provider 注册表
+            perf::perf_provider_registry_ready();
             let registry = ai::ProviderRegistry::new();
 
             // 加载配置文件中的动态 Provider
@@ -53,8 +60,12 @@ pub fn run() {
                     }
                 }
             }
+            perf::perf_dynamic_provider_done();
 
             app.manage(registry);
+
+            // 记录后端启动完成
+            drop(_setup_timer);
 
             Ok(())
         })

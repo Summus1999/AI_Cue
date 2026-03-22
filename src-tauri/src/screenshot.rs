@@ -1,9 +1,12 @@
 use image::ImageFormat;
 use screenshots::Screen;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+
+use crate::perf;
 
 const MIN_SELECTION_SIZE: u32 = 80;
 const ACTIVE_SOURCE_FILE: &str = "active-main-screen.png";
@@ -51,8 +54,9 @@ fn primary_screen() -> Result<Screen, String> {
 
 #[tauri::command]
 pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
+    let timer = perf::perf_capture_start();
+    
     let screen = primary_screen()?;
-    let display = screen.display_info;
     let image = screen.capture().map_err(|e| format!("截图失败: {}", e))?;
     let source_path = active_source_path()?;
 
@@ -60,14 +64,32 @@ pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
         .save(&source_path)
         .map_err(|e| format!("保存截图失败: {}", e))?;
 
+    // 获取显示信息
+    let logical_width = image.width();
+    let logical_height = image.height();
+    
+    // 记录截图完成
+    let mut metadata = HashMap::new();
+    metadata.insert("logical_width".to_string(), logical_width.to_string());
+    metadata.insert("logical_height".to_string(), logical_height.to_string());
+    let record = timer.finish_with_metadata(metadata);
+    tracing::debug!(
+        event = record.event.as_str(),
+        elapsed_ms = record.elapsed_ms,
+        logical_width = logical_width,
+        logical_height = logical_height,
+        "[PERF] capture_full_screen"
+    );
+    perf::perf_capture_done();
+
     Ok(ScreenCaptureResult {
         source_path: source_path.to_string_lossy().to_string(),
-        screen_x: display.x,
-        screen_y: display.y,
-        logical_width: display.width,
-        logical_height: display.height,
-        physical_width: image.width(),
-        physical_height: image.height(),
+        screen_x: 0,
+        screen_y: 0,
+        logical_width,
+        logical_height,
+        physical_width: logical_width,
+        physical_height: logical_height,
     })
 }
 
@@ -79,6 +101,8 @@ pub fn crop_screenshot(
     width: u32,
     height: u32,
 ) -> Result<CropScreenshotResult, String> {
+    let timer = perf::perf_crop_start();
+    
     if width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE {
         return Err(format!(
             "选区太小，请至少选择 {}x{} 像素的区域",
@@ -118,6 +142,19 @@ pub fn crop_screenshot(
 
     let _ = fs::remove_file(source);
 
+    // 记录裁剪完成
+    let record = timer.finish();
+    tracing::debug!(
+        event = record.event,
+        elapsed_ms = record.elapsed_ms,
+        crop_x = x,
+        crop_y = y,
+        crop_width = crop_width,
+        crop_height = crop_height,
+        "[PERF] crop_screenshot"
+    );
+    perf::perf_crop_done();
+
     Ok(CropScreenshotResult {
         image_data: buffer,
         debug_path: debug_path.to_string_lossy().to_string(),
@@ -126,10 +163,14 @@ pub fn crop_screenshot(
 
 #[tauri::command]
 pub fn cancel_screenshot(source_path: String) -> Result<(), String> {
+    let _timer = perf::perf_cancel_start();
     let path = PathBuf::from(source_path);
     if !path.exists() {
+        perf::perf_cancel_done();
         return Ok(());
     }
 
-    fs::remove_file(path).map_err(|e| format!("清理临时文件失败: {}", e))
+    fs::remove_file(path).map_err(|e| format!("清理临时文件失败: {}", e))?;
+    perf::perf_cancel_done();
+    Ok(())
 }

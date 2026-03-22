@@ -1,12 +1,26 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, lazy } from "react";
 import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search } from "lucide-react";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
-import SessionList from "./components/SessionList";
+// 懒加载非核心面板
+const SettingsPanel = lazy(() => 
+  import("./components/SettingsPanel").then(m => ({ default: m.SettingsPanel }))
+);
+const ShortcutSettingsPanel = lazy(() => 
+  import("./components/ShortcutSettingsPanel").then(m => ({ default: m.ShortcutSettingsPanel }))
+);
+const SessionList = lazy(() => 
+  import("./components/SessionList").then(m => ({ default: m.default }))
+);
+const ExportDialog = lazy(() => 
+  import("./components/export/ExportDialog").then(m => ({ default: m.ExportDialog }))
+);
+const ReviewDialog = lazy(() => 
+  import("./components/review/ReviewDialog").then(m => ({ default: m.ReviewDialog }))
+);
+const CodeEditorPanel = lazy(() => 
+  import("./components/CodeEditorPanel").then(m => ({ default: m.CodeEditorPanel }))
+);
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
-import { ExportDialog } from "./components/export/ExportDialog";
-import { ReviewDialog } from "./components/review/ReviewDialog";
 import { NetworkStatusIndicator } from "./components/NetworkStatusIndicator";
 import { FriendlyErrorCard } from "./components/FriendlyErrorCard";
 import WaveformVisualizer from "./components/WaveformVisualizer";
@@ -21,22 +35,29 @@ import {
   StreamResult,
 } from "./services/aiChat";
 import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
+import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
-import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
-import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
-import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
-import { saveMessage, updateSessionTitle, getLastActiveSession, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
+import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isPassthroughEnabled, setPassthrough } from './services/windowManager';
+import { saveMessage, updateSessionTitle, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { errorClassifier } from './services/errorClassifier';
 import { useNetworkResilience, getWaitingHint } from './store/networkResilience';
 import { useCodeEditor } from './store/codeEditor';
-import { CodeEditorPanel } from './components/CodeEditorPanel';
 import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
 import { MessageSearchBar } from './components/MessageSearchBar';
 import { useMessageSearch } from './store/messageSearch';
+import {
+  perfCoreUiReady,
+  perfScreenshotStart,
+  perfScreenshotCaptureDone,
+  perfScreenshotWindowCreated,
+  perfScreenshotComplete,
+  perfScreenshotCancelled,
+  perfScreenshotError,
+} from "./services/perf/perfInstrumentation";
 
 // 消息类型定义
 interface Message {
@@ -112,6 +133,11 @@ function App() {
 
   // 紧凑模式状态
   const [compactMode, setCompactModeState] = useState(false);
+
+  // 记录核心UI渲染完成
+  useEffect(() => {
+    perfCoreUiReady();
+  }, []);
 
   // 消息列表状态
   const [messages, setMessages] = useState<Message[]>([
@@ -202,6 +228,12 @@ function App() {
   const toggleRecordingRef = useRef<() => void>(() => {});
   const handleSendRef = useRef<() => void>(() => {});
   const handleScreenshotRef = useRef<() => void>(() => {});
+
+  // 紧凑模式切换处理函数
+  const handleToggleCompactMode = useCallback(async () => {
+    const newState = await toggleCompactMode();
+    setCompactModeState(newState);
+  }, []);
 
   const updateAssistantMessage = useCallback((assistantId: string, content: string) => {
     setMessages((prev) =>
@@ -516,17 +548,32 @@ function App() {
     setLastCompletedMessageId(null);
   }, [lastCompletedMessageId, promptMode, isInterviewStarted, isInterviewEnded]);
 
-  // 启动时恢复上次会话
+  // 启动时执行统一编排
   useEffect(() => {
-    async function restoreLastSession() {
+    // 定义快捷键处理器
+    const shortcutHandlers = {
+      toggleRecording: () => toggleRecordingRef.current(),
+      sendMessage: () => handleSendRef.current(),
+      takeScreenshot: () => handleScreenshotRef.current(),
+      togglePassthrough: async () => {
+        const newState = await togglePassthrough();
+        setPassthroughActive(newState);
+      },
+      toggleCompactMode: handleToggleCompactMode,
+    };
+
+    // 执行启动编排
+    async function runBootstrap() {
       try {
-        // 先加载 config 获取 promptMode
-        const config = await loadConfig();
-        const mode = getPromptMode(config);
-        setPromptMode(mode);
-        
-        // 根据当前模式获取最近活跃会话
-        const lastSession = await getLastActiveSession(mode);
+        const { snapshot, lastSession } = await bootstrap(shortcutHandlers);
+
+        // 同步 promptMode 状态
+        setPromptMode(snapshot.promptMode);
+
+        // 同步紧凑模式状态
+        setCompactModeState(snapshot.compactModeEnabled);
+
+        // 如果有最近会话，恢复消息
         if (lastSession) {
           const msgs = await getSessionMessages(lastSession.id);
           setMessages(msgs.map(m => ({
@@ -536,85 +583,22 @@ function App() {
             timestamp: m.created_at || Date.now(),
           })));
           setCurrentSessionId(lastSession.id);
-          // 记录恢复时间戳（用于上下文隔离）
           setSessionResumeTimestamp(Date.now());
-          // 默认为"面试未开始"状态，每次打开应用都重置
           setIsInterviewStarted(false);
           setIsInterviewEnded(false);
         }
       } catch (error) {
-        console.error('Failed to restore last session:', error);
+        console.error('启动编排失败:', error);
       }
     }
-    restoreLastSession();
-  }, []);
 
-  // 启动时恢复窗口透明度和悬停恢复功能
-  useEffect(() => {
-    async function restoreWindowOpacity() {
-      try {
-        const config = await loadConfig();
-        // 同步更新 promptMode
-        setPromptMode(getPromptMode(config));
-        if (config.window?.opacity) {
-          await initWindowOpacity(config.window.opacity);
-        }
-        // 初始化悬停恢复功能
-        if (config.window?.hoverRestore?.enabled) {
-          enableHoverRestore(true, config.window.opacity ?? 0.8);
-        }
-        // 恢复紧凑模式状态
-        if (config.window?.compactMode?.enabled) {
-          initCompactMode(true);
-          setCompactModeState(true);
-        }
-      } catch (error) {
-        console.error('Failed to restore window opacity:', error);
-      }
-    }
-    restoreWindowOpacity();
-    
-    // 组件卸载时清理悬停恢复资源和穿透模式
+    runBootstrap();
+
+    // 组件卸载时清理资源
     return () => {
       cleanupHoverRestore();
       cleanupPassthrough();
     };
-  }, []);
-
-  // 紧凑模式切换处理函数
-  const handleToggleCompactMode = async () => {
-    const newState = await toggleCompactMode();
-    setCompactModeState(newState);
-  };
-
-  // 初始化快捷键
-  useEffect(() => {
-    const initShortcuts = async () => {
-      try {
-        // 设置快捷键处理器
-        setShortcutHandlers({
-          toggleRecording: () => toggleRecordingRef.current(),
-          sendMessage: () => handleSendRef.current(),
-          takeScreenshot: () => handleScreenshotRef.current(),
-          togglePassthrough: async () => {
-            const newState = await togglePassthrough();
-            setPassthroughActive(newState);
-          },
-          toggleCompactMode: handleToggleCompactMode,
-        });
-        
-        const config = await loadConfig();
-        await initializeShortcuts(config.shortcutConfig);
-        console.log('快捷键初始化完成');
-        
-        // 恢复窗口位置
-        const mode = config.window?.compactMode?.enabled ? 'compact' : 'main';
-        restoreWindowBounds(mode);
-      } catch (err) {
-        console.error('快捷键初始化失败:', err);
-      }
-    };
-    initShortcuts();
   }, []);
 
   // 注册窗口移动/缩放事件，保存窗口位置
@@ -1053,15 +1037,28 @@ function App() {
   const handleScreenshot = async () => {
     if (isRecording || isGenerating) return;
     
+    // 记录截图开始
+    perfScreenshotStart();
+    
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     const mainWindow = getCurrentWindow();
     const existingScreenshotWindow = await WebviewWindow.getByLabel("screenshot");
     let activeSourcePath: string | null = null;
     let cleanupListeners = () => {};
 
+    // 截图前临时关闭穿透模式（穿透模式下无法接收截图窗口的鼠标事件）
+    const wasPassthroughEnabled = isPassthroughEnabled();
+    if (wasPassthroughEnabled) {
+      await setPassthrough(false);
+    }
+
     const restoreMainWindow = async () => {
       await mainWindow.show();
       await mainWindow.setFocus();
+      // 截图结束后恢复穿透模式
+      if (wasPassthroughEnabled) {
+        await setPassthrough(true);
+      }
     };
     
     try {
@@ -1074,6 +1071,15 @@ function App() {
 
       const capture = await invoke<ScreenCaptureResult>('capture_full_screen');
       activeSourcePath = capture.source_path;
+      
+      // 记录截图捕获完成
+      perfScreenshotCaptureDone({
+        logicalWidth: capture.logical_width,
+        logicalHeight: capture.logical_height,
+        physicalWidth: capture.physical_width,
+        physicalHeight: capture.physical_height,
+      });
+      
       const cleanupCallbacks: Array<() => void> = [];
       cleanupListeners = () => {
         cleanupCallbacks.forEach((callback) => callback());
@@ -1093,6 +1099,8 @@ function App() {
               debugPath: event.payload.debugPath,
               createdAt: Date.now(),
             });
+            // 记录截图完成
+            perfScreenshotComplete();
             await requestAssistantReply("📷 [已发送截图]", SCREENSHOT_ANALYSIS_PROMPT, imageBase64);
           } catch (error) {
             await restoreMainWindow();
@@ -1112,6 +1120,8 @@ function App() {
 
       const unlistenCancel = await listen('screenshot-cancelled', () => {
         cleanupListeners();
+        // 记录截图取消
+        perfScreenshotCancelled();
         void restoreMainWindow();
       });
       cleanupCallbacks.push(unlistenCancel);
@@ -1131,8 +1141,13 @@ function App() {
         focus: true,
         resizable: false,
       });
+      
+      // 记录截图窗口创建
+      perfScreenshotWindowCreated();
     } catch (err) {
       cleanupListeners();
+      // 记录截图错误
+      perfScreenshotError(err instanceof Error ? err.message : String(err));
       if (activeSourcePath) {
         try {
           await invoke("cancel_screenshot", { sourcePath: activeSourcePath });
