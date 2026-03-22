@@ -6,32 +6,39 @@ pub mod stream;
 pub mod qwen;
 pub mod openai_compat;
 pub mod claude;
+pub mod configurable;  // 可配置 Provider
+pub mod security;      // URL 安全验证
+pub mod loader;        // 配置文件加载器
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::RwLock;
 use tauri::AppHandle;
 use traits::AIProvider;
-use types::{ChatMessage, ConnectionTestResult, ProviderConfig, ProviderMeta};
+use types::{ChatMessage, ConnectionTestResult, ProviderConfig, ProviderDescriptor, ProviderMeta};
+use configurable::ConfigurableProvider;
 
-/// Provider 枚举——编译期确定的有限集合，零成本派发
-///
-/// 为什么不用 dyn trait？
-/// 1. 桌面应用 Provider 数量有限（3~5 个），枚举完全够用
-/// 2. enum dispatch 无虚表开销，编译器可内联优化
-/// 3. 模式匹配强制处理所有变体，新增 Provider 时编译器提醒所有遗漏
+/// 内置 Provider 类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProviderType {
+pub enum BuiltinProviderType {
     Qwen,
     OpenAICompat,
     Claude,
 }
 
+/// Provider 类型（兼容前端字符串格式）
+pub type ProviderType = BuiltinProviderType;
+
 /// Provider 注册表——管理所有可用 Provider 实例
-/// 直接在注册表上实现方法，避免 dyn trait 的对象安全问题
+/// 支持内置 Provider 和动态加载的 Provider
 pub struct ProviderRegistry {
+    /// 内置 Provider（枚举派发，零开销）
     qwen: qwen::QwenProvider,
     openai_compat: openai_compat::OpenAICompatProvider,
     claude: claude::ClaudeProvider,
+    /// 动态 Provider（配置/插件加载）
+    dynamic: RwLock<HashMap<String, configurable::ConfigurableProvider>>,
 }
 
 impl ProviderRegistry {
@@ -40,21 +47,22 @@ impl ProviderRegistry {
             qwen: qwen::QwenProvider::new(),
             openai_compat: openai_compat::OpenAICompatProvider::new(),
             claude: claude::ClaudeProvider::new(),
+            dynamic: RwLock::new(HashMap::new()),
         }
     }
 
     /// 非流式聊天 - 内部派发
     pub async fn chat(
         &self,
-        provider_type: &ProviderType,
+        provider_type: &BuiltinProviderType,
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
     ) -> Result<String, traits::AIError> {
         match provider_type {
-            ProviderType::Qwen => self.qwen.chat(config, model, messages).await,
-            ProviderType::OpenAICompat => self.openai_compat.chat(config, model, messages).await,
-            ProviderType::Claude => self.claude.chat(config, model, messages).await,
+            BuiltinProviderType::Qwen => self.qwen.chat(config, model, messages).await,
+            BuiltinProviderType::OpenAICompat => self.openai_compat.chat(config, model, messages).await,
+            BuiltinProviderType::Claude => self.claude.chat(config, model, messages).await,
         }
     }
 
@@ -62,68 +70,183 @@ impl ProviderRegistry {
     pub async fn chat_stream(
         &self,
         app: AppHandle,
-        provider_type: &ProviderType,
+        provider_type: &BuiltinProviderType,
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
     ) -> Result<bool, traits::AIError> {
         match provider_type {
-            ProviderType::Qwen => self.qwen.chat_stream(app, config, model, messages).await,
-            ProviderType::OpenAICompat => self.openai_compat.chat_stream(app, config, model, messages).await,
-            ProviderType::Claude => self.claude.chat_stream(app, config, model, messages).await,
+            BuiltinProviderType::Qwen => self.qwen.chat_stream(app, config, model, messages).await,
+            BuiltinProviderType::OpenAICompat => self.openai_compat.chat_stream(app, config, model, messages).await,
+            BuiltinProviderType::Claude => self.claude.chat_stream(app, config, model, messages).await,
         }
     }
 
     /// 连通性测试 - 内部派发
     pub async fn test_connection(
         &self,
-        provider_type: &ProviderType,
+        provider_type: &BuiltinProviderType,
         config: &ProviderConfig,
     ) -> Result<ConnectionTestResult, traits::AIError> {
         match provider_type {
-            ProviderType::Qwen => self.qwen.test_connection(config).await,
-            ProviderType::OpenAICompat => self.openai_compat.test_connection(config).await,
-            ProviderType::Claude => self.claude.test_connection(config).await,
+            BuiltinProviderType::Qwen => self.qwen.test_connection(config).await,
+            BuiltinProviderType::OpenAICompat => self.openai_compat.test_connection(config).await,
+            BuiltinProviderType::Claude => self.claude.test_connection(config).await,
         }
     }
 
     /// 获取默认模型列表 - 内部派发
-    pub fn default_models(&self, provider_type: &ProviderType) -> Vec<types::ModelInfo> {
+    pub fn default_models(&self, provider_type: &BuiltinProviderType) -> Vec<types::ModelInfo> {
         match provider_type {
-            ProviderType::Qwen => self.qwen.default_models(),
-            ProviderType::OpenAICompat => self.openai_compat.default_models(),
-            ProviderType::Claude => self.claude.default_models(),
+            BuiltinProviderType::Qwen => self.qwen.default_models(),
+            BuiltinProviderType::OpenAICompat => self.openai_compat.default_models(),
+            BuiltinProviderType::Claude => self.claude.default_models(),
         }
     }
 
     /// 列出所有可用 Provider 的元信息
     pub fn list_providers(&self) -> Vec<ProviderMeta> {
-        vec![
+        let mut result = vec![
             ProviderMeta {
                 id: "qwen".into(),
                 name: "阿里云千问 (DashScope)".into(),
-                provider_type: ProviderType::Qwen,
+                description: Some("阿里云大模型平台，支持 qwen 系列模型".into()),
+                provider_type: "qwen".into(),
                 default_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
                 supports_custom_url: true,
                 models: self.qwen.default_models(),
+                is_builtin: true,
             },
             ProviderMeta {
                 id: "openai_compat".into(),
                 name: "OpenAI 兼容接口".into(),
-                provider_type: ProviderType::OpenAICompat,
+                description: Some("支持 OpenAI、DeepSeek、Ollama 等兼容接口".into()),
+                provider_type: "openai_compat".into(),
                 default_base_url: "https://api.openai.com/v1".into(),
                 supports_custom_url: true,
                 models: self.openai_compat.default_models(),
+                is_builtin: true,
             },
             ProviderMeta {
                 id: "claude".into(),
                 name: "Anthropic Claude".into(),
-                provider_type: ProviderType::Claude,
+                description: Some("Anthropic Claude API".into()),
+                provider_type: "claude".into(),
                 default_base_url: "https://api.anthropic.com".into(),
                 supports_custom_url: true,
                 models: self.claude.default_models(),
+                is_builtin: true,
             },
-        ]
+        ];
+
+        // 添加动态 Provider
+        if let Ok(dynamic) = self.dynamic.read() {
+            for (id, provider) in dynamic.iter() {
+                result.push(ProviderMeta {
+                    id: id.clone(),
+                    name: provider.descriptor().name.clone(),
+                    description: provider.descriptor().description.clone(),
+                    provider_type: format!("dynamic:{}", id),
+                    default_base_url: provider.descriptor().base_url.clone(),
+                    supports_custom_url: provider.descriptor().supports_custom_url,
+                    models: provider.default_models(),
+                    is_builtin: false,
+                });
+            }
+        }
+
+        result
+    }
+
+    /// 注册动态 Provider
+    pub fn register_dynamic(&self, descriptor: ProviderDescriptor) -> Result<(), String> {
+        let id = descriptor.id.clone();
+        let provider = configurable::ConfigurableProvider::new(descriptor);
+
+        let mut dynamic = self.dynamic.write()
+            .map_err(|e| format!("锁获取失败: {}", e))?;
+
+        if dynamic.contains_key(&id) {
+            return Err(format!("Provider '{}' 已存在", id));
+        }
+
+        dynamic.insert(id.clone(), provider);
+        tracing::info!(provider_id = %id, "动态 Provider 注册成功");
+        Ok(())
+    }
+
+    /// 注销动态 Provider
+    pub fn unregister_dynamic(&self, id: &str) -> Result<(), String> {
+        let mut dynamic = self.dynamic.write()
+            .map_err(|e| format!("锁获取失败: {}", e))?;
+
+        dynamic.remove(id)
+            .ok_or_else(|| format!("Provider '{}' 不存在", id))?;
+
+        tracing::info!(provider_id = %id, "动态 Provider 注销成功");
+        Ok(())
+    }
+
+    /// 动态 Provider 聊天（非流式）
+    pub async fn chat_dynamic(
+        &self,
+        provider_id: &str,
+        config: &ProviderConfig,
+        model: &str,
+        messages: Vec<ChatMessage>,
+    ) -> Result<String, traits::AIError> {
+        let dynamic = self.dynamic.read()
+            .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
+
+        let provider = dynamic.get(provider_id)
+            .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
+
+        provider.chat(config, model, messages).await
+    }
+
+    /// 动态 Provider 聊天（流式）
+    pub async fn chat_stream_dynamic(
+        &self,
+        app: AppHandle,
+        provider_id: &str,
+        config: &ProviderConfig,
+        model: &str,
+        messages: Vec<ChatMessage>,
+    ) -> Result<bool, traits::AIError> {
+        // 先获取 provider 的克隆
+        let provider = {
+            let dynamic = self.dynamic.read()
+                .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
+            // 从 guard 中获取 provider 指针
+            dynamic.get(provider_id).map(|p| Box::new(ConfigurableProvider::new(p.descriptor().clone())) as Box<dyn AIProvider + Send + Sync>)
+        };
+
+        let provider = provider
+            .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
+
+        // 现在可以安全地 await
+        provider.chat_stream(app, config, model, messages).await
+    }
+
+    /// 动态 Provider 连通性测试
+    pub async fn test_connection_dynamic(
+        &self,
+        provider_id: &str,
+        config: &ProviderConfig,
+    ) -> Result<ConnectionTestResult, traits::AIError> {
+        // 先获取 provider 的克隆
+        let provider = {
+            let dynamic = self.dynamic.read()
+                .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
+            // 从 guard 中获取 provider 指针
+            dynamic.get(provider_id).map(|p| Box::new(ConfigurableProvider::new(p.descriptor().clone())) as Box<dyn AIProvider + Send + Sync>)
+        };
+
+        let provider = provider
+            .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
+
+        // 现在可以安全地 await
+        provider.test_connection(config).await
     }
 }
 

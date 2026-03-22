@@ -31,6 +31,20 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
+# 日志系统依赖
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# 文件监听依赖
+notify = "6"
+
+# URL 解析
+url = "2"
+
+# 正则表达式
+regex = "1"
+
 # 音频录制依赖
 hound = "3.5"
 once_cell = "1.19"

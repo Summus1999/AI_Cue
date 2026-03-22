@@ -1,12 +1,13 @@
 // Tauri 命令 - 音频录制、语音识别、AI 对话和数据库操作
 
-use crate::ai::{ProviderRegistry, ProviderType, types::{ProviderConfig, NetworkHealthStatus}};
+use crate::ai::{ProviderRegistry, BuiltinProviderType, types::{ProviderConfig, NetworkHealthStatus, ProviderDescriptor}};
 use crate::export::{ExportData, ExportInterviewContext, ExportMessage, ExportMetadata, ExportOptions, ExportResult};
 use crate::qwen::ChatMessage;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use chrono::Utc;
+use crate::logging::sanitize_log_value;
 
 // ==================== 音频命令 ====================
 
@@ -61,7 +62,7 @@ pub async fn nls_recognize_speech(
 pub async fn ai_chat_stream(
     app: AppHandle,
     registry: State<'_, ProviderRegistry>,
-    provider: ProviderType,
+    provider: BuiltinProviderType,
     config: ProviderConfig,
     model: String,
     messages: Vec<crate::ai::types::ChatMessage>,
@@ -76,7 +77,7 @@ pub async fn ai_chat_stream(
 #[tauri::command]
 pub async fn ai_chat(
     registry: State<'_, ProviderRegistry>,
-    provider: ProviderType,
+    provider: BuiltinProviderType,
     config: ProviderConfig,
     model: String,
     messages: Vec<crate::ai::types::ChatMessage>,
@@ -91,7 +92,7 @@ pub async fn ai_chat(
 #[tauri::command]
 pub async fn ai_test_connection(
     registry: State<'_, ProviderRegistry>,
-    provider: ProviderType,
+    provider: BuiltinProviderType,
     config: ProviderConfig,
 ) -> Result<crate::ai::types::ConnectionTestResult, String> {
     registry
@@ -824,4 +825,179 @@ fn extract_qa_messages(messages: &[serde_json::Value]) -> Vec<(String, String, S
     }
     
     pairs
+}
+
+// ==================== 动态 Provider 和插件管理命令 ====================
+
+/// 注册动态 Provider
+#[tauri::command]
+pub fn ai_register_provider(
+    registry: State<'_, ProviderRegistry>,
+    descriptor: ProviderDescriptor,
+) -> Result<(), String> {
+    registry.register_dynamic(descriptor)
+}
+
+/// 注销动态 Provider
+#[tauri::command]
+pub fn ai_unregister_provider(
+    registry: State<'_, ProviderRegistry>,
+    provider_id: String,
+) -> Result<(), String> {
+    registry.unregister_dynamic(&provider_id)
+}
+
+/// 动态 Provider 聊天（流式）
+#[tauri::command]
+pub async fn ai_chat_stream_dynamic(
+    app: AppHandle,
+    registry: State<'_, ProviderRegistry>,
+    provider_id: String,
+    config: ProviderConfig,
+    model: String,
+    messages: Vec<crate::ai::types::ChatMessage>,
+) -> Result<bool, String> {
+    registry
+        .chat_stream_dynamic(app, &provider_id, &config, &model, messages)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 动态 Provider 连通性测试
+#[tauri::command]
+pub async fn ai_test_connection_dynamic(
+    registry: State<'_, ProviderRegistry>,
+    provider_id: String,
+    config: ProviderConfig,
+) -> Result<crate::ai::types::ConnectionTestResult, String> {
+    registry
+        .test_connection_dynamic(&provider_id, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ==================== 日志命令 ====================
+
+/// 日志导出结果
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogExportResult {
+    pub success: bool,
+    pub file_path: Option<String>,
+    pub file_size: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// 导出日志
+#[tauri::command]
+pub async fn export_logs(
+    app: AppHandle,
+    format: String,  // "text" | "json"
+    include_frontend: bool,
+    frontend_logs: Option<String>,
+) -> Result<LogExportResult, String> {
+    use std::io::Write;
+
+    let log_dir = app.path().app_log_dir()
+        .map_err(|e| format!("获取日志目录失败: {}", e))?;
+
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    let extension = if format == "json" { "json" } else { "txt" };
+    let export_path = log_dir.join(format!("ai-cue-export-{}.{}", timestamp, extension));
+
+    // 读取后端日志
+    let mut backend_logs = String::new();
+
+    if let Ok(entries) = std::fs::read_dir(&log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "log").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    backend_logs.push_str(&format!("\n=== {} ===\n", path.display()));
+                    backend_logs.push_str(&content);
+                }
+            }
+        }
+    }
+
+    // 合并前端日志
+    let combined = if include_frontend {
+        if let Some(fe_logs) = frontend_logs {
+            format!(
+                "=== Frontend Logs ===\n{}\n\n=== Backend Logs ===\n{}",
+                fe_logs, backend_logs
+            )
+        } else {
+            backend_logs
+        }
+    } else {
+        backend_logs
+    };
+
+    // 写入导出文件
+    let mut file = std::fs::File::create(&export_path)
+        .map_err(|e| format!("创建日志文件失败: {}", e))?;
+
+    file.write_all(combined.as_bytes())
+        .map_err(|e| format!("写入日志文件失败: {}", e))?;
+
+    let metadata = std::fs::metadata(&export_path)
+        .map_err(|e| format!("获取文件信息失败: {}", e))?;
+
+    Ok(LogExportResult {
+        success: true,
+        file_path: Some(export_path.to_string_lossy().to_string()),
+        file_size: Some(metadata.len()),
+        error: None,
+    })
+}
+
+/// 从前端接收日志
+#[tauri::command]
+pub fn log_from_frontend(
+    level: String,
+    module: String,
+    message: String,
+    data: Option<String>,
+) {
+    let sanitized_message = sanitize_log_value(&message);
+    let sanitized_data = data.as_ref().map(|d| sanitize_log_value(d));
+
+    match level.as_str() {
+        "error" => tracing::error!(
+            frontend = true,
+            module = %module,
+            data = %sanitized_data.as_deref().unwrap_or(""),
+            "{}",
+            sanitized_message
+        ),
+        "warn" => tracing::warn!(
+            frontend = true,
+            module = %module,
+            data = %sanitized_data.as_deref().unwrap_or(""),
+            "{}",
+            sanitized_message
+        ),
+        "info" => tracing::info!(
+            frontend = true,
+            module = %module,
+            data = %sanitized_data.as_deref().unwrap_or(""),
+            "{}",
+            sanitized_message
+        ),
+        "debug" => tracing::debug!(
+            frontend = true,
+            module = %module,
+            data = %sanitized_data.as_deref().unwrap_or(""),
+            "{}",
+            sanitized_message
+        ),
+        _ => tracing::trace!(
+            frontend = true,
+            module = %module,
+            data = %sanitized_data.as_deref().unwrap_or(""),
+            "{}",
+            sanitized_message
+        ),
+    }
 }

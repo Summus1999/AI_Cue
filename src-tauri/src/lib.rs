@@ -7,6 +7,7 @@ mod audio;
 mod commands;
 mod database;
 mod export;
+mod logging;  // 日志系统
 mod nls;
 mod qwen;
 mod review;
@@ -18,15 +19,43 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            // 初始化数据库
+            // 初始化日志系统
             let app_data_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
+            let log_dir = app_data_dir.join("logs");
+            let log_config = logging::LogConfig {
+                log_dir,
+                level: logging::LogLevel::Info,
+                console_output: cfg!(debug_assertions),
+                json_format: false,
+            };
+            let _log_guard = logging::init_logging(log_config)
+                .expect("日志系统初始化失败");
+
+            tracing::info!(
+                app_version = env!("CARGO_PKG_VERSION"),
+                "AI Cue 应用启动"
+            );
+
+            // 初始化数据库
             let db = database::init_database(&app_data_dir)
                 .expect("数据库初始化失败");
             app.manage(db);
-            
+
             // 初始化 Provider 注册表
-            app.manage(ai::ProviderRegistry::new());
-            
+            let registry = ai::ProviderRegistry::new();
+
+            // 加载配置文件中的动态 Provider
+            let loader = ai::loader::ProviderLoader::new(&app_data_dir);
+            if let Ok(descriptors) = loader.load_all() {
+                for descriptor in descriptors {
+                    if let Err(e) = registry.register_dynamic(descriptor) {
+                        tracing::warn!(error = %e, "动态 Provider 注册失败");
+                    }
+                }
+            }
+
+            app.manage(registry);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -73,6 +102,14 @@ pub fn run() {
             commands::get_review_report,
             commands::get_review_trend,
             commands::delete_review,
+            // 动态 Provider 和插件管理命令
+            commands::ai_register_provider,
+            commands::ai_unregister_provider,
+            commands::ai_chat_stream_dynamic,
+            commands::ai_test_connection_dynamic,
+            // 日志命令
+            commands::export_logs,
+            commands::log_from_frontend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
