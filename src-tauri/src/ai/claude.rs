@@ -23,6 +23,7 @@ struct ClaudeContentBlock {
     text: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct ClaudeProvider;
 
 impl ClaudeProvider {

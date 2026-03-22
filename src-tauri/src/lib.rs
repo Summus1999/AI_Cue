@@ -1,5 +1,6 @@
 // AI Cue - Tauri 库入口
 
+use std::sync::Arc;
 use tauri::Manager;
 
 mod ai;
@@ -13,6 +14,7 @@ mod perf;       // 性能埋点
 mod qwen;
 mod review;
 mod screenshot;
+mod startup;     // 启动管理
 
 pub fn run() {
     tauri::Builder::default()
@@ -22,6 +24,15 @@ pub fn run() {
         .setup(|app| {
             // 记录后端启动开始
             let _setup_timer = perf::perf_setup_start();
+
+            // 创建启动管理器
+            let startup_manager = startup::StartupManager::new();
+            app.manage(Arc::new(startup_manager.clone()));
+
+            // ========== 第一层：强依赖初始化 ==========
+            // 日志、数据库、Provider 注册表必须在首屏前完成
+            let _layer1_timer = perf::perf_layer1_start();
+            startup_manager.set_stage(startup::StartupStage::Layer1StrongDeps);
 
             // 初始化日志系统
             let app_data_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
@@ -38,7 +49,7 @@ pub fn run() {
 
             tracing::info!(
                 app_version = env!("CARGO_PKG_VERSION"),
-                "AI Cue 应用启动"
+                "AI Cue 应用启动 - 第一层初始化中"
             );
 
             // 初始化数据库
@@ -47,24 +58,86 @@ pub fn run() {
             app.manage(db);
             perf::perf_database_done();
 
-            // 初始化 Provider 注册表
+            // 初始化 Provider 注册表（内置 Provider）
             perf::perf_provider_registry_ready();
             let registry = ai::ProviderRegistry::new();
+            app.manage(registry.clone());
 
-            // 加载配置文件中的动态 Provider
-            let loader = ai::loader::ProviderLoader::new(&app_data_dir);
-            if let Ok(descriptors) = loader.load_all() {
-                for descriptor in descriptors {
-                    if let Err(e) = registry.register_dynamic(descriptor) {
-                        tracing::warn!(error = %e, "动态 Provider 注册失败");
-                    }
-                }
-            }
-            perf::perf_dynamic_provider_done();
+            // 第一层完成
+            drop(_layer1_timer);
+            perf::perf_layer1_done();
+            startup_manager.set_stage(startup::StartupStage::Layer1Done);
 
-            app.manage(registry);
+            tracing::info!(
+                stage = "layer1_done",
+                "第一层强依赖初始化完成，应用可呈现首屏"
+            );
 
-            // 记录后端启动完成
+            // ========== 第二层：早期异步初始化 ==========
+            // 动态 Provider 加载不阻塞首屏，在后台异步完成
+            let startup_mgr = startup_manager.clone();
+            let registry_for_async = registry.clone();
+            let app_data_for_async = app_data_dir.clone();
+
+            // 在后台线程异步加载动态 Provider
+            std::thread::spawn(move || {
+                let async_timer = perf::perf_layer2_start();
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| tracing::error!("创建异步 runtime 失败: {}", e))
+                    .and_then(|rt| {
+                        rt.block_on(async {
+                            // 同步调用，不需要 await
+                            startup_mgr.set_stage(startup::StartupStage::Layer2EarlyAsync);
+                            startup_mgr.set_provider_load_state(startup::ProviderLoadState::Loading);
+
+                            // 加载动态 Provider
+                            let loader = ai::loader::ProviderLoader::new(&app_data_for_async);
+                            match loader.load_all() {
+                                Ok(descriptors) => {
+                                    let total_count = descriptors.len();
+                                    let mut failures = 0;
+                                    for descriptor in descriptors {
+                                        if let Err(e) = registry_for_async.register_dynamic(descriptor) {
+                                            tracing::warn!(error = %e, "动态 Provider 注册失败");
+                                            failures += 1;
+                                        }
+                                    }
+
+                                    if failures > 0 {
+                                        tracing::warn!(
+                                            total = total_count,
+                                            failures = failures,
+                                            "部分动态 Provider 加载失败，切换到降级状态"
+                                        );
+                                        startup_mgr.set_provider_load_state(startup::ProviderLoadState::Degraded);
+                                    } else {
+                                        tracing::info!(
+                                            count = total_count,
+                                            "动态 Provider 加载完成"
+                                        );
+                                        startup_mgr.set_provider_load_state(startup::ProviderLoadState::Ready);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "动态 Provider 加载失败，切换到降级状态"
+                                    );
+                                    startup_mgr.set_provider_load_state(startup::ProviderLoadState::Degraded);
+                                }
+                            }
+
+                            drop(async_timer);
+                            perf::perf_layer2_done();
+                            startup_mgr.set_stage(startup::StartupStage::Layer2Done);
+                        });
+                        Ok(rt)
+                    });
+            });
+
+            // 记录后端启动完成（第一层完成即可，不等待第二层）
             drop(_setup_timer);
 
             Ok(())

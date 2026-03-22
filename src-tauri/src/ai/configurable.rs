@@ -11,6 +11,7 @@ use super::types::{
 use super::{create_http_client, map_reqwest_error, stream};
 
 /// 可配置 Provider - 基于描述符驱动的通用实现
+#[derive(Clone)]
 pub struct ConfigurableProvider {
     descriptor: ProviderDescriptor,
 }

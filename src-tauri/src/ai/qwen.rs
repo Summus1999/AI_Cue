@@ -26,6 +26,7 @@ struct ResponseMessage {
     content: String,
 }
 
+#[derive(Clone)]
 pub struct QwenProvider;
 
 impl QwenProvider {

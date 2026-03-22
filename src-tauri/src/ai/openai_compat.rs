@@ -27,6 +27,7 @@ struct ResponseMessage {
     content: String,
 }
 
+#[derive(Clone)]
 pub struct OpenAICompatProvider;
 
 impl OpenAICompatProvider {

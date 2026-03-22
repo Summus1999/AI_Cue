@@ -11,9 +11,14 @@ use std::collections::HashMap;
 pub enum PerfEvent {
     // 后端启动链路
     RustSetupStart,
+    Layer1StrongDepsStart,
+    Layer1StrongDepsDone,
+    Layer2EarlyAsyncStart,
+    Layer2EarlyAsyncDone,
     LoggingInitDone,
     DatabaseInitDone,
     ProviderRegistryReady,
+    DynamicProviderLoadStart,
     DynamicProviderLoadDone,
     
     // 截图链路
@@ -29,9 +34,14 @@ impl PerfEvent {
     pub fn as_str(&self) -> &'static str {
         match self {
             PerfEvent::RustSetupStart => "rust_setup_start",
+            PerfEvent::Layer1StrongDepsStart => "layer1_strong_deps_start",
+            PerfEvent::Layer1StrongDepsDone => "layer1_strong_deps_done",
+            PerfEvent::Layer2EarlyAsyncStart => "layer2_early_async_start",
+            PerfEvent::Layer2EarlyAsyncDone => "layer2_early_async_done",
             PerfEvent::LoggingInitDone => "logging_init_done",
             PerfEvent::DatabaseInitDone => "database_init_done",
             PerfEvent::ProviderRegistryReady => "provider_registry_ready",
+            PerfEvent::DynamicProviderLoadStart => "dynamic_provider_load_start",
             PerfEvent::DynamicProviderLoadDone => "dynamic_provider_load_done",
             PerfEvent::CaptureFullScreenStart => "capture_full_screen_start",
             PerfEvent::CaptureFullScreenDone => "capture_full_screen_done",
@@ -199,6 +209,26 @@ pub fn perf_setup_start() -> PerfTimer {
     PerfTimer::new(PerfEvent::RustSetupStart)
 }
 
+/// 便捷函数：记录第一层强依赖初始化开始
+pub fn perf_layer1_start() -> PerfTimer {
+    PerfTimer::new(PerfEvent::Layer1StrongDepsStart)
+}
+
+/// 便捷函数：记录第一层强依赖初始化完成
+pub fn perf_layer1_done() {
+    record(PerfEvent::Layer1StrongDepsDone);
+}
+
+/// 便捷函数：记录第二层早期异步初始化开始
+pub fn perf_layer2_start() -> PerfTimer {
+    PerfTimer::new(PerfEvent::Layer2EarlyAsyncStart)
+}
+
+/// 便捷函数：记录第二层早期异步初始化完成
+pub fn perf_layer2_done() {
+    record(PerfEvent::Layer2EarlyAsyncDone);
+}
+
 /// 便捷函数：记录日志初始化完成
 pub fn perf_logging_done() {
     record(PerfEvent::LoggingInitDone);
@@ -212,6 +242,11 @@ pub fn perf_database_done() {
 /// 便捷函数：记录 Provider 注册表就绪
 pub fn perf_provider_registry_ready() {
     record(PerfEvent::ProviderRegistryReady);
+}
+
+/// 便捷函数：记录动态 Provider 加载开始
+pub fn perf_dynamic_provider_start() -> PerfTimer {
+    PerfTimer::new(PerfEvent::DynamicProviderLoadStart)
 }
 
 /// 便捷函数：记录动态 Provider 加载完成

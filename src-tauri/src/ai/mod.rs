@@ -41,6 +41,22 @@ pub struct ProviderRegistry {
     dynamic: RwLock<HashMap<String, configurable::ConfigurableProvider>>,
 }
 
+impl Clone for ProviderRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            qwen: self.qwen.clone(),
+            openai_compat: self.openai_compat.clone(),
+            claude: self.claude.clone(),
+            // 深拷贝 dynamic HashMap
+            dynamic: RwLock::new(
+                self.dynamic.read()
+                    .map(|map| map.clone())
+                    .unwrap_or_default()
+            ),
+        }
+    }
+}
+
 impl ProviderRegistry {
     pub fn new() -> Self {
         Self {
