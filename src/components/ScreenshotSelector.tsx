@@ -3,6 +3,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { emit } from '@tauri-apps/api/event';
 import { Check, X } from 'lucide-react';
+import type { PreviewTransportType } from '../services/screenshot/previewTransport';
 
 interface SelectionRect {
   startX: number;
@@ -12,7 +13,11 @@ interface SelectionRect {
 }
 
 interface ScreenshotSelectorProps {
-  sourcePath: string;
+  // 传输类型
+  transportType: PreviewTransportType;
+  // 内存传输：Base64 数据
+  // 磁盘传输：文件路径
+  payloadRef: string;
   logicalWidth: number;
   logicalHeight: number;
   physicalWidth: number;
@@ -29,7 +34,8 @@ interface CropScreenshotResult {
 const MIN_SELECTION_SIZE = 80;
 
 export function ScreenshotSelector({
-  sourcePath,
+  transportType,
+  payloadRef,
   logicalWidth,
   logicalHeight,
   physicalWidth,
@@ -49,7 +55,16 @@ export function ScreenshotSelector({
     height: logicalHeight,
   });
 
-  const imageUrl = useMemo(() => convertFileSrc(sourcePath), [sourcePath]);
+  // 根据传输类型计算图片 URL
+  const imageUrl = useMemo(() => {
+    if (transportType === 'memory') {
+      // 内存传输：直接使用 Base64 数据
+      return `data:image/png;base64,${payloadRef}`;
+    } else {
+      // 磁盘传输：使用文件路径
+      return convertFileSrc(payloadRef);
+    }
+  }, [transportType, payloadRef]);
 
   const getNormalizedSelection = useCallback(() => {
     if (!selection) return null;
@@ -81,15 +96,18 @@ export function ScreenshotSelector({
     try {
       await emit('screenshot-cancelled', {});
     } finally {
-      try {
-        await invoke('cancel_screenshot', { sourcePath });
-      } catch {
-        // Ignore cleanup failures.
+      // 磁盘传输时需要清理临时文件，内存传输不需要
+      if (transportType === 'disk' && payloadRef) {
+        try {
+          await invoke('cancel_screenshot', { sourcePath: payloadRef });
+        } catch {
+          // Ignore cleanup failures.
+        }
       }
       const win = getCurrentWindow();
       await win.close();
     }
-  }, [sourcePath]);
+  }, [transportType, payloadRef]);
 
   const handleConfirm = useCallback(async () => {
     const physicalSelection = getPhysicalSelection();
@@ -97,9 +115,15 @@ export function ScreenshotSelector({
       return;
     }
 
+    // 内存传输时不能裁剪（因为需要读取原图），需要先告知用户
+    if (transportType === 'memory') {
+      setSelectionError('不支持在内存预览模式下裁剪，请使用磁盘模式');
+      return;
+    }
+
     try {
       const result = await invoke<CropScreenshotResult>('crop_screenshot', {
-        sourcePath,
+        sourcePath: payloadRef,
         x: physicalSelection.x,
         y: physicalSelection.y,
         width: physicalSelection.width,
@@ -119,7 +143,7 @@ export function ScreenshotSelector({
       setSelection(null);
       setIsSelectionComplete(false);
     }
-  }, [getPhysicalSelection, sourcePath]);
+  }, [getPhysicalSelection, transportType, payloadRef]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;

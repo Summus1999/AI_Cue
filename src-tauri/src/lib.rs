@@ -98,6 +98,7 @@ pub fn run() {
             commands::end_interview,
             // 截图命令
             screenshot::capture_full_screen,
+            screenshot::capture_with_preview,
             screenshot::crop_screenshot,
             screenshot::cancel_screenshot,
             // 导出命令（新增）

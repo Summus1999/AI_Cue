@@ -1126,7 +1126,13 @@ function App() {
       });
       cleanupCallbacks.push(unlistenCancel);
 
-      const screenshotUrl = `/screenshot.html?sourcePath=${encodeURIComponent(capture.source_path)}&logicalWidth=${capture.logical_width}&logicalHeight=${capture.logical_height}&physicalWidth=${capture.physical_width}&physicalHeight=${capture.physical_height}`;
+      const screenshotUrl = `/screenshot.html?` +
+        `transportType=disk` +
+        `&payloadRef=${encodeURIComponent(capture.source_path)}` +
+        `&logicalWidth=${capture.logical_width}` +
+        `&logicalHeight=${capture.logical_height}` +
+        `&physicalWidth=${capture.physical_width}` +
+        `&physicalHeight=${capture.physical_height}`;
 
       new WebviewWindow('screenshot', {
         url: screenshotUrl,

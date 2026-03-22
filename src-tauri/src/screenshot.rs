@@ -1,4 +1,4 @@
-use image::ImageFormat;
+use screenshots::image::ImageFormat;
 use screenshots::Screen;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -11,6 +11,10 @@ use crate::perf;
 const MIN_SELECTION_SIZE: u32 = 80;
 const ACTIVE_SOURCE_FILE: &str = "active-main-screen.png";
 const LATEST_DEBUG_FILE: &str = "latest-screenshot.png";
+
+// 内存传输分辨率阈值
+const MEMORY_THRESHOLD_WIDTH: u32 = 2560;
+const MEMORY_THRESHOLD_HEIGHT: u32 = 1440;
 
 #[derive(Debug, Serialize)]
 pub struct ScreenCaptureResult {
@@ -27,6 +31,18 @@ pub struct ScreenCaptureResult {
 pub struct CropScreenshotResult {
     image_data: Vec<u8>,
     debug_path: String,
+}
+
+// 预览数据结构 - 用于内存优先传输
+#[derive(Debug, Serialize)]
+pub struct PreviewData {
+    pub capture_id: String,
+    pub logical_width: u32,
+    pub logical_height: u32,
+    pub physical_width: u32,
+    pub physical_height: u32,
+    pub transport_type: String,  // "memory" 或 "disk"
+    pub payload_ref: String,    // 内存传输：Base64；磁盘传输：文件路径
 }
 
 fn screenshot_temp_dir() -> Result<PathBuf, String> {
@@ -93,6 +109,66 @@ pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
     })
 }
 
+/// 执行截图并返回预览数据（内存优先策略）
+#[tauri::command]
+pub fn capture_with_preview() -> Result<PreviewData, String> {
+    let timer = perf::perf_capture_start();
+    
+    let screen = primary_screen()?;
+    let image = screen.capture().map_err(|e| format!("截图失败: {}", e))?;
+    
+    let logical_width = image.width();
+    let logical_height = image.height();
+    
+    // 生成唯一 ID 用于追踪
+    let capture_id = uuid::Uuid::new_v4().to_string();
+    
+    // 判断是否使用内存传输
+    let use_memory = logical_width <= MEMORY_THRESHOLD_WIDTH 
+        && logical_height <= MEMORY_THRESHOLD_HEIGHT;
+    
+    let (transport_type, payload_ref) = if use_memory {
+        // 内存传输：将图片编码为 Base64
+        let mut buffer = Vec::new();
+        image.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
+            .map_err(|e| format!("编码图片失败: {}", e))?;
+        let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buffer);
+        ("memory".to_string(), base64_data)
+    } else {
+        // 磁盘传输：保存到临时文件
+        let source_path = active_source_path()?;
+        image.save(&source_path)
+            .map_err(|e| format!("保存截图失败: {}", e))?;
+        ("disk".to_string(), source_path.to_string_lossy().to_string())
+    };
+    
+    // 记录截图完成
+    let mut metadata = HashMap::new();
+    metadata.insert("logical_width".to_string(), logical_width.to_string());
+    metadata.insert("logical_height".to_string(), logical_height.to_string());
+    metadata.insert("transport_type".to_string(), transport_type.clone());
+    let record = timer.finish_with_metadata(metadata);
+    tracing::debug!(
+        event = record.event.as_str(),
+        elapsed_ms = record.elapsed_ms,
+        logical_width = logical_width,
+        logical_height = logical_height,
+        transport_type = transport_type,
+        "[PERF] capture_with_preview"
+    );
+    perf::perf_capture_done();
+    
+    Ok(PreviewData {
+        capture_id,
+        logical_width,
+        logical_height,
+        physical_width: logical_width,
+        physical_height: logical_height,
+        transport_type,
+        payload_ref,
+    })
+}
+
 #[tauri::command]
 pub fn crop_screenshot(
     source_path: String,
@@ -111,7 +187,7 @@ pub fn crop_screenshot(
     }
 
     let source = PathBuf::from(&source_path);
-    let img = image::open(&source).map_err(|e| format!("打开图片失败: {}", e))?;
+    let img = screenshots::image::open(&source).map_err(|e| format!("打开图片失败: {}", e))?;
     let img_width = img.width();
     let img_height = img.height();
 
