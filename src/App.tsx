@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
@@ -35,6 +35,8 @@ import { useCodeEditor } from './store/codeEditor';
 import { CodeEditorPanel } from './components/CodeEditorPanel';
 import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
+import { MessageSearchBar } from './components/MessageSearchBar';
+import { useMessageSearch } from './store/messageSearch';
 
 // 消息类型定义
 interface Message {
@@ -98,6 +100,9 @@ function getInterruptReason(finishReason?: string): Message['interruptReason'] {
 function App() {
   // 网络韧性状态管理
   const networkResilience = useNetworkResilience();
+  
+  // 消息搜索状态管理
+  const messageSearch = useMessageSearch();
   
   // 代码编辑器状态
   const codeEditor = useCodeEditor();
@@ -1263,6 +1268,60 @@ function App() {
     );
   }, [messages, networkResilience, requestAssistantReply]);
 
+  // 搜索功能：Ctrl+F 快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+F 或 Cmd+F 打开搜索
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        if (messageSearch.isSearchOpen) {
+          // 已打开时聚焦输入框
+          document.querySelector<HTMLInputElement>('[data-search-input]')?.focus();
+        } else {
+          messageSearch.openSearch();
+        }
+      }
+      // ESC 关闭搜索
+      if (e.key === 'Escape' && messageSearch.isSearchOpen) {
+        messageSearch.closeSearch();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [messageSearch]);
+
+  // 搜索功能：关键词变化时执行搜索（防抖）
+  useEffect(() => {
+    if (!messageSearch.keyword) return;
+    
+    const timer = setTimeout(() => {
+      messageSearch.executeSearch(messages);
+    }, 200);
+    
+    return () => clearTimeout(timer);
+  }, [messageSearch.keyword, messages, messageSearch]);
+
+  // 搜索功能：当前焦点变化时滚动
+  useEffect(() => {
+    if (!messageSearch.isSearchOpen) return;
+    
+    const messageId = messageSearch.getCurrentMessageId();
+    if (messageId) {
+      // 暂停自动滚动
+      updateAutoScroll(false);
+      
+      // 滚动到目标消息
+      const element = document.querySelector(`[data-message-id="${messageId}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      
+      // 设置冷却时间，避免立即恢复自动滚动
+      scrollCooldownRef.current = Date.now() + 2000;
+    }
+  }, [messageSearch.currentIndex, messageSearch.isSearchOpen, messageSearch]);
+
   // 最小化窗口
   const handleMinimize = () => {};
 
@@ -1334,6 +1393,18 @@ function App() {
 
         {/* 右侧：窗口控制按钮 */}
         <div className="flex items-center gap-1">
+          {/* 搜索按钮 */}
+          <button
+            onClick={() => messageSearch.openSearch()}
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors duration-150 ${
+              messageSearch.isSearchOpen 
+                ? 'bg-amber-600 text-white' 
+                : 'hover:bg-amber-200/50'
+            }`}
+            title="搜索消息 (Ctrl+F)"
+          >
+            <Search className="w-3.5 h-3.5 text-amber-700" />
+          </button>
           {/* 新建会话按钮 */}
           <button
             onClick={handleClear}
@@ -1495,31 +1566,41 @@ function App() {
         <div
           ref={scrollRef}
           data-interactive="true"
-          className={`overflow-y-auto scrollbar-hide p-4 space-y-4 transition-all duration-300 ${codeEditor.showEditor ? 'w-[60%]' : 'flex-1'}`}
+          className={`flex-1 flex flex-col overflow-hidden`}
           onScroll={handleScroll}
         >
-        {messages.map((message) => (
+          {/* 搜索栏 */}
+          <MessageSearchBar />
+          
+          {/* 消息列表 */}
           <div
-            key={message.id}
-            className={`message-enter flex ${
-              message.role === "user" ? "justify-end" : "justify-start"
-            }`}
+            className={`flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4 transition-all duration-300 ${codeEditor.showEditor ? 'w-[60%]' : 'flex-1'}`}
           >
+          {messages.map((message) => (
             <div
-              className={`max-w-[90%] px-4 py-2.5 text-sm leading-relaxed ${
-                message.role === "user"
-                  ? "bg-amber-200/60 text-amber-900 rounded-2xl rounded-br-md"
-                  : "bg-amber-800 text-amber-50 rounded-2xl rounded-bl-md"
+              key={message.id}
+              data-message-id={message.id}
+              className={`message-enter flex ${
+                message.role === "user" ? "justify-end" : "justify-start"
               }`}
             >
-              <MessageContent
-                content={message.content}
-                variant={message.role}
-                isComplete={message.isComplete}
-                interruptReason={message.interruptReason}
-                isGenerating={isGenerating}
-                onContinue={() => handleContinueGeneration(message.id)}
-              />
+              <div
+                className={`max-w-[90%] px-4 py-2.5 text-sm leading-relaxed ${
+                  message.role === "user"
+                    ? "bg-amber-200/60 text-amber-900 rounded-2xl rounded-br-md"
+                    : "bg-amber-800 text-amber-50 rounded-2xl rounded-bl-md"
+                }`}
+              >
+                <MessageContent
+                  content={message.content}
+                  variant={message.role}
+                  isComplete={message.isComplete}
+                  interruptReason={message.interruptReason}
+                  isGenerating={isGenerating}
+                  onContinue={() => handleContinueGeneration(message.id)}
+                  messageId={message.id}
+                  highlightEnabled={messageSearch.isSearchOpen}
+                />
               {/* 面试官模式：用户消息显示回答用时 */}
               {message.role === 'user' && message.responseTimeMs && promptMode === 'interviewer' && (
                 <div className="mt-1 text-[10px] text-amber-600 flex items-center gap-1">
@@ -1567,6 +1648,7 @@ function App() {
             <span>思考用时: {formatThinkingDuration(elapsedSeconds)}</span>
           </div>
         )}
+        </div>
         </div>
 
         {/* 代码编辑器侧栏 */}

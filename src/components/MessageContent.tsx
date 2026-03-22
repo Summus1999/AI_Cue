@@ -1,4 +1,6 @@
 import { CodeBlock } from './CodeBlock';
+import { useMessageSearch } from '../store/messageSearch';
+import { MatchRange } from '../services/searchEngine';
 
 interface MessageContentProps {
   content: string;
@@ -11,12 +13,81 @@ interface MessageContentProps {
   onContinue?: () => void;
   /** 是否正在生成中 */
   isGenerating?: boolean;
+  /** 搜索高亮：消息 ID */
+  messageId?: string;
+  /** 搜索高亮：是否启用高亮 */
+  highlightEnabled?: boolean;
 }
 
 interface ContentSegment {
   type: "text" | "code";
   content: string;
   language?: string;
+}
+
+interface HighlightedTextProps {
+  text: string;
+  ranges: MatchRange[];
+  segmentIndex: number;
+  isCurrentHighlight: (rangeIndex: number) => boolean;
+}
+
+/**
+ * 高亮文本渲染组件
+ * 将文本按照高亮区间拆分为多个片段，分别渲染
+ */
+function HighlightedText({ 
+  text, 
+  ranges, 
+  segmentIndex,
+  isCurrentHighlight,
+}: HighlightedTextProps) {
+  // 无高亮区间时直接返回原文本
+  if (ranges.length === 0) {
+    return <>{text}</>;
+  }
+
+  const fragments: React.ReactNode[] = [];
+  let lastEnd = 0;
+
+  ranges.forEach((range, rangeIndex) => {
+    // 高亮前的普通文本
+    if (range.start > lastEnd) {
+      fragments.push(
+        <span key={`text-${segmentIndex}-${rangeIndex}-pre`}>
+          {text.slice(lastEnd, range.start)}
+        </span>
+      );
+    }
+
+    // 判断是否为当前焦点
+    const isCurrent = isCurrentHighlight(rangeIndex);
+
+    // 高亮文本
+    fragments.push(
+      <mark
+        key={`highlight-${segmentIndex}-${rangeIndex}`}
+        className={isCurrent 
+          ? 'bg-orange-400 text-orange-900 rounded px-0.5' 
+          : 'bg-yellow-300 text-yellow-900 rounded px-0.5'
+        }
+        data-search-highlight={isCurrent ? 'current' : 'match'}
+      >
+        {text.slice(range.start, range.end)}
+      </mark>
+    );
+
+    lastEnd = range.end;
+  });
+
+  // 最后的普通文本
+  if (lastEnd < text.length) {
+    fragments.push(
+      <span key={`text-${segmentIndex}-end`}>{text.slice(lastEnd)}</span>
+    );
+  }
+
+  return <>{fragments}</>;
 }
 
 function parseContent(content: string): ContentSegment[] {
@@ -59,8 +130,11 @@ export function MessageContent({
   interruptReason,
   onContinue,
   isGenerating,
+  messageId,
+  highlightEnabled = false,
 }: MessageContentProps) {
   const segments = parseContent(content);
+  const { getHighlightRanges, isCurrentHighlight } = useMessageSearch();
 
   // 中断原因显示文本
   const getInterruptReasonText = (reason?: string): string => {
@@ -76,6 +150,11 @@ export function MessageContent({
   return (
     <div className="space-y-2">
       {segments.map((segment, index) => {
+        // 获取该段的高亮区间
+        const ranges = highlightEnabled && messageId 
+          ? getHighlightRanges(messageId, index)
+          : [];
+
         if (segment.type === "code") {
           return (
             <CodeBlock
@@ -83,6 +162,10 @@ export function MessageContent({
               content={segment.content}
               language={segment.language}
               variant={variant}
+              highlightRanges={ranges}
+              isCurrentHighlight={(rangeIndex: number) => 
+                messageId ? isCurrentHighlight(messageId, index, rangeIndex) : false
+              }
             />
           );
         }
@@ -97,7 +180,18 @@ export function MessageContent({
             key={`text-${index}`}
             className="whitespace-pre-wrap break-words"
           >
-            {normalizedText}
+            {ranges.length > 0 ? (
+              <HighlightedText
+                text={normalizedText}
+                ranges={ranges}
+                segmentIndex={index}
+                isCurrentHighlight={(rangeIndex) => 
+                  messageId ? isCurrentHighlight(messageId, index, rangeIndex) : false
+                }
+              />
+            ) : (
+              normalizedText
+            )}
           </div>
         );
       })}

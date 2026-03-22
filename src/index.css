@@ -231,3 +231,75 @@ body {
 @keyframes blink {
   50% { opacity: 0; }
 }
+
+/* ====== 消息搜索高亮样式 ====== */
+
+/* 搜索栏入场动画 */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 150ms ease-out;
+}
+
+/* 普通高亮 - 黄色背景 */
+mark[data-search-highlight="match"] {
+  background-color: rgb(253 224 71); /* yellow-300 */
+  color: rgb(113 63 18);              /* yellow-900 */
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* 当前焦点高亮 - 橙色背景 */
+mark[data-search-highlight="current"] {
+  background-color: rgb(251 146 60); /* orange-400 */
+  color: rgb(124 45 18);              /* orange-900 */
+  border-radius: 2px;
+  padding: 0 2px;
+  box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.3);
+}
+
+/* 用户消息中的高亮（浅色背景气泡） */
+.bg-amber-200\/60 mark[data-search-highlight="match"] {
+  background-color: rgb(253 224 71);
+}
+
+/* 助手消息中的高亮（深色背景气泡） */
+.bg-amber-800 mark[data-search-highlight="match"] {
+  background-color: rgb(254 240 138); /* yellow-200 更亮以适应深色背景 */
+  color: rgb(133 77 14);
+}
+
+/* 搜索焦点闪烁效果 */
+.search-focus-flash {
+  animation: searchFlash 0.5s ease-out;
+}
+
+@keyframes searchFlash {
+  0% { box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.5); }
+  100% { box-shadow: none; }
+}
+
+/* 代码块内高亮 */
+span[data-search-highlight="match"] {
+  background-color: rgb(254 240 138); /* yellow-200 */
+  color: rgb(133 77 14);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+span[data-search-highlight="current"] {
+  background-color: rgb(253 186 116); /* orange-300 */
+  color: rgb(124 45 18);              /* orange-900 */
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 2px rgba(253, 186, 116, 0.3);
+}

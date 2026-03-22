@@ -7,14 +7,25 @@ import { useState, useCallback } from 'react';
 import { Copy, Check, ArrowUpToLine } from 'lucide-react';
 import { copyService } from '../services/copyService';
 import { useCodeEditor } from '../store/codeEditor';
+import { MatchRange } from '../services/searchEngine';
 
 interface CodeBlockProps {
   content: string;
   language?: string;
   variant: 'user' | 'assistant';
+  /** 搜索高亮：匹配区间数组 */
+  highlightRanges?: MatchRange[];
+  /** 搜索高亮：判断是否为当前焦点 */
+  isCurrentHighlight?: (rangeIndex: number) => boolean;
 }
 
-export function CodeBlock({ content, language, variant }: CodeBlockProps) {
+export function CodeBlock({ 
+  content, 
+  language, 
+  variant,
+  highlightRanges = [],
+  isCurrentHighlight = () => false,
+}: CodeBlockProps) {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [insertStatus, setInsertStatus] = useState<'idle' | 'inserted'>('idle');
   const { showEditor, setShowEditor, insertMode, insertCode } = useCodeEditor();
@@ -99,8 +110,63 @@ export function CodeBlock({ content, language, variant }: CodeBlockProps) {
 
       {/* 代码内容 */}
       <pre className="overflow-x-auto px-3 py-3 text-[13px] leading-6 font-mono">
-        <code>{content}</code>
+        <code>
+          {highlightRanges.length > 0 ? (
+            highlightCodeContent(content, highlightRanges, isCurrentHighlight)
+          ) : (
+            content
+          )}
+        </code>
       </pre>
     </div>
   );
+}
+
+/**
+ * 为代码内容应用高亮
+ * 保持代码块的 pre/code 结构不变
+ */
+function highlightCodeContent(
+  content: string,
+  ranges: MatchRange[],
+  isCurrentHighlight: (rangeIndex: number) => boolean
+): React.ReactNode {
+  if (ranges.length === 0) {
+    return content;
+  }
+
+  const fragments: React.ReactNode[] = [];
+  let lastEnd = 0;
+
+  ranges.forEach((range, idx) => {
+    // 高亮前的代码
+    if (range.start > lastEnd) {
+      fragments.push(content.slice(lastEnd, range.start));
+    }
+
+    const isCurrent = isCurrentHighlight(idx);
+
+    // 高亮代码
+    fragments.push(
+      <span
+        key={`code-hl-${idx}`}
+        className={isCurrent 
+          ? 'bg-orange-300 text-orange-900 rounded' 
+          : 'bg-yellow-200 text-yellow-900 rounded'
+        }
+        data-search-highlight={isCurrent ? 'current' : 'match'}
+      >
+        {content.slice(range.start, range.end)}
+      </span>
+    );
+
+    lastEnd = range.end;
+  });
+
+  // 剩余代码
+  if (lastEnd < content.length) {
+    fragments.push(content.slice(lastEnd));
+  }
+
+  return fragments;
 }
