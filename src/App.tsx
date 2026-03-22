@@ -9,6 +9,7 @@ import { ExportDialog } from "./components/export/ExportDialog";
 import { ReviewDialog } from "./components/review/ReviewDialog";
 import { NetworkStatusIndicator } from "./components/NetworkStatusIndicator";
 import { FriendlyErrorCard } from "./components/FriendlyErrorCard";
+import WaveformVisualizer from "./components/WaveformVisualizer";
 import { invoke } from "@tauri-apps/api/core";
 import { recognizeSpeech, getSpeechErrorMessage } from "./services/speechRecognition";
 import {
@@ -943,7 +944,7 @@ function App() {
           const config = await loadConfig();
           const recognizingMsgId = messages[messages.length - 1]?.id || generateId();
 
-          const text = await recognizeSpeech(audioData, config, {
+          const result = await recognizeSpeech(audioData, config, {
             onRetry: (state) => {
               if (state.isRetrying) {
                 setMessages(prev => prev.map(m =>
@@ -957,6 +958,7 @@ function App() {
               }
             },
           });
+          const text = result.text;
 
           if (text.trim()) {
             setMessages((prev) => prev.slice(0, -1));
@@ -1016,9 +1018,10 @@ function App() {
       try {
         // 面试官模式使用麦克风，其他模式使用系统音频
         const audioSource = promptMode === 'interviewer' ? 'microphone' : 'system';
-        await invoke("start_audio_recording", { audioSource });
+        // 使用带事件发射的录音命令，用于波形可视化
+        await invoke("start_audio_recording_with_events", { audioSource });
         setIsRecording(true);
-            
+
         const listeningText = promptMode === 'interviewer' 
           ? "🎤 正在聆听麦克风...\n再次点击 🎤 停止录音"
           : "🎤 正在聆听电脑音频...\n再次点击 🎤 停止录音";
@@ -1608,6 +1611,16 @@ function App() {
           >
             {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
+
+          {/* 音量波形可视化 */}
+          <WaveformVisualizer
+            mode="bar"
+            width={120}
+            height={36}
+            isActive={isRecording}
+            sensitivity={2.0}
+            className="rounded-lg"
+          />
           
           <textarea
             value={input}

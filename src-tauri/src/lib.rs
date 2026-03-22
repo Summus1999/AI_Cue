@@ -32,6 +32,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // 音频命令
             commands::start_audio_recording,
+            commands::start_audio_recording_with_events,
             commands::stop_audio_recording,
             commands::nls_recognize_speech,
             // 统一 AI 命令（新增）

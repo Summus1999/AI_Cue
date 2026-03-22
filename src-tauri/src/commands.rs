@@ -17,6 +17,18 @@ pub fn start_audio_recording(audio_source: Option<String>) -> Result<(), String>
     crate::audio::start_recording_with_source(audio_source.as_deref())
 }
 
+// 开始录音（带 AppHandle，用于波形可视化事件发射）
+#[tauri::command]
+pub fn start_audio_recording_with_events(
+    app_handle: AppHandle,
+    audio_source: Option<String>,
+) -> Result<(), String> {
+    crate::audio::start_recording_with_source_and_handle(
+        audio_source.as_deref(),
+        Some(app_handle),
+    )
+}
+
 // 停止录音并返回 WAV 数据
 #[tauri::command]
 pub fn stop_audio_recording() -> Result<Vec<u8>, String> {

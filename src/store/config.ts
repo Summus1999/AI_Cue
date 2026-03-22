@@ -1,6 +1,19 @@
 // 配置管理 - 使用 Tauri Store 插件持久化（带 localStorage 备用）
 import { Store } from '@tauri-apps/plugin-store';
 
+// ==================== 填充词过滤配置 ====================
+
+export interface FillerWordFilterConfig {
+  /** 总开关（默认 true，仅在 tech 模式下生效） */
+  enabled: boolean;
+  /** 用户自定义填充词 */
+  customWords?: string[];
+  /** 支持的模板白名单（如 ['tech', 'tech-cn']），为空则按默认策略（仅 tech 模式） */
+  enabledTemplates?: string[];
+  /** 语言标识，用于选择默认规则集 */
+  locale?: string;
+}
+
 // ==================== Provider 配置类型（新增）====================
 
 export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
@@ -276,6 +289,8 @@ export interface AppConfig {
   contextWindowSize: number;
   // 面试背景配置
   interviewBackground: InterviewBackground;
+  // 填充词过滤配置
+  fillerWordFilter: FillerWordFilterConfig;
 }
 
 // 默认配置
@@ -326,6 +341,11 @@ export const DEFAULT_CONFIG: AppConfig = {
     position: '',
     jd: '',
     resume: '',
+  },
+  // 填充词过滤配置
+  fillerWordFilter: {
+    enabled: true,
+    customWords: [],
   },
 };
 
@@ -506,6 +526,7 @@ export async function loadConfig(): Promise<AppConfig> {
     // 新格式配置
     const contextWindowSize = await store.get<number>('contextWindowSize');
     const interviewBackground = await store.get<InterviewBackground>('interviewBackground');
+    const fillerWordFilter = await store.get<FillerWordFilterConfig>('fillerWordFilter');
 
     const customPromptMode = await store.get<PromptMode>('customPromptMode');
 
@@ -529,6 +550,7 @@ export async function loadConfig(): Promise<AppConfig> {
       window: windowConfig || DEFAULT_CONFIG.window,
       contextWindowSize: contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
       interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
+      fillerWordFilter: fillerWordFilter || DEFAULT_CONFIG.fillerWordFilter,
     };
 
     // 补充 customPromptMode 默认值
@@ -582,6 +604,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('window', config.window);
     await store.set('contextWindowSize', config.contextWindowSize);
     await store.set('interviewBackground', config.interviewBackground);
+    await store.set('fillerWordFilter', config.fillerWordFilter);
     await store.save();
     console.log('配置已保存到 Tauri Store');
   } catch (error) {

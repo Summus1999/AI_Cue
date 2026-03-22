@@ -22,6 +22,10 @@ pub fn start_recording_with_source(source: Option<&str>) -> Result<(), String> {
     recorder::start_recording_with_source(source).map_err(|error| error.to_string())
 }
 
+pub fn start_recording_with_source_and_handle(source: Option<&str>, app_handle: Option<tauri::AppHandle>) -> Result<(), String> {
+    recorder::start_recording_with_source_and_handle(source, app_handle).map_err(|error| error.to_string())
+}
+
 pub fn stop_recording() -> Result<Vec<u8>, String> {
     let captured = recorder::stop_recording().map_err(|error| error.to_string())?;
 
