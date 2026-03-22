@@ -588,7 +588,7 @@ function App() {
           setIsInterviewEnded(false);
         }
       } catch (error) {
-        console.error('启动编排失败:', error);
+        console.error('[Bootstrap] 启动编排失败:', error);
       }
     }
 

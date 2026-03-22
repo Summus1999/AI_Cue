@@ -361,9 +361,8 @@ async function getStore(): Promise<Store | null> {
   if (!store) {
     try {
       store = await Store.load('config.json');
-      console.log('Tauri Store 加载成功');
     } catch (err) {
-      console.warn('Tauri Store 加载失败，切换到 localStorage:', err);
+      console.warn('[Config] Tauri Store 加载失败，切换到 localStorage');
       useLocalStorage = true;
       return null;
     }
@@ -390,7 +389,6 @@ function migrateInterviewBackground(bg: any): InterviewBackground {
 function migrateConfig(parsed: any): AppConfig {
   // 如果是旧配置格式（存在顶层 apiKey 且没有 providerConfigs），自动迁移
   if (parsed.apiKey !== undefined && !parsed.providerConfigs) {
-    console.log('检测到旧配置格式，自动迁移...');
     return {
       ...DEFAULT_CONFIG,
       activeProvider: 'qwen',
@@ -442,7 +440,6 @@ function loadFromLocalStorage(): AppConfig {
     const saved = localStorage.getItem('ai-cue-config');
     if (saved) {
       const parsed = JSON.parse(saved);
-      console.log('从 localStorage 加载配置:', parsed);
       const config = migrateConfig(parsed);
       // 补充 customPromptMode 默认值
       if (!config.customPromptMode) {
@@ -465,9 +462,8 @@ function loadFromLocalStorage(): AppConfig {
 function saveToLocalStorage(config: AppConfig): void {
   try {
     localStorage.setItem('ai-cue-config', JSON.stringify(config));
-    console.log('配置已保存到 localStorage');
   } catch (err) {
-    console.error('localStorage 保存失败:', err);
+    console.error('[Config] localStorage 保存失败:', err);
     throw err;
   }
 }
@@ -481,8 +477,6 @@ export async function loadConfig(): Promise<AppConfig> {
   }
   
   try {
-    console.log('从 Tauri Store 加载配置...');
-    
     // 加载旧字段用于迁移检测
     const oldApiKey = await store.get<string>('apiKey');
     const oldModel = await store.get<string>('model');
@@ -505,7 +499,6 @@ export async function loadConfig(): Promise<AppConfig> {
 
     // 检测是否需要迁移（有旧字段但没有新字段）
     if (oldApiKey !== undefined && oldApiKey !== null && !providerConfigs) {
-      console.log('检测到旧 Store 格式，执行迁移...');
       return migrateConfig({
         apiKey: oldApiKey,
         model: oldModel,
@@ -606,9 +599,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('interviewBackground', config.interviewBackground);
     await store.set('fillerWordFilter', config.fillerWordFilter);
     await store.save();
-    console.log('配置已保存到 Tauri Store');
   } catch (error) {
-    console.error('保存到 Store 失败，尝试 localStorage:', error);
+    console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);
     useLocalStorage = true;
     saveToLocalStorage(config);
   }

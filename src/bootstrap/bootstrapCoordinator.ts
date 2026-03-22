@@ -226,7 +226,7 @@ export async function bootstrap(
       try {
         callback(snapshot);
       } catch (err) {
-        console.error('启动完成回调执行失败:', err);
+        console.error('[Bootstrap] 启动完成回调执行失败:', err);
       }
     }
 
