@@ -11,9 +11,10 @@ use chrono::Utc;
 // ==================== 音频命令 ====================
 
 // 开始录音
+// audio_source: "system" (loopback, 默认) | "microphone" (麦克风)
 #[tauri::command]
-pub fn start_audio_recording() -> Result<(), String> {
-    crate::audio::start_recording()
+pub fn start_audio_recording(audio_source: Option<String>) -> Result<(), String> {
+    crate::audio::start_recording_with_source(audio_source.as_deref())
 }
 
 // 停止录音并返回 WAV 数据

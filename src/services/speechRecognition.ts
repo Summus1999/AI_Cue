@@ -17,7 +17,7 @@ export interface SpeechRecognitionOptions {
 
 /**
  * Recognize speech from WAV bytes using Alibaba NLS one-shot API.
- * WAV must be 16kHz, mono, 16-bit. Max 60 seconds.
+ * WAV must be 16kHz, mono, 16-bit. Long audio is segmented in backend.
  * 支持自动重试机制。
  */
 export async function recognizeSpeech(

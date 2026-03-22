@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use windows::core::GUID;
 use windows::Win32::Media::Audio::{
-    eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
+    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
     WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVE_FORMAT_PCM,
 };
@@ -105,6 +105,86 @@ pub fn capture_default_loopback(
 
     initialize_result
         .map_err(|error| AudioError::Wasapi(format!("初始化 loopback 客户端失败: {error}")))?;
+
+    let capture_client: IAudioCaptureClient = unsafe {
+        audio_client
+            .GetService()
+            .map_err(|error| AudioError::Wasapi(format!("获取捕获服务失败: {error}")))?
+    };
+
+    unsafe {
+        audio_client
+            .Start()
+            .map_err(|error| AudioError::Wasapi(format!("启动录音失败: {error}")))?;
+    }
+
+    ready_tx
+        .send(Ok(source_format.audio))
+        .map_err(|error| AudioError::Synchronization(error.to_string()))?;
+
+    let result = capture_packets(&audio_client, &capture_client, source_format, stop_rx);
+
+    unsafe {
+        let _ = audio_client.Stop();
+    }
+
+    result
+}
+
+/// 麦克风音频采集（用于面试官模式）
+/// 与 capture_default_loopback 结构相同，差异在于：
+/// 1. 获取录制设备（eCapture）而非播放设备（eRender）
+/// 2. 初始化时不使用 LOOPBACK 标志
+pub fn capture_default_microphone(
+    ready_tx: mpsc::Sender<Result<AudioFormat, AudioError>>,
+    stop_rx: mpsc::Receiver<()>,
+) -> Result<CapturedAudio, AudioError> {
+    let _com = ComGuard::initialize()?;
+
+    let enumerator: IMMDeviceEnumerator = unsafe {
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            .map_err(|error| AudioError::Wasapi(format!("创建设备枚举器失败: {error}")))?
+    };
+
+    // 获取默认录制设备（麦克风）而非播放设备
+    let device = unsafe {
+        enumerator
+            .GetDefaultAudioEndpoint(eCapture, eConsole)
+            .map_err(|_| AudioError::NoDefaultInputDevice)?
+    };
+
+    let audio_client: IAudioClient = unsafe {
+        device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|error| AudioError::Wasapi(format!("激活音频客户端失败: {error}")))?
+    };
+
+    let mix_format_ptr = unsafe {
+        audio_client
+            .GetMixFormat()
+            .map_err(|error| AudioError::Wasapi(format!("读取混音格式失败: {error}")))?
+    };
+
+    let source_format = parse_source_format(mix_format_ptr)?;
+
+    // 麦克风采集不需要 LOOPBACK 标志，使用 0
+    let initialize_result = unsafe {
+        audio_client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            0,  // 不使用 LOOPBACK 标志
+            BUFFER_DURATION_HNS,
+            0,
+            mix_format_ptr,
+            None,
+        )
+    };
+
+    unsafe {
+        CoTaskMemFree(Some(mix_format_ptr.cast()));
+    }
+
+    initialize_result
+        .map_err(|error| AudioError::Wasapi(format!("初始化麦克风客户端失败: {error}")))?;
 
     let capture_client: IAudioCaptureClient = unsafe {
         audio_client

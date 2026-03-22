@@ -4,12 +4,14 @@ interface TrendComparisonProps {
   trend: TrendData;
 }
 
-// 折线图颜色配置
+// 折线图颜色配置 - 五个维度
 const lineColors = {
-  overall: '#b45309',     // 综合 - 深琥珀色
-  completeness: '#059669', // 完整性 - 绿色
-  accuracy: '#2563eb',     // 准确性 - 蓝色
-  clarity: '#9333ea',      // 清晰度 - 紫色
+  overall: '#b45309',      // 综合 - 深琥珀色
+  confidence: '#059669',   // 面试自信度 - 绿色
+  professionalism: '#2563eb', // 技术专业度 - 蓝色
+  depth: '#9333ea',        // 技术深度 - 紫色
+  theory_practice: '#dc2626', // 理论实践 - 红色
+  tech_sensitivity: '#ea580c', // 技术敏感度 - 橙色
 };
 
 // SVG 折线图组件
@@ -35,8 +37,8 @@ function TrendLineChart({ sessions }: { sessions: TrendPoint[] }) {
   const getX = (index: number) => padding.left + index * xStep;
   const getY = (value: number) => padding.top + chartHeight - (value / yMax) * chartHeight;
   
-  // 生成路径
-  const generatePath = (dataKey: 'overall_score' | 'completeness' | 'accuracy' | 'clarity') => {
+  // 生成路径 - 五个维度
+  const generatePath = (dataKey: 'overall_score' | 'confidence' | 'professionalism' | 'depth' | 'theory_practice' | 'tech_sensitivity') => {
     if (sessions.length === 0) return '';
     
     const points = sessions.map((session, i) => {
@@ -93,36 +95,42 @@ function TrendLineChart({ sessions }: { sessions: TrendPoint[] }) {
         </g>
       ))}
       
-      {/* 折线 */}
+      {/* 折线 - 综合 + 五个维度 */}
       <path d={generatePath('overall_score')} fill="none" stroke={lineColors.overall} strokeWidth="2.5" />
-      <path d={generatePath('completeness')} fill="none" stroke={lineColors.completeness} strokeWidth="1.5" opacity={0.7} />
-      <path d={generatePath('accuracy')} fill="none" stroke={lineColors.accuracy} strokeWidth="1.5" opacity={0.7} />
-      <path d={generatePath('clarity')} fill="none" stroke={lineColors.clarity} strokeWidth="1.5" opacity={0.7} />
+      <path d={generatePath('confidence')} fill="none" stroke={lineColors.confidence} strokeWidth="1.5" opacity={0.7} />
+      <path d={generatePath('professionalism')} fill="none" stroke={lineColors.professionalism} strokeWidth="1.5" opacity={0.7} />
+      <path d={generatePath('depth')} fill="none" stroke={lineColors.depth} strokeWidth="1.5" opacity={0.7} />
+      <path d={generatePath('theory_practice')} fill="none" stroke={lineColors.theory_practice} strokeWidth="1.5" opacity={0.7} />
+      <path d={generatePath('tech_sensitivity')} fill="none" stroke={lineColors.tech_sensitivity} strokeWidth="1.5" opacity={0.7} />
       
       {/* 数据点 */}
       {sessions.map((session, i) => (
         <g key={session.session_id}>
           <circle cx={getX(i)} cy={getY(session.overall_score)} r="4" fill={lineColors.overall} />
-          <circle cx={getX(i)} cy={getY(session.completeness)} r="3" fill={lineColors.completeness} opacity={0.7} />
-          <circle cx={getX(i)} cy={getY(session.accuracy)} r="3" fill={lineColors.accuracy} opacity={0.7} />
-          <circle cx={getX(i)} cy={getY(session.clarity)} r="3" fill={lineColors.clarity} opacity={0.7} />
+          <circle cx={getX(i)} cy={getY(session.confidence)} r="3" fill={lineColors.confidence} opacity={0.7} />
+          <circle cx={getX(i)} cy={getY(session.professionalism)} r="3" fill={lineColors.professionalism} opacity={0.7} />
+          <circle cx={getX(i)} cy={getY(session.depth)} r="3" fill={lineColors.depth} opacity={0.7} />
+          <circle cx={getX(i)} cy={getY(session.theory_practice)} r="3" fill={lineColors.theory_practice} opacity={0.7} />
+          <circle cx={getX(i)} cy={getY(session.tech_sensitivity)} r="3" fill={lineColors.tech_sensitivity} opacity={0.7} />
         </g>
       ))}
     </svg>
   );
 }
 
-// 图例组件
+// 图例组件 - 五个维度
 function ChartLegend() {
   const legends = [
     { key: 'overall', label: '综合', color: lineColors.overall },
-    { key: 'completeness', label: '完整性', color: lineColors.completeness },
-    { key: 'accuracy', label: '准确性', color: lineColors.accuracy },
-    { key: 'clarity', label: '清晰度', color: lineColors.clarity },
+    { key: 'confidence', label: '自信度', color: lineColors.confidence },
+    { key: 'professionalism', label: '专业度', color: lineColors.professionalism },
+    { key: 'depth', label: '深度', color: lineColors.depth },
+    { key: 'theory_practice', label: '理论实践', color: lineColors.theory_practice },
+    { key: 'tech_sensitivity', label: '敏感度', color: lineColors.tech_sensitivity },
   ];
 
   return (
-    <div className="flex items-center justify-center gap-4 mt-2">
+    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 mt-2">
       {legends.map(({ key, label, color }) => (
         <div key={key} className="flex items-center gap-1.5">
           <span

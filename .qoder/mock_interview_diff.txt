@@ -1,0 +1,1078 @@
+diff --git a/TODO.md b/TODO.md
+index 305b945..6cb321c 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -83,33 +83,32 @@
+ 
+ ### P2 - 面试题库与模拟练习
+ 
+-40.模拟面试模式：AI 扮演面试官，按设定难度和方向提问 ❌
+-41.定时模式：每题限时作答，模拟真实面试节奏 ❌
+-42.练习记录统计（记录每个问题回答用时）❌
++40.模拟面试模式：AI扮演面试官，按用户给的岗位JD和简历进行提问 ❌
++41.练习记录统计（记录每个问题回答用时）❌
+ 
+ ### P2 - 面试复盘报告
+ 
+-43.面试结束后一键生成复盘报告入口 ✅
+-44.AI 对每个回答进行质量评分（完整性/准确性/表达清晰度）✅
+-45.自动标注知识盲点并生成改进建议 ✅
+-46.支持多次面试的进步趋势横向对比 ✅
+-47.复盘报告导出为 PDF ✅
++42.面试结束后一键生成复盘报告入口 ✅
++43.AI 对每个回答进行质量评分（完整性/准确性/表达清晰度）✅
++44.自动标注知识盲点并生成改进建议 ✅
++45.支持多次面试的进步趋势横向对比 ✅
++46.复盘报告导出为 PDF ✅
+ 
+ ### P2 - 语音分析仪表盘
+ 
+-48.填充词识别与忽略（"嗯"、"那个"、"就是"等无实意词语在面试中忽略，仅限设置prompt为面试助手和）❌
+-49.音量波形实时可视化 ❌
++47.填充词识别与忽略（"嗯"、"那个"、"就是"等无实意词语在面试中忽略，仅限设置prompt为面试助手和）❌
++48.音量波形实时可视化 ❌
+ 
+ ### P3 - 插件化模型接入架构
+ 
+-50.设计前后端统一的 Provider 插件规范 ❌
+-51.支持用户通过配置文件添加新模型提供商 ❌
+-52.构建社区模型适配插件的加载与管理机制 ❌
++49.设计前后端统一的 Provider 插件规范 ❌
++50.支持用户通过配置文件添加新模型提供商 ❌
++51.构建社区模型适配插件的加载与管理机制 ❌
+ 
+ ### 技术债务与体验优化
+ 
+-58.消息气泡内搜索功能 ❌
+-59.窗口拖拽吸附屏幕边缘 ❌
+-60.启动速度优化（懒加载设置面板等非核心模块）❌
+-61.自动更新检查与提示 ❌
+-62.日志系统完善（用于问题排查，用户可导出日志）❌
++52.消息气泡内搜索功能 ❌
++53.窗口拖拽吸附屏幕边缘 ❌
++54.启动速度优化（懒加载设置面板等非核心模块）❌
++55.自动更新检查与提示 ❌
++56.日志系统完善（用于问题排查，用户可导出日志）❌
+diff --git a/src/App.tsx b/src/App.tsx
+index c615100..3bec65b 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,5 +1,5 @@
+ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle } from "lucide-react";
++import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock } from "lucide-react";
+ import { SettingsPanel } from "./components/SettingsPanel";
+ import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
+ import SessionList from "./components/SessionList";
+@@ -19,7 +19,8 @@ import {
+   buildContextHistory,
+   StreamResult,
+ } from "./services/aiChat";
+-import { loadConfig, PromptMode, getPromptMode } from "./store/config";
++import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
++import { InterviewSetupDialog } from './components/InterviewSetupDialog';
+ import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
+ import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
+ import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
+@@ -43,6 +44,8 @@ interface Message {
+   isComplete?: boolean;
+   /** 新增：中断原因 */
+   interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
++  /** 用户回答该问题所用时间 (ms)，仅用于面试官模式 */
++  responseTimeMs?: number;
+ }
+ 
+ interface ScreenshotContext {
+@@ -143,6 +146,18 @@ function App() {
+   const [isInterviewStarted, setIsInterviewStarted] = useState(false);
+   const [isInterviewEnded, setIsInterviewEnded] = useState(false);
+   
++  // 面试设置对话框
++  const [showInterviewSetup, setShowInterviewSetup] = useState(false);
++  // 当前面试的 JD 和简历（用于复盘功能）
++  const [_interviewJd, setInterviewJd] = useState('');
++  const [_interviewResume, setInterviewResume] = useState('');
++  // 每题计时（用于复盘功能）
++  const [questionTimings, setQuestionTimings] = useState<QuestionTiming[]>([]);
++  const [currentQuestionAskedAt, setCurrentQuestionAskedAt] = useState<number | null>(null);
++  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
++  // 实时计时器显示
++  const [elapsedSeconds, setElapsedSeconds] = useState(0);
++  
+   // Prompt 模式状态
+   const [promptMode, setPromptMode] = useState<PromptMode>('assistant');
+   
+@@ -200,6 +215,7 @@ function App() {
+     userContent: string,
+     requestText: string,
+     imageBase64?: string,
++    responseTimeMs?: number,
+   ) => {
+     // 在添加新消息之前，先捕获当前消息列表用于构建上下文历史
+     const currentMessages = [...messages];
+@@ -212,6 +228,7 @@ function App() {
+         role: "user",
+         content: userContent,
+         timestamp: Date.now(),
++        responseTimeMs, // 附加回答用时
+       },
+       {
+         id: assistantId,
+@@ -282,6 +299,11 @@ function App() {
+           if (promptMode === 'interviewer' && !isInterviewStarted) {
+             setIsInterviewStarted(true);
+           }
++          // 面试官模式：AI 消息完成时开始计时
++          if (promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && isComplete) {
++            setCurrentQuestionAskedAt(Date.now());
++            setElapsedSeconds(0);
++          }
+           // 保存到数据库
+           if (sessionId && fullAssistantContent) {
+             saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
+@@ -434,6 +456,17 @@ function App() {
+     };
+   }, [isRecording]);
+ 
++  // 实时计时器：面试官模式下显示思考用时
++  useEffect(() => {
++    if (!currentQuestionAskedAt || !isInterviewStarted || isInterviewEnded) {
++      return;
++    }
++    const timer = setInterval(() => {
++      setElapsedSeconds(Math.floor((Date.now() - currentQuestionAskedAt) / 1000));
++    }, 1000);
++    return () => clearInterval(timer);
++  }, [currentQuestionAskedAt, isInterviewStarted, isInterviewEnded]);
++
+   // 启动时恢复上次会话
+   useEffect(() => {
+     async function restoreLastSession() {
+@@ -559,12 +592,31 @@ function App() {
+ 
+     const question = input.trim();
+     setInput("");
++    
++    // 面试官模式：用户发送消息时停止计时并记录
++    let responseTimeMs: number | undefined = undefined;
++    if (promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentQuestionAskedAt) {
++      const now = Date.now();
++      const durationMs = now - currentQuestionAskedAt;
++      responseTimeMs = durationMs;
++      const lastAIMessage = messages.filter(m => m.role === 'assistant').pop();
++      setQuestionTimings(prev => [...prev, {
++        questionIndex: currentQuestionIndex,
++        questionContent: lastAIMessage?.content?.substring(0, 100) || '',
++        askedAt: currentQuestionAskedAt,
++        answeredAt: now,
++        durationMs,
++      }]);
++      setCurrentQuestionIndex(prev => prev + 1);
++      setCurrentQuestionAskedAt(null);
++    }
++    
+     const imageBase64 = latestScreenshotContext?.imageBase64;
+     const requestText = imageBase64
+       ? buildScreenshotFollowUpPrompt(question)
+       : question;
+ 
+-    await requestAssistantReply(question, requestText, imageBase64);
++    await requestAssistantReply(question, requestText, imageBase64, responseTimeMs);
+   };
+ 
+   // 新建会话（清空消息并重置会话 ID，延迟创建）
+@@ -574,6 +626,13 @@ function App() {
+     setLatestScreenshotContext(null);
+     setIsInterviewStarted(false);
+     setIsInterviewEnded(false);
++    // 清理计时状态
++    setQuestionTimings([]);
++    setCurrentQuestionAskedAt(null);
++    setCurrentQuestionIndex(0);
++    setElapsedSeconds(0);
++    setInterviewJd('');
++    setInterviewResume('');
+   };
+ 
+   // 获取最新 AI 回答（用于紧凑模式显示）
+@@ -642,6 +701,39 @@ function App() {
+     }
+   };
+ 
++  // 面试设置提交处理
++  const handleInterviewSetupSubmit = async (jd: string, resume: string) => {
++    setInterviewJd(jd);
++    setInterviewResume(resume);
++    setShowInterviewSetup(false);
++    setIsInterviewStarted(true);
++    setQuestionTimings([]);
++    setCurrentQuestionIndex(0);
++    setCurrentQuestionAskedAt(null);
++    setElapsedSeconds(0);
++    
++    // 先清空历史消息，确保新面试不受旧消息影响
++    setMessages([]);
++    setCurrentSessionId(null);
++    setSessionResumeTimestamp(Date.now());
++    
++    // 更新 config 的 interviewBackground，使其注入 prompt
++    const config = await loadConfig();
++    await saveConfig({
++      ...config,
++      interviewBackground: {
++        ...config.interviewBackground,
++        enabled: true,
++        jd,
++        resume,
++      }
++    });
++    
++    // 自动发送面试开始消息，触发 AI 面试官的开场白
++    const triggerMessage = "你好面试官，我已准备好，请开始面试。";
++    await requestAssistantReply(triggerMessage, triggerMessage, undefined);
++  };
++
+   // 关闭复盘对话框
+   const handleCloseReview = () => {
+     setReviewDialogOpen(false);
+@@ -682,9 +774,16 @@ function App() {
+       setPromptMode((session.prompt_mode as PromptMode) || 'assistant');
+       // 记录切换时间戳（用于上下文隔离）
+       setSessionResumeTimestamp(Date.now());
+-      // 默认为"面试未开始"状态
++      // 默认为“面试未开始”状态
+       setIsInterviewStarted(false);
+       setIsInterviewEnded(false);
++      // 清理计时状态
++      setQuestionTimings([]);
++      setCurrentQuestionAskedAt(null);
++      setCurrentQuestionIndex(0);
++      setElapsedSeconds(0);
++      setInterviewJd('');
++      setInterviewResume('');
+       setCurrentView('main');
+     } catch (error) {
+       console.error('Failed to load session messages:', error);
+@@ -732,6 +831,13 @@ function App() {
+     setIsInterviewEnded(false);
+     // 记录新建时间戳（用于上下文隔离）
+     setSessionResumeTimestamp(Date.now());
++    // 清理计时状态
++    setQuestionTimings([]);
++    setCurrentQuestionAskedAt(null);
++    setCurrentQuestionIndex(0);
++    setElapsedSeconds(0);
++    setInterviewJd('');
++    setInterviewResume('');
+     setCurrentView('main');
+   };
+ 
+@@ -1078,6 +1184,16 @@ function App() {
+     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
+   };
+ 
++  // 格式化思考用时（面试官模式）
++  const formatThinkingDuration = (seconds: number): string => {
++    const mins = Math.floor(seconds / 60);
++    const secs = seconds % 60;
++    if (mins > 0) {
++      return `${mins}分${secs.toString().padStart(2, '0')}秒`;
++    }
++    return `${secs}秒`;
++  };
++
+   // 紧凑模式渲染
+   if (compactMode && currentView === 'main') {
+     return (
+@@ -1147,9 +1263,9 @@ function App() {
+             <Download className="w-3.5 h-3.5 text-amber-700" />
+           </button>
+           {/* 面试官模式：开始面试按钮 */}
+-          {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && currentSessionId && (
++          {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && (
+             <button
+-              onClick={() => setIsInterviewStarted(true)}
++              onClick={() => setShowInterviewSetup(true)}
+               className="flex items-center justify-center px-2 h-6 rounded hover:bg-green-200/50 transition-colors duration-150 gap-1"
+               title="开始面试"
+             >
+@@ -1296,6 +1412,13 @@ function App() {
+                 isGenerating={isGenerating}
+                 onContinue={() => handleContinueGeneration(message.id)}
+               />
++              {/* 面试官模式：用户消息显示回答用时 */}
++              {message.role === 'user' && message.responseTimeMs && promptMode === 'interviewer' && (
++                <div className="mt-1 text-[10px] text-amber-600 flex items-center gap-1">
++                  <Clock className="w-3 h-3" />
++                  <span>用时 {formatThinkingDuration(Math.floor(message.responseTimeMs / 1000))}</span>
++                </div>
++              )}
+               {/* 友好错误卡片 */}
+               {networkResilience.activeErrors[message.id] && (
+                 <div className="mt-2">
+@@ -1328,6 +1451,14 @@ function App() {
+             </div>
+           </div>
+         )}
++        
++        {/* 面试官模式：实时思考计时器 */}
++        {promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentQuestionAskedAt && !isGenerating && (
++          <div className="flex items-center gap-2 px-4 py-2 text-amber-400 text-sm">
++            <Clock className="w-4 h-4 animate-pulse" />
++            <span>思考用时: {formatThinkingDuration(elapsedSeconds)}</span>
++          </div>
++        )}
+         </div>
+ 
+         {/* 代码编辑器侧栏 */}
+@@ -1470,8 +1601,16 @@ function App() {
+           onClose={handleCloseReview}
+           sessionId={reviewSessionId}
+           sessionTitle={reviewSessionTitle}
++          questionTimings={questionTimings}
+         />
+       )}
++
++      {/* 面试设置对话框 */}
++      <InterviewSetupDialog
++        isOpen={showInterviewSetup}
++        onClose={() => setShowInterviewSetup(false)}
++        onSubmit={handleInterviewSetupSubmit}
++      />
+     </div>
+   );
+ }
+diff --git a/src/components/InterviewSetupDialog.tsx b/src/components/InterviewSetupDialog.tsx
+new file mode 100644
+index 0000000..b4f797c
+--- /dev/null
++++ b/src/components/InterviewSetupDialog.tsx
+@@ -0,0 +1,165 @@
++import { useState, useCallback, useEffect, useRef } from 'react';
++import { X, Briefcase, FileText } from 'lucide-react';
++
++interface InterviewSetupDialogProps {
++  isOpen: boolean;
++  onClose: () => void;
++  onSubmit: (jd: string, resume: string) => void;
++}
++
++export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSetupDialogProps) {
++  const [jd, setJd] = useState('');
++  const [resume, setResume] = useState('');
++  const [jdError, setJdError] = useState('');
++  const jdRef = useRef<HTMLTextAreaElement>(null);
++
++  // 打开对话框时聚焦到 JD 输入框
++  useEffect(() => {
++    if (isOpen) {
++      setTimeout(() => jdRef.current?.focus(), 100);
++    }
++  }, [isOpen]);
++
++  // 重置表单
++  useEffect(() => {
++    if (isOpen) {
++      setJd('');
++      setResume('');
++      setJdError('');
++    }
++  }, [isOpen]);
++
++  // 验证并提交
++  const handleSubmit = useCallback(() => {
++    const trimmedJd = jd.trim();
++    if (!trimmedJd) {
++      setJdError('请输入岗位 JD');
++      jdRef.current?.focus();
++      return;
++    }
++    setJdError('');
++    onSubmit(trimmedJd, resume.trim());
++  }, [jd, resume, onSubmit]);
++
++  // 键盘事件处理
++  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
++    // Ctrl+Enter 快捷提交
++    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
++      e.preventDefault();
++      handleSubmit();
++    }
++    // Escape 关闭
++    if (e.key === 'Escape') {
++      e.preventDefault();
++      onClose();
++    }
++  }, [handleSubmit, onClose]);
++
++  // 点击遮罩层关闭
++  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
++    if (e.target === e.currentTarget) {
++      onClose();
++    }
++  }, [onClose]);
++
++  if (!isOpen) return null;
++
++  return (
++    <div 
++      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
++      onClick={handleBackdropClick}
++      onKeyDown={handleKeyDown}
++    >
++      <div className="bg-amber-50 rounded-xl shadow-xl w-[560px] max-h-[90vh] flex flex-col border border-amber-200">
++        {/* 标题栏 */}
++        <div className="flex items-center justify-between p-4 border-b border-amber-200 flex-shrink-0">
++          <div className="flex items-center gap-2">
++            <Briefcase className="w-4 h-4 text-amber-600" />
++            <h3 className="text-sm font-medium text-amber-900">面试设置</h3>
++          </div>
++          <button
++            onClick={onClose}
++            className="p-1 hover:bg-amber-100 rounded transition-colors"
++          >
++            <X className="w-4 h-4 text-amber-600" />
++          </button>
++        </div>
++
++        {/* 内容区 */}
++        <div className="flex-1 overflow-y-auto p-4 space-y-4">
++          {/* 岗位 JD */}
++          <div>
++            <label className="flex items-center gap-1.5 text-xs font-medium text-amber-800 mb-2">
++              <FileText className="w-3.5 h-3.5" />
++              岗位 JD
++              <span className="text-red-500">*</span>
++            </label>
++            <textarea
++              ref={jdRef}
++              value={jd}
++              onChange={(e) => {
++                setJd(e.target.value);
++                if (jdError) setJdError('');
++              }}
++              placeholder="请粘贴完整的岗位描述（Job Description）..."
++              rows={6}
++              className={`w-full px-3 py-2 text-sm bg-amber-100/50 border rounded-lg resize-none placeholder:text-amber-400 text-amber-900 focus:outline-none focus:ring-2 transition-colors ${
++                jdError 
++                  ? 'border-red-400 focus:ring-red-300' 
++                  : 'border-amber-200 focus:ring-amber-300 focus:border-amber-300'
++              }`}
++            />
++            {jdError && (
++              <p className="mt-1 text-xs text-red-500">{jdError}</p>
++            )}
++          </div>
++
++          {/* 个人简历 */}
++          <div>
++            <label className="flex items-center gap-1.5 text-xs font-medium text-amber-800 mb-2">
++              <FileText className="w-3.5 h-3.5" />
++              个人简历
++              <span className="text-amber-400 text-[10px] ml-1">（可选）</span>
++            </label>
++            <textarea
++              value={resume}
++              onChange={(e) => setResume(e.target.value)}
++              placeholder="请粘贴你的简历内容（文字版）..."
++              rows={8}
++              className="w-full px-3 py-2 text-sm bg-amber-100/50 border border-amber-200 rounded-lg resize-none placeholder:text-amber-400 text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-300 transition-colors"
++            />
++          </div>
++
++          {/* 提示文字 */}
++          <div className="text-xs text-amber-600/80 bg-amber-100/30 rounded-lg p-3">
++            <p>
++              <span className="font-medium">提示：</span>
++              填写完整的 JD 和简历后，AI 面试官将根据岗位要求针对性地进行提问，
++              并结合你的项目经历深入追问。
++            </p>
++            <p className="mt-1 text-amber-500">
++              快捷键：Ctrl+Enter 开始面试，Esc 关闭
++            </p>
++          </div>
++        </div>
++
++        {/* 底部按钮 */}
++        <div className="flex items-center justify-end gap-2 p-4 border-t border-amber-200 flex-shrink-0">
++          <button
++            onClick={onClose}
++            className="px-4 py-2 text-xs text-amber-700 hover:bg-amber-100 rounded-lg transition-colors"
++          >
++            取消
++          </button>
++          <button
++            onClick={handleSubmit}
++            className="px-4 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5"
++          >
++            <Briefcase className="w-3.5 h-3.5" />
++            开始面试
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/SettingsPanel.tsx b/src/components/SettingsPanel.tsx
+index fb44ae0..9ad15a7 100644
+--- a/src/components/SettingsPanel.tsx
++++ b/src/components/SettingsPanel.tsx
+@@ -285,103 +285,6 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
+             {/* 分隔线 */}
+             <div className="border-t border-amber-200" />
+ 
+-            {/* 面试背景设置 */}
+-            <div className="space-y-3">
+-              <div className="flex items-center justify-between">
+-                <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+-                  面试背景
+-                </label>
+-                {/* 启用开关 */}
+-                <button
+-                  type="button"
+-                  onClick={() => {
+-                    setConfig(prev => ({
+-                      ...prev,
+-                      interviewBackground: {
+-                        ...prev.interviewBackground,
+-                        enabled: !prev.interviewBackground.enabled,
+-                      }
+-                    }));
+-                  }}
+-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+-                    config.interviewBackground?.enabled ? 'bg-amber-600' : 'bg-gray-300'
+-                  }`}
+-                >
+-                  <span
+-                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
+-                      config.interviewBackground?.enabled ? 'translate-x-5' : 'translate-x-1'
+-                    }`}
+-                  />
+-                </button>
+-              </div>
+-
+-              {/* 面试背景表单 */}
+-              <div className={`space-y-3 ${config.interviewBackground?.enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+-                {/* 公司名称 */}
+-                <div className="space-y-1">
+-                  <label className="text-xs text-amber-600">公司名称</label>
+-                  <input
+-                    type="text"
+-                    value={config.interviewBackground?.company || ''}
+-                    onChange={(e) => setConfig(prev => ({
+-                      ...prev,
+-                      interviewBackground: {
+-                        ...prev.interviewBackground,
+-                        company: e.target.value,
+-                      }
+-                    }))}
+-                    placeholder="例如：字节跳动"
+-                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
+-                  />
+-                </div>
+-
+-                {/* 目标岗位 */}
+-                <div className="space-y-1">
+-                  <label className="text-xs text-amber-600">目标岗位</label>
+-                  <input
+-                    type="text"
+-                    value={config.interviewBackground?.position || ''}
+-                    onChange={(e) => setConfig(prev => ({
+-                      ...prev,
+-                      interviewBackground: {
+-                        ...prev.interviewBackground,
+-                        position: e.target.value,
+-                      }
+-                    }))}
+-                    placeholder="例如：高级前端工程师"
+-                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500"
+-                  />
+-                </div>
+-
+-                {/* JD 要点 */}
+-                <div className="space-y-1">
+-                  <label className="text-xs text-amber-600">JD 要点</label>
+-                  <textarea
+-                    value={config.interviewBackground?.jdHighlights || ''}
+-                    onChange={(e) => setConfig(prev => ({
+-                      ...prev,
+-                      interviewBackground: {
+-                        ...prev.interviewBackground,
+-                        jdHighlights: e.target.value,
+-                      }
+-                    }))}
+-                    placeholder="粘贴职位描述的关键要求，例如：
+-- 精通 React/Vue，有大型项目经验
+-- 熟悉性能优化与监控体系
+-- 有跨端开发经验优先"
+-                    rows={4}
+-                    className="w-full px-3 py-2 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-500 resize-none"
+-                  />
+-                </div>
+-
+-                {/* 提示信息 */}
+-                <div className="flex items-start gap-1.5 text-[10px] text-amber-500">
+-                  <span>💡</span>
+-                  <span>开启后，以上信息将自动注入系统 Prompt，帮助 AI 更贴合公司和岗位要求生成回答</span>
+-                </div>
+-              </div>
+-            </div>
+-
+             {/* NLS 语音识别配置 */}
+             <div className="space-y-3">
+               <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+diff --git a/src/components/review/ReviewDialog.tsx b/src/components/review/ReviewDialog.tsx
+index 42f6a00..0336f0e 100644
+--- a/src/components/review/ReviewDialog.tsx
++++ b/src/components/review/ReviewDialog.tsx
+@@ -1,17 +1,19 @@
+ import { useState, useCallback, useEffect } from 'react';
+ import { X, Play, RefreshCw, FileDown, AlertCircle } from 'lucide-react';
+ import { useReviewStore } from '../../store/review';
+-import { loadConfig } from '../../store/config';
++import { loadConfig, QuestionTiming } from '../../store/config';
+ import { ReviewReport as ReviewReportComponent } from './ReviewReport';
+ import { TrendComparison } from './TrendComparison';
+ import { getSessionReviewStatus } from '../../services/reviewService';
+ import { exportService } from '../../services/export/exportService';
++import type { TimingStats } from '../../types/review';
+ 
+ interface ReviewDialogProps {
+   isOpen: boolean;
+   onClose: () => void;
+   sessionId: string;
+   sessionTitle: string;
++  questionTimings?: QuestionTiming[];  // 每题用时数据
+ }
+ 
+ // 阶段描述映射
+@@ -23,7 +25,32 @@ const phaseDescriptions: Record<string, string> = {
+   failed: '复盘失败',
+ };
+ 
+-export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle }: ReviewDialogProps) {
++// 计算用时统计数据
++function computeTimingStats(questionTimings?: QuestionTiming[]): TimingStats | undefined {
++  if (!questionTimings || questionTimings.length === 0) {
++    return undefined;
++  }
++
++  const durations = questionTimings.map(t => t.durationMs);
++  const totalDurationMs = durations.reduce((a, b) => a + b, 0);
++  const averageDurationMs = Math.round(totalDurationMs / durations.length);
++  const fastestDurationMs = Math.min(...durations);
++  const slowestDurationMs = Math.max(...durations);
++
++  return {
++    totalDurationMs,
++    averageDurationMs,
++    fastestDurationMs,
++    slowestDurationMs,
++    questionTimings: questionTimings.map(t => ({
++      questionIndex: t.questionIndex,
++      questionContent: t.questionContent,
++      durationMs: t.durationMs,
++    })),
++  };
++}
++
++export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questionTimings }: ReviewDialogProps) {
+   const {
+     reviewStatus,
+     progress,
+@@ -269,7 +296,11 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle }: Revie
+ 
+               {/* 内容区域 */}
+               {activeTab === 'report' && (
+-                <ReviewReportComponent report={report} onExportPdf={handleExportPdf} />
++                <ReviewReportComponent 
++                  report={report} 
++                  onExportPdf={handleExportPdf}
++                  timingStats={computeTimingStats(questionTimings)}
++                />
+               )}
+               {activeTab === 'trend' && (
+                 trend ? (
+diff --git a/src/components/review/ReviewReport.tsx b/src/components/review/ReviewReport.tsx
+index fc0ec13..adf6b0c 100644
+--- a/src/components/review/ReviewReport.tsx
++++ b/src/components/review/ReviewReport.tsx
+@@ -1,10 +1,38 @@
+ import { useState } from 'react';
+-import { ChevronDown, ChevronUp, AlertCircle, CheckCircle, Lightbulb } from 'lucide-react';
+-import type { ReviewReport, MessageScore, SessionInsight, InsightType } from '../../types/review';
++import { ChevronDown, ChevronUp, AlertCircle, CheckCircle, Lightbulb, Clock } from 'lucide-react';
++import type { ReviewReport, MessageScore, SessionInsight, InsightType, TimingStats } from '../../types/review';
+ 
+ interface ReviewReportProps {
+   report: ReviewReport;
+   onExportPdf?: () => void;
++  timingStats?: TimingStats;  // 回答用时统计
++}
++
++// 时间格式化工具函数
++function formatTimeDuration(ms: number): string {
++  const totalSeconds = Math.floor(ms / 1000);
++  const mins = Math.floor(totalSeconds / 60);
++  const secs = totalSeconds % 60;
++  if (mins > 0) {
++    return `${mins}分${secs.toString().padStart(2, '0')}秒`;
++  }
++  return `${secs}秒`;
++}
++
++// 根据用时获取颜色样式
++function getTimingColorClass(durationMs: number): string {
++  const seconds = durationMs / 1000;
++  if (seconds < 60) return 'text-green-600 bg-green-100';
++  if (seconds <= 180) return 'text-amber-600 bg-amber-100';
++  return 'text-red-500 bg-red-100';
++}
++
++// 根据用时获取柱状图颜色
++function getBarColorClass(durationMs: number): string {
++  const seconds = durationMs / 1000;
++  if (seconds < 60) return 'bg-green-500';
++  if (seconds <= 180) return 'bg-amber-500';
++  return 'bg-red-500';
+ }
+ 
+ // 雷达图组件
+@@ -254,7 +282,7 @@ function InsightSection({
+   );
+ }
+ 
+-export function ReviewReport({ report }: ReviewReportProps) {
++export function ReviewReport({ report, timingStats }: ReviewReportProps) {
+   const [showAllScores, setShowAllScores] = useState(false);
+ 
+   // 取前 5 条或全部
+@@ -301,6 +329,85 @@ export function ReviewReport({ report }: ReviewReportProps) {
+         type="knowledge_gap"
+       />
+ 
++      {/* 回答用时统计 */}
++      {timingStats && (
++        <div className="space-y-3">
++          <h4 className="flex items-center gap-2 text-sm font-medium text-amber-900">
++            <Clock className="w-4 h-4 text-amber-600" />
++            回答用时统计
++          </h4>
++
++          {/* 概览卡片区 */}
++          <div className="grid grid-cols-4 gap-2">
++            <div className="bg-amber-100/50 rounded-lg p-2 text-center">
++              <div className="text-xs text-amber-600">总时长</div>
++              <div className="text-sm font-bold text-amber-900">{formatTimeDuration(timingStats.totalDurationMs)}</div>
++            </div>
++            <div className="bg-amber-100/50 rounded-lg p-2 text-center">
++              <div className="text-xs text-amber-600">平均用时</div>
++              <div className="text-sm font-bold text-amber-900">{formatTimeDuration(timingStats.averageDurationMs)}</div>
++            </div>
++            <div className="bg-green-100/50 rounded-lg p-2 text-center">
++              <div className="text-xs text-green-600">最快</div>
++              <div className="text-sm font-bold text-green-700">{formatTimeDuration(timingStats.fastestDurationMs)}</div>
++            </div>
++            <div className="bg-red-100/50 rounded-lg p-2 text-center">
++              <div className="text-xs text-red-500">最慢</div>
++              <div className="text-sm font-bold text-red-600">{formatTimeDuration(timingStats.slowestDurationMs)}</div>
++            </div>
++          </div>
++
++          {/* 每题用时列表 */}
++          <div className="space-y-1.5">
++            {timingStats.questionTimings.map((timing, idx) => {
++              // 计算柱状图宽度比例（相对于最慢回答）
++              const barWidth = Math.max(10, (timing.durationMs / timingStats.slowestDurationMs) * 100);
++              
++              return (
++                <div key={idx} className="bg-amber-50 border border-amber-200/50 rounded-lg p-2">
++                  <div className="flex items-center justify-between mb-1">
++                    <div className="flex items-center gap-2 flex-1 min-w-0">
++                      <span className="text-xs text-amber-500 font-mono shrink-0">Q{timing.questionIndex + 1}</span>
++                      <span className="text-xs text-amber-700 truncate" title={timing.questionContent}>
++                        {timing.questionContent.length > 50 
++                          ? timing.questionContent.substring(0, 50) + '...' 
++                          : timing.questionContent}
++                      </span>
++                    </div>
++                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${getTimingColorClass(timing.durationMs)}`}>
++                      {formatTimeDuration(timing.durationMs)}
++                    </span>
++                  </div>
++                  {/* 水平柱状图 */}
++                  <div className="h-1.5 bg-amber-200/30 rounded-full overflow-hidden">
++                    <div 
++                      className={`h-full rounded-full transition-all ${getBarColorClass(timing.durationMs)}`}
++                      style={{ width: `${barWidth}%` }}
++                    />
++                  </div>
++                </div>
++              );
++            })}
++          </div>
++
++          {/* 用时说明 */}
++          <div className="flex items-center justify-center gap-4 text-[10px] text-amber-500">
++            <span className="flex items-center gap-1">
++              <span className="w-2 h-2 rounded-full bg-green-500"></span>
++              &lt;60秒 优秀
++            </span>
++            <span className="flex items-center gap-1">
++              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
++              60-180秒 正常
++            </span>
++            <span className="flex items-center gap-1">
++              <span className="w-2 h-2 rounded-full bg-red-500"></span>
++              &gt;180秒 较慢
++            </span>
++          </div>
++        </div>
++      )}
++
+       {/* 优势项 */}
+       <InsightSection
+         title="优势项"
+diff --git a/src/services/aiChat.ts b/src/services/aiChat.ts
+index d0fd26c..3e99854 100644
+--- a/src/services/aiChat.ts
++++ b/src/services/aiChat.ts
+@@ -67,20 +67,23 @@ export function buildScreenshotFollowUpPrompt(question: string): string {
+ }
+ 
+ function buildInterviewBackgroundPrompt(bg: InterviewBackground): string {
+-  const parts: string[] = ['---', '## 当前面试背景'];
++  const parts: string[] = ['---', '## 本次面试背景信息'];
+ 
+   if (bg.company) {
+-    parts.push(`- **目标公司**: ${bg.company}`);
++    parts.push(`### 目标公司\n${bg.company}`);
+   }
+   if (bg.position) {
+-    parts.push(`- **应聘岗位**: ${bg.position}`);
++    parts.push(`### 应聘岗位\n${bg.position}`);
+   }
+-  if (bg.jdHighlights) {
+-    parts.push(`- **JD 要点**:\n${bg.jdHighlights}`);
++  if (bg.jd) {
++    parts.push(`### 岗位JD\n${bg.jd}`);
++  }
++  if (bg.resume) {
++    parts.push(`### 候选人简历\n${bg.resume}`);
+   }
+ 
+   parts.push('');
+-  parts.push('请根据以上面试背景，调整你的回答风格和侧重点，使回答更加贴合该公司和岗位的要求。');
++  parts.push('请严格根据以上JD要求和候选人简历，有针对性地设计面试问题。优先考察JD中强调的技术能力，并结合简历中的项目经历进行追问。');
+ 
+   return parts.join('\n');
+ }
+@@ -101,8 +104,8 @@ function getSystemPrompt(config: AppConfig): string {
+ 
+   // 2. 注入面试背景（新增）
+   const bg = config.interviewBackground;
+-  if (bg?.enabled && (bg.company || bg.position || bg.jdHighlights)) {
+-    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD要点长度=${bg.jdHighlights?.length || 0}字符`);
++  if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
++    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
+     const bgSection = buildInterviewBackgroundPrompt(bg);
+     return `${basePrompt}\n\n${bgSection}`;
+   }
+diff --git a/src/store/config.ts b/src/store/config.ts
+index 5e6a9f0..aaa4ddf 100644
+--- a/src/store/config.ts
++++ b/src/store/config.ts
+@@ -110,8 +110,19 @@ export interface InterviewBackground {
+   company: string;
+   /** 目标岗位 */
+   position: string;
+-  /** JD 关键要点（支持多行文本） */
+-  jdHighlights: string;
++  /** 岗位 JD 全文 */
++  jd: string;
++  /** 个人简历文本 */
++  resume: string;
++}
++
++// 面试问题计时记录
++export interface QuestionTiming {
++  questionIndex: number;
++  questionContent: string;
++  askedAt: number;
++  answeredAt: number;
++  durationMs: number;
+ }
+ 
+ // 默认快捷键配置
+@@ -185,24 +196,40 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
+   {
+     id: 'behavioral',
+     name: '大厂面试官',
+-    description: 'AI扮演大厂面试官，按设定方向逐题提问',
++    description: 'AI扮演大厂面试官，按结构化流程进行面试',
+     mode: 'interviewer',
+-    prompt: `你是一位来自国内一线互联网大厂的资深技术面试官，正在对一位候选人进行正式的技术面试。
+-
+-面试规则：
+-1. 每次只提出一个问题，等待候选人回答后再继续
+-2. 根据候选人的回答质量决定是追问细节还是进入下一题
+-3. 面试覆盖以下领域，根据面试进展灵活调整比重：
+-   - 编程基础与算法（数据结构、复杂度分析、常见算法）
+-   - 系统设计与架构（高并发、分布式、缓存、消息队列）
+-   - 项目经验深挖（技术选型、难点攻克、性能优化）
+-   - 工程实践（代码规范、测试策略、CI/CD、故障排查）
+-   - 软技能（团队协作、技术决策、沟通表达）
+-4. 难度从中等开始，根据回答水平动态调整，优秀回答后提升难度，薄弱回答适当降低
+-5. 保持专业严谨但不刻板的面试风格，适当给予简短反馈
+-6. 不要直接给出标准答案，通过追问引导候选人深入思考
+-
+-请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后提出第一个面试问题。`,
++    prompt: `你是一位资深大厂技术面试官，拥有丰富的面试经验。你将按照以下结构化流程进行面试：
++
++## 面试流程
++
++### 第一阶段：开场（1个问题）
++- 简短寒暄，请候选人做自我介绍
++
++### 第二阶段：技术深挖（3-4个问题）
++- 根据JD要求的核心技术栈，深入考察技术理解和实践能力
++- 从基础概念到高级应用逐步深入
++- 根据回答质量动态调整难度
++
++### 第三阶段：项目经历（2-3个问题）
++- 根据简历中的项目经历，深挖技术方案和个人贡献
++- 关注：技术选型理由、遇到的挑战、解决方案、量化成果
++
++### 第四阶段：行为面试（1-2个问题）
++- 考察团队协作、问题解决、学习能力等软素质
++- 使用 STAR 法则引导候选人回答
++
++### 第五阶段：反问环节（1个问题）
++- 给候选人机会反问，面试结束
++
++## 面试规则
++1. 每次只问一个问题，等候选人回答后再提下一个
++2. 在提问时标注当前阶段和进度，如“【技术深挖 2/4】”
++3. 对候选人的回答给予简短反馈后再追问或进入下一个问题
++4. 根据候选人回答质量自适应调整后续问题的难度和方向
++5. 全程保持专业、友好但有一定压力的面试氛围
++6. 面试开始时先简单自我介绍作为面试官的身份
++
++请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后请候选人做自我介绍。`,
+   },
+   {
+     id: 'custom',
+@@ -296,7 +323,8 @@ export const DEFAULT_CONFIG: AppConfig = {
+     enabled: false,
+     company: '',
+     position: '',
+-    jdHighlights: '',
++    jd: '',
++    resume: '',
+   },
+ };
+ 
+@@ -322,6 +350,21 @@ async function getStore(): Promise<Store | null> {
+   return store;
+ }
+ 
++// 面试背景迁移：处理旧配置（jdHighlights → jd）
++function migrateInterviewBackground(bg: any): InterviewBackground {
++  if (!bg) {
++    return DEFAULT_CONFIG.interviewBackground;
++  }
++  return {
++    enabled: typeof bg.enabled === 'boolean' ? bg.enabled : false,
++    company: typeof bg.company === 'string' ? bg.company : '',
++    position: typeof bg.position === 'string' ? bg.position : '',
++    // 将旧的 jdHighlights 迁移到新的 jd 字段
++    jd: typeof bg.jd === 'string' ? bg.jd : (typeof bg.jdHighlights === 'string' ? bg.jdHighlights : ''),
++    resume: typeof bg.resume === 'string' ? bg.resume : '',
++  };
++}
++
+ // 配置迁移：从旧配置格式迁移到新格式
+ function migrateConfig(parsed: any): AppConfig {
+   // 如果是旧配置格式（存在顶层 apiKey 且没有 providerConfigs），自动迁移
+@@ -368,10 +411,7 @@ function migrateConfig(parsed: any): AppConfig {
+       ...(parsed.shortcutConfig || {}),
+     },
+     contextWindowSize: parsed.contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
+-    interviewBackground: {
+-      ...DEFAULT_CONFIG.interviewBackground,
+-      ...(parsed.interviewBackground || {}),
+-    },
++    interviewBackground: migrateInterviewBackground(parsed.interviewBackground),
+   };
+ }
+ 
+@@ -597,8 +637,11 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
+     if (typeof validatedConfig.interviewBackground.position !== 'string') {
+       validatedConfig.interviewBackground.position = '';
+     }
+-    if (typeof validatedConfig.interviewBackground.jdHighlights !== 'string') {
+-      validatedConfig.interviewBackground.jdHighlights = '';
++    if (typeof validatedConfig.interviewBackground.jd !== 'string') {
++      validatedConfig.interviewBackground.jd = '';
++    }
++    if (typeof validatedConfig.interviewBackground.resume !== 'string') {
++      validatedConfig.interviewBackground.resume = '';
+     }
+   }
+   
+diff --git a/src/types/review.ts b/src/types/review.ts
+index c75b731..4dcce34 100644
+--- a/src/types/review.ts
++++ b/src/types/review.ts
+@@ -18,6 +18,7 @@ export interface MessageScore {
+   overall_score: number;       // 加权综合分
+   feedback: string;            // AI 改进建议
+   topic_tags: string[];        // 话题标签
++  response_time_ms?: number;   // 回答用时（毫秒）
+   created_at: number;
+ }
+ 
+@@ -49,6 +50,21 @@ export interface DimensionAverages {
+   clarity: number;
+ }
+ 
++/**
++ * 回答用时统计
++ */
++export interface TimingStats {
++  totalDurationMs: number;       // 总面试时长
++  averageDurationMs: number;     // 平均每题用时
++  fastestDurationMs: number;     // 最快回答
++  slowestDurationMs: number;     // 最慢回答
++  questionTimings: Array<{
++    questionIndex: number;
++    questionContent: string;
++    durationMs: number;
++  }>;
++}
++
+ /**
+  * 复盘报告完整数据
+  */
+@@ -63,6 +79,7 @@ export interface ReviewReport {
+   completed_at: number;
+   message_count: number;
+   scored_count: number;
++  timing_stats?: TimingStats;    // 回答用时统计（可选）
+ }
+ 
+ /**
+diff --git a/vite.config.ts b/vite.config.ts
+index 076ec8e..c7683ce 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -8,6 +8,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+ // https://vitejs.dev/config/
+ export default defineConfig(async () => ({
+   plugins: [react()],
++  worker: {
++    format: 'es',
++  },
+   resolve: {
+     alias: {
+       "@": path.resolve(__dirname, "./src"),

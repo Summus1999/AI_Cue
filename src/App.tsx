@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock } from "lucide-react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutSettingsPanel } from "./components/ShortcutSettingsPanel";
 import SessionList from "./components/SessionList";
@@ -19,7 +19,8 @@ import {
   buildContextHistory,
   StreamResult,
 } from "./services/aiChat";
-import { loadConfig, PromptMode, getPromptMode } from "./store/config";
+import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
+import { InterviewSetupDialog } from './components/InterviewSetupDialog';
 import { initializeShortcuts, setShortcutHandlers } from "./services/shortcutManager";
 import { initWindowOpacity, enableHoverRestore, cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, initCompactMode, setCompactMode } from './services/windowManager';
 import { restoreWindowBounds, saveWindowBounds } from './services/windowManager';
@@ -32,6 +33,7 @@ import { useNetworkResilience, getWaitingHint } from './store/networkResilience'
 import { useCodeEditor } from './store/codeEditor';
 import { CodeEditorPanel } from './components/CodeEditorPanel';
 import { codeDetector } from './services/codeDetector';
+import { buildInterviewerRequestText } from './services/interviewFlow';
 
 // 消息类型定义
 interface Message {
@@ -43,6 +45,8 @@ interface Message {
   isComplete?: boolean;
   /** 新增：中断原因 */
   interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
+  /** 用户回答该问题所用时间 (ms)，仅用于面试官模式 */
+  responseTimeMs?: number;
 }
 
 interface ScreenshotContext {
@@ -143,11 +147,26 @@ function App() {
   const [isInterviewStarted, setIsInterviewStarted] = useState(false);
   const [isInterviewEnded, setIsInterviewEnded] = useState(false);
   
+  // 面试设置对话框
+  const [showInterviewSetup, setShowInterviewSetup] = useState(false);
+  // 当前面试的 JD 和简历（用于复盘功能）
+  const [_interviewJd, setInterviewJd] = useState('');
+  const [_interviewResume, setInterviewResume] = useState('');
+  // 每题计时（用于复盘功能）
+  const [questionTimings, setQuestionTimings] = useState<QuestionTiming[]>([]);
+  const [currentQuestionAskedAt, setCurrentQuestionAskedAt] = useState<number | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  // 实时计时器显示
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  
   // Prompt 模式状态
   const [promptMode, setPromptMode] = useState<PromptMode>('assistant');
   
   // 会话恢复/切换时间戳（用于上下文隔离）
   const [sessionResumeTimestamp, setSessionResumeTimestamp] = useState<number>(Date.now());
+  
+  // 最近一条 AI 消息完成的标记（用于触发面试计时等 side effect）
+  const [lastCompletedMessageId, setLastCompletedMessageId] = useState<string | null>(null);
   
   // 录音状态
   const [isRecording, setIsRecording] = useState(false);
@@ -196,10 +215,28 @@ function App() {
     );
   }, []);
 
+  const buildRequestTextByMode = useCallback((
+    answer: string,
+    baseMessages: Message[],
+  ) => {
+    if (promptMode !== 'interviewer' || isInterviewEnded) {
+      return answer;
+    }
+    return buildInterviewerRequestText({
+      answer,
+      questionIndex: currentQuestionIndex,
+      history: baseMessages.map((item) => ({
+        role: item.role,
+        content: item.content,
+      })),
+    });
+  }, [promptMode, isInterviewEnded, currentQuestionIndex]);
+
   const requestAssistantReply = useCallback(async (
     userContent: string,
     requestText: string,
     imageBase64?: string,
+    responseTimeMs?: number,
   ) => {
     // 在添加新消息之前，先捕获当前消息列表用于构建上下文历史
     const currentMessages = [...messages];
@@ -212,6 +249,7 @@ function App() {
         role: "user",
         content: userContent,
         timestamp: Date.now(),
+        responseTimeMs, // 附加回答用时
       },
       {
         id: assistantId,
@@ -278,9 +316,9 @@ function App() {
                 : msg
             )
           );
-          // 面试官模式下自动开始面试
-          if (promptMode === 'interviewer' && !isInterviewStarted) {
-            setIsInterviewStarted(true);
+          // AI 消息完成时触发 side effect（面试计时等逻辑移到 useEffect 中处理，避免闭包过期）
+          if (isComplete) {
+            setLastCompletedMessageId(assistantId);
           }
           // 保存到数据库
           if (sessionId && fullAssistantContent) {
@@ -368,7 +406,16 @@ function App() {
       setIsGenerating(false);
       networkResilience.setWaiting(null);
     }
-  }, [appendAssistantChunk, updateAssistantMessage, currentSessionId, networkResilience, codeEditor]);
+  }, [
+    appendAssistantChunk,
+    updateAssistantMessage,
+    currentSessionId,
+    networkResilience,
+    codeEditor,
+    messages,
+    promptMode,
+    sessionResumeTimestamp,
+  ]);
 
   // 判断是否在底部附近
   const isNearBottom = useCallback((element: HTMLDivElement) => {
@@ -433,6 +480,35 @@ function App() {
       }
     };
   }, [isRecording]);
+
+  // 实时计时器：面试官模式下显示思考用时
+  useEffect(() => {
+    if (!currentQuestionAskedAt || !isInterviewStarted || isInterviewEnded) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - currentQuestionAskedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [currentQuestionAskedAt, isInterviewStarted, isInterviewEnded]);
+
+  // 面试模式：AI 消息完成时的处理（独立 useEffect 避免闭包过期）
+  useEffect(() => {
+    if (!lastCompletedMessageId) return;
+    
+    if (promptMode === 'interviewer' && !isInterviewEnded) {
+      if (!isInterviewStarted) {
+        // 首次 AI 回复：标记面试开始
+        setIsInterviewStarted(true);
+      }
+      // 无论是首次还是后续，都开始计时（因为 AI 完成了一个提问）
+      setCurrentQuestionAskedAt(Date.now());
+      setElapsedSeconds(0);
+    }
+    
+    // 重置标记，避免重复触发
+    setLastCompletedMessageId(null);
+  }, [lastCompletedMessageId, promptMode, isInterviewStarted, isInterviewEnded]);
 
   // 启动时恢复上次会话
   useEffect(() => {
@@ -559,12 +635,31 @@ function App() {
 
     const question = input.trim();
     setInput("");
+    
+    // 面试官模式：用户发送消息时停止计时并记录
+    let responseTimeMs: number | undefined = undefined;
+    if (promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentQuestionAskedAt) {
+      const now = Date.now();
+      const durationMs = now - currentQuestionAskedAt;
+      responseTimeMs = durationMs;
+      const lastAIMessage = messages.filter(m => m.role === 'assistant').pop();
+      setQuestionTimings(prev => [...prev, {
+        questionIndex: currentQuestionIndex,
+        questionContent: lastAIMessage?.content?.substring(0, 100) || '',
+        askedAt: currentQuestionAskedAt,
+        answeredAt: now,
+        durationMs,
+      }]);
+      setCurrentQuestionIndex(prev => prev + 1);
+      setCurrentQuestionAskedAt(null);
+    }
+    
     const imageBase64 = latestScreenshotContext?.imageBase64;
     const requestText = imageBase64
       ? buildScreenshotFollowUpPrompt(question)
-      : question;
+      : buildRequestTextByMode(question, messages);
 
-    await requestAssistantReply(question, requestText, imageBase64);
+    await requestAssistantReply(question, requestText, imageBase64, responseTimeMs);
   };
 
   // 新建会话（清空消息并重置会话 ID，延迟创建）
@@ -574,6 +669,13 @@ function App() {
     setLatestScreenshotContext(null);
     setIsInterviewStarted(false);
     setIsInterviewEnded(false);
+    // 清理计时状态
+    setQuestionTimings([]);
+    setCurrentQuestionAskedAt(null);
+    setCurrentQuestionIndex(0);
+    setElapsedSeconds(0);
+    setInterviewJd('');
+    setInterviewResume('');
   };
 
   // 获取最新 AI 回答（用于紧凑模式显示）
@@ -642,6 +744,67 @@ function App() {
     }
   };
 
+  // 面试官模式：手动推进到下一题（用于卡题兜底）
+  const handleForceNextQuestion = async () => {
+    if (promptMode !== 'interviewer' || !isInterviewStarted || isInterviewEnded || isGenerating) {
+      return;
+    }
+
+    let responseTimeMs: number | undefined = undefined;
+    if (currentQuestionAskedAt) {
+      const now = Date.now();
+      const durationMs = now - currentQuestionAskedAt;
+      responseTimeMs = durationMs;
+      const lastAIMessage = messages.filter(m => m.role === 'assistant').pop();
+      setQuestionTimings(prev => [...prev, {
+        questionIndex: currentQuestionIndex,
+        questionContent: lastAIMessage?.content?.substring(0, 100) || '',
+        askedAt: currentQuestionAskedAt,
+        answeredAt: now,
+        durationMs,
+      }]);
+      setCurrentQuestionIndex(prev => prev + 1);
+      setCurrentQuestionAskedAt(null);
+    }
+
+    const fallbackAnswer = '这题我先回答到这里，请直接进入下一题。';
+    const requestText = buildRequestTextByMode(fallbackAnswer, messages);
+    await requestAssistantReply(fallbackAnswer, requestText, undefined, responseTimeMs);
+  };
+
+  // 面试设置提交处理
+  const handleInterviewSetupSubmit = async (jd: string, resume: string) => {
+    setInterviewJd(jd);
+    setInterviewResume(resume);
+    setShowInterviewSetup(false);
+    setIsInterviewStarted(true);
+    setQuestionTimings([]);
+    setCurrentQuestionIndex(0);
+    setCurrentQuestionAskedAt(null);
+    setElapsedSeconds(0);
+    
+    // 先清空历史消息，确保新面试不受旧消息影响
+    setMessages([]);
+    setCurrentSessionId(null);
+    setSessionResumeTimestamp(Date.now());
+    
+    // 更新 config 的 interviewBackground，使其注入 prompt
+    const config = await loadConfig();
+    await saveConfig({
+      ...config,
+      interviewBackground: {
+        ...config.interviewBackground,
+        enabled: true,
+        jd,
+        resume,
+      }
+    });
+    
+    // 自动发送面试开始消息，触发 AI 面试官的开场白
+    const triggerMessage = "你好面试官，我已准备好，请开始面试。";
+    await requestAssistantReply(triggerMessage, triggerMessage, undefined);
+  };
+
   // 关闭复盘对话框
   const handleCloseReview = () => {
     setReviewDialogOpen(false);
@@ -682,9 +845,16 @@ function App() {
       setPromptMode((session.prompt_mode as PromptMode) || 'assistant');
       // 记录切换时间戳（用于上下文隔离）
       setSessionResumeTimestamp(Date.now());
-      // 默认为"面试未开始"状态
+      // 默认为“面试未开始”状态
       setIsInterviewStarted(false);
       setIsInterviewEnded(false);
+      // 清理计时状态
+      setQuestionTimings([]);
+      setCurrentQuestionAskedAt(null);
+      setCurrentQuestionIndex(0);
+      setElapsedSeconds(0);
+      setInterviewJd('');
+      setInterviewResume('');
       setCurrentView('main');
     } catch (error) {
       console.error('Failed to load session messages:', error);
@@ -732,6 +902,13 @@ function App() {
     setIsInterviewEnded(false);
     // 记录新建时间戳（用于上下文隔离）
     setSessionResumeTimestamp(Date.now());
+    // 清理计时状态
+    setQuestionTimings([]);
+    setCurrentQuestionAskedAt(null);
+    setCurrentQuestionIndex(0);
+    setElapsedSeconds(0);
+    setInterviewJd('');
+    setInterviewResume('');
     setCurrentView('main');
   };
 
@@ -786,9 +963,27 @@ function App() {
             const imageBase64 = latestScreenshotContext?.imageBase64;
             const requestText = imageBase64
               ? buildScreenshotFollowUpPrompt(text)
-              : text;
+              : buildRequestTextByMode(text, messages);
 
-            await requestAssistantReply(`🎤 ${text}`, requestText, imageBase64);
+            // 面试官模式：语音输入时停止计时并记录
+            let responseTimeMs: number | undefined = undefined;
+            if (promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentQuestionAskedAt) {
+              const now = Date.now();
+              const durationMs = now - currentQuestionAskedAt;
+              responseTimeMs = durationMs;
+              const lastAIMessage = messages.filter(m => m.role === 'assistant').pop();
+              setQuestionTimings(prev => [...prev, {
+                questionIndex: currentQuestionIndex,
+                questionContent: lastAIMessage?.content?.substring(0, 100) || '',
+                askedAt: currentQuestionAskedAt,
+                answeredAt: now,
+                durationMs,
+              }]);
+              setCurrentQuestionIndex(prev => prev + 1);
+              setCurrentQuestionAskedAt(null);
+            }
+
+            await requestAssistantReply(text, requestText, imageBase64, responseTimeMs);
           } else {
             setMessages(prev => prev.slice(0, -1).concat([{
               id: generateId(),
@@ -819,13 +1014,18 @@ function App() {
     } else {
       // 开始录音
       try {
-        await invoke("start_audio_recording");
+        // 面试官模式使用麦克风，其他模式使用系统音频
+        const audioSource = promptMode === 'interviewer' ? 'microphone' : 'system';
+        await invoke("start_audio_recording", { audioSource });
         setIsRecording(true);
-        
+            
+        const listeningText = promptMode === 'interviewer' 
+          ? "🎤 正在聆听麦克风...\n再次点击 🎤 停止录音"
+          : "🎤 正在聆听电脑音频...\n再次点击 🎤 停止录音";
         setMessages(prev => [...prev, {
           id: generateId(),
           role: "assistant",
-          content: "🎤 正在聆听电脑音频...\n再次点击 🎤 停止录音",
+          content: listeningText,
           timestamp: Date.now(),
         }]);
         
@@ -1078,6 +1278,16 @@ function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
   };
 
+  // 格式化思考用时（面试官模式）
+  const formatThinkingDuration = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins > 0) {
+      return `${mins}分${secs.toString().padStart(2, '0')}秒`;
+    }
+    return `${secs}秒`;
+  };
+
   // 紧凑模式渲染
   if (compactMode && currentView === 'main') {
     return (
@@ -1147,9 +1357,9 @@ function App() {
             <Download className="w-3.5 h-3.5 text-amber-700" />
           </button>
           {/* 面试官模式：开始面试按钮 */}
-          {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && currentSessionId && (
+          {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && (
             <button
-              onClick={() => setIsInterviewStarted(true)}
+              onClick={() => setShowInterviewSetup(true)}
               className="flex items-center justify-center px-2 h-6 rounded hover:bg-green-200/50 transition-colors duration-150 gap-1"
               title="开始面试"
             >
@@ -1158,6 +1368,17 @@ function App() {
             </button>
           )}
           {/* 面试官模式：结束面试按钮 */}
+          {promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentSessionId && (
+            <button
+              onClick={handleForceNextQuestion}
+              disabled={isGenerating}
+              className="flex items-center justify-center px-2 h-6 rounded hover:bg-amber-200/60 disabled:opacity-30 disabled:cursor-not-allowed transition-colors duration-150 gap-1"
+              title="下一题（卡题时使用）"
+            >
+              <PlayCircle className="w-3.5 h-3.5 text-amber-700" />
+              <span className="text-xs text-amber-700 font-medium">下一题</span>
+            </button>
+          )}
           {promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentSessionId && (
             <button
               onClick={handleEndInterview}
@@ -1296,6 +1517,13 @@ function App() {
                 isGenerating={isGenerating}
                 onContinue={() => handleContinueGeneration(message.id)}
               />
+              {/* 面试官模式：用户消息显示回答用时 */}
+              {message.role === 'user' && message.responseTimeMs && promptMode === 'interviewer' && (
+                <div className="mt-1 text-[10px] text-amber-600 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>用时 {formatThinkingDuration(Math.floor(message.responseTimeMs / 1000))}</span>
+                </div>
+              )}
               {/* 友好错误卡片 */}
               {networkResilience.activeErrors[message.id] && (
                 <div className="mt-2">
@@ -1326,6 +1554,14 @@ function App() {
                 </span>
               )}
             </div>
+          </div>
+        )}
+        
+        {/* 面试官模式：实时思考计时器 */}
+        {promptMode === 'interviewer' && isInterviewStarted && !isInterviewEnded && currentQuestionAskedAt && !isGenerating && (
+          <div className="flex items-center gap-2 px-4 py-2 text-amber-400 text-sm">
+            <Clock className="w-4 h-4 animate-pulse" />
+            <span>思考用时: {formatThinkingDuration(elapsedSeconds)}</span>
           </div>
         )}
         </div>
@@ -1362,12 +1598,13 @@ function App() {
           {/* 语音输入按钮 */}
           <button
             onClick={toggleRecording}
+            disabled={promptMode === 'interviewer' && isInterviewEnded}
             className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-all duration-150 ${
               isRecording
                 ? 'bg-red-100 text-red-500 border-red-300 animate-pulse'
                 : 'bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200 hover:text-amber-800'
-            }`}
-            title={isRecording ? "停止录音" : "语音输入（录制电脑音频）"}
+            } ${promptMode === 'interviewer' && isInterviewEnded ? 'opacity-30 cursor-not-allowed' : ''}`}
+            title={isRecording ? "停止录音" : (promptMode === 'interviewer' ? "语音输入（录制麦克风）" : "语音输入（录制电脑音频）")}
           >
             {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
@@ -1401,7 +1638,7 @@ function App() {
         </div>
         <div className="mt-2 text-[10px] text-amber-600 text-center">
           {isRecording ? (
-            <span className="text-red-400/60">正在录制电脑音频... 点击 🎤 停止</span>
+            <span className="text-red-400/60">正在录制{promptMode === 'interviewer' ? '麦克风' : '电脑音频'}... 点击 🎤 停止</span>
           ) : (
             "Shift + Enter 换行 · Enter 发送 · 🎤 录音 · 📷 截图"
           )}
@@ -1470,8 +1707,16 @@ function App() {
           onClose={handleCloseReview}
           sessionId={reviewSessionId}
           sessionTitle={reviewSessionTitle}
+          questionTimings={questionTimings}
         />
       )}
+
+      {/* 面试设置对话框 */}
+      <InterviewSetupDialog
+        isOpen={showInterviewSetup}
+        onClose={() => setShowInterviewSetup(false)}
+        onSubmit={handleInterviewSetupSubmit}
+      />
     </div>
   );
 }

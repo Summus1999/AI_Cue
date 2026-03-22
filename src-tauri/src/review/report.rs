@@ -89,25 +89,31 @@ fn get_session_info(db: &Database, session_id: &str) -> Result<SessionInfo, Stri
     }
 }
 
-/// 计算维度平均分
+/// 计算维度平均分（五个维度）
 fn calculate_dimension_averages(scores: &[database::MessageScore]) -> DimensionAverages {
     if scores.is_empty() {
         return DimensionAverages {
-            completeness: 0.0,
-            accuracy: 0.0,
-            clarity: 0.0,
+            confidence: 0.0,
+            professionalism: 0.0,
+            depth: 0.0,
+            theory_practice: 0.0,
+            tech_sensitivity: 0.0,
         };
     }
     
     let count = scores.len() as f64;
-    let completeness_sum: f64 = scores.iter().map(|s| s.completeness_score).sum();
-    let accuracy_sum: f64 = scores.iter().map(|s| s.accuracy_score).sum();
-    let clarity_sum: f64 = scores.iter().map(|s| s.clarity_score).sum();
+    let confidence_sum: f64 = scores.iter().map(|s| s.confidence_score).sum();
+    let professionalism_sum: f64 = scores.iter().map(|s| s.professionalism_score).sum();
+    let depth_sum: f64 = scores.iter().map(|s| s.depth_score).sum();
+    let theory_practice_sum: f64 = scores.iter().map(|s| s.theory_practice_score).sum();
+    let tech_sensitivity_sum: f64 = scores.iter().map(|s| s.tech_sensitivity_score).sum();
     
     DimensionAverages {
-        completeness: (completeness_sum / count * 100.0).round() / 100.0,
-        accuracy: (accuracy_sum / count * 100.0).round() / 100.0,
-        clarity: (clarity_sum / count * 100.0).round() / 100.0,
+        confidence: (confidence_sum / count * 100.0).round() / 100.0,
+        professionalism: (professionalism_sum / count * 100.0).round() / 100.0,
+        depth: (depth_sum / count * 100.0).round() / 100.0,
+        theory_practice: (theory_practice_sum / count * 100.0).round() / 100.0,
+        tech_sensitivity: (tech_sensitivity_sum / count * 100.0).round() / 100.0,
     }
 }
 
@@ -118,9 +124,11 @@ fn convert_db_message_score(db_score: &database::MessageScore) -> MessageScore {
         id: db_score.id.clone(),
         session_id: db_score.session_id.clone(),
         message_id: db_score.message_id.clone(),
-        completeness_score: db_score.completeness_score,
-        accuracy_score: db_score.accuracy_score,
-        clarity_score: db_score.clarity_score,
+        confidence_score: db_score.confidence_score,
+        professionalism_score: db_score.professionalism_score,
+        depth_score: db_score.depth_score,
+        theory_practice_score: db_score.theory_practice_score,
+        tech_sensitivity_score: db_score.tech_sensitivity_score,
         overall_score: db_score.overall_score,
         feedback: db_score.feedback.clone(),
         topic_tags: db_score.topic_tags.clone(),

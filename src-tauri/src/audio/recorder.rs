@@ -30,14 +30,14 @@ impl AudioRecorder {
         }
     }
 
-    pub fn start(&mut self) -> Result<(), AudioError> {
+    pub fn start(&mut self, source: Option<&str>) -> Result<(), AudioError> {
         if self.session.is_some() || self.state != RecorderState::Idle {
             return Err(AudioError::AlreadyRecording);
         }
 
         let (ready_tx, ready_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
-        let worker = spawn_capture_thread(ready_tx, stop_rx);
+        let worker = spawn_capture_thread(ready_tx, stop_rx, source);
 
         self.state = RecorderState::Starting;
 
@@ -110,10 +110,14 @@ impl AudioRecorder {
 }
 
 pub fn start_recording() -> Result<(), AudioError> {
+    start_recording_with_source(None)
+}
+
+pub fn start_recording_with_source(source: Option<&str>) -> Result<(), AudioError> {
     RECORDER
         .lock()
         .map_err(|error| AudioError::Synchronization(error.to_string()))?
-        .start()
+        .start(source)
 }
 
 pub fn stop_recording() -> Result<CapturedAudio, AudioError> {
@@ -126,11 +130,16 @@ pub fn stop_recording() -> Result<CapturedAudio, AudioError> {
 pub(crate) fn spawn_capture_thread(
     ready_tx: mpsc::Sender<Result<AudioFormat, AudioError>>,
     stop_rx: mpsc::Receiver<()>,
+    source: Option<&str>,
 ) -> JoinHandle<Result<CapturedAudio, AudioError>> {
+    let source = source.map(|s| s.to_string());
     thread::spawn(move || {
         #[cfg(target_os = "windows")]
         {
-            super::windows_wasapi::capture_default_loopback(ready_tx, stop_rx)
+            match source.as_deref().unwrap_or("system") {
+                "microphone" => super::windows_wasapi::capture_default_microphone(ready_tx, stop_rx),
+                _ => super::windows_wasapi::capture_default_loopback(ready_tx, stop_rx),
+            }
         }
 
         #[cfg(not(target_os = "windows"))]

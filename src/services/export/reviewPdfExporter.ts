@@ -433,9 +433,11 @@ export class ReviewPdfExporter implements ExportStrategy {
     <div class="score-overview">
       <h2>评分概览</h2>
       <div class="dimension-scores">
-        ${dimensionCard('完整性', dims.completeness)}
-        ${dimensionCard('准确性', dims.accuracy)}
-        ${dimensionCard('清晰度', dims.clarity)}
+        ${dimensionCard('面试自信度', dims.confidence)}
+        ${dimensionCard('技术专业度', dims.professionalism)}
+        ${dimensionCard('技术深度', dims.depth)}
+        ${dimensionCard('理论实践', dims.theory_practice)}
+        ${dimensionCard('技术敏感度', dims.tech_sensitivity)}
       </div>
     </div>`;
   }
@@ -511,9 +513,11 @@ export class ReviewPdfExporter implements ExportStrategy {
       return `
         <tr>
           <td>${index + 1}</td>
-          <td>${renderScoreWithBar(ms.completeness_score)}</td>
-          <td>${renderScoreWithBar(ms.accuracy_score)}</td>
-          <td>${renderScoreWithBar(ms.clarity_score)}</td>
+          <td>${renderScoreWithBar(ms.confidence_score)}</td>
+          <td>${renderScoreWithBar(ms.professionalism_score)}</td>
+          <td>${renderScoreWithBar(ms.depth_score)}</td>
+          <td>${renderScoreWithBar(ms.theory_practice_score)}</td>
+          <td>${renderScoreWithBar(ms.tech_sensitivity_score)}</td>
           <td>${renderScoreWithBar(ms.overall_score)}</td>
           <td>${tags}</td>
           <td class="feedback-cell">${this.escapeHtml(ms.feedback || '-')}</td>
@@ -527,11 +531,13 @@ export class ReviewPdfExporter implements ExportStrategy {
         <thead>
           <tr>
             <th style="width: 50px;">#</th>
-            <th style="width: 100px;">完整性</th>
-            <th style="width: 100px;">准确性</th>
-            <th style="width: 100px;">清晰度</th>
-            <th style="width: 100px;">综合分</th>
-            <th style="width: 120px;">话题标签</th>
+            <th style="width: 80px;">自信度</th>
+            <th style="width: 80px;">专业度</th>
+            <th style="width: 80px;">深度</th>
+            <th style="width: 80px;">理论实践</th>
+            <th style="width: 80px;">敏感度</th>
+            <th style="width: 80px;">综合分</th>
+            <th style="width: 100px;">话题标签</th>
             <th>改进建议</th>
           </tr>
         </thead>

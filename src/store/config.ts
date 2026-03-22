@@ -110,8 +110,19 @@ export interface InterviewBackground {
   company: string;
   /** 目标岗位 */
   position: string;
-  /** JD 关键要点（支持多行文本） */
-  jdHighlights: string;
+  /** 岗位 JD 全文 */
+  jd: string;
+  /** 个人简历文本 */
+  resume: string;
+}
+
+// 面试问题计时记录
+export interface QuestionTiming {
+  questionIndex: number;
+  questionContent: string;
+  askedAt: number;
+  answeredAt: number;
+  durationMs: number;
 }
 
 // 默认快捷键配置
@@ -185,24 +196,41 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'behavioral',
     name: '大厂面试官',
-    description: 'AI扮演大厂面试官，按设定方向逐题提问',
+    description: 'AI扮演大厂面试官，按结构化流程进行面试',
     mode: 'interviewer',
-    prompt: `你是一位来自国内一线互联网大厂的资深技术面试官，正在对一位候选人进行正式的技术面试。
+    prompt: `你是一位资深大厂技术面试官，拥有丰富的面试经验。你将按照以下结构化流程进行面试：
 
-面试规则：
-1. 每次只提出一个问题，等待候选人回答后再继续
-2. 根据候选人的回答质量决定是追问细节还是进入下一题
-3. 面试覆盖以下领域，根据面试进展灵活调整比重：
-   - 编程基础与算法（数据结构、复杂度分析、常见算法）
-   - 系统设计与架构（高并发、分布式、缓存、消息队列）
-   - 项目经验深挖（技术选型、难点攻克、性能优化）
-   - 工程实践（代码规范、测试策略、CI/CD、故障排查）
-   - 软技能（团队协作、技术决策、沟通表达）
-4. 难度从中等开始，根据回答水平动态调整，优秀回答后提升难度，薄弱回答适当降低
-5. 保持专业严谨但不刻板的面试风格，适当给予简短反馈
-6. 不要直接给出标准答案，通过追问引导候选人深入思考
+## 面试流程
 
-请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后提出第一个面试问题。`,
+### 第一阶段：开场（1个问题）
+- 简短寒暄，请候选人做自我介绍
+
+### 第二阶段：技术深挖（3-4个问题）
+- 根据JD要求的核心技术栈，深入考察技术理解和实践能力
+- 从基础概念到高级应用逐步深入
+- 根据回答质量动态调整难度
+
+### 第三阶段：项目经历（2-3个问题）
+- 根据简历中的项目经历，深挖技术方案和个人贡献
+- 关注：技术选型理由、遇到的挑战、解决方案、量化成果
+
+### 第四阶段：行为面试（1-2个问题）
+- 考察团队协作、问题解决、学习能力等软素质
+- 使用 STAR 法则引导候选人回答
+
+### 第五阶段：反问环节（1个问题）
+- 给候选人机会反问，面试结束
+
+## 面试规则
+1. 每次只问一个问题，等候选人回答后再提下一个
+2. 在提问时标注当前阶段和进度，如“【技术深挖 2/4】”
+3. 对候选人的回答仅给一句简短反馈（不超过25字），严禁复述候选人的原话
+4. 根据候选人回答质量自适应调整后续问题的难度和方向
+5. 全程保持专业、友好但有一定压力的面试氛围
+6. 面试开始时先简单自我介绍作为面试官的身份
+7. 连续两轮禁止提出语义重复的问题，如发现重复必须立刻换一个新问题
+
+请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后请候选人做自我介绍。`,
   },
   {
     id: 'custom',
@@ -296,7 +324,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     enabled: false,
     company: '',
     position: '',
-    jdHighlights: '',
+    jd: '',
+    resume: '',
   },
 };
 
@@ -320,6 +349,21 @@ async function getStore(): Promise<Store | null> {
     }
   }
   return store;
+}
+
+// 面试背景迁移：处理旧配置（jdHighlights → jd）
+function migrateInterviewBackground(bg: any): InterviewBackground {
+  if (!bg) {
+    return DEFAULT_CONFIG.interviewBackground;
+  }
+  return {
+    enabled: typeof bg.enabled === 'boolean' ? bg.enabled : false,
+    company: typeof bg.company === 'string' ? bg.company : '',
+    position: typeof bg.position === 'string' ? bg.position : '',
+    // 将旧的 jdHighlights 迁移到新的 jd 字段
+    jd: typeof bg.jd === 'string' ? bg.jd : (typeof bg.jdHighlights === 'string' ? bg.jdHighlights : ''),
+    resume: typeof bg.resume === 'string' ? bg.resume : '',
+  };
 }
 
 // 配置迁移：从旧配置格式迁移到新格式
@@ -368,10 +412,7 @@ function migrateConfig(parsed: any): AppConfig {
       ...(parsed.shortcutConfig || {}),
     },
     contextWindowSize: parsed.contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
-    interviewBackground: {
-      ...DEFAULT_CONFIG.interviewBackground,
-      ...(parsed.interviewBackground || {}),
-    },
+    interviewBackground: migrateInterviewBackground(parsed.interviewBackground),
   };
 }
 
@@ -597,8 +638,11 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
     if (typeof validatedConfig.interviewBackground.position !== 'string') {
       validatedConfig.interviewBackground.position = '';
     }
-    if (typeof validatedConfig.interviewBackground.jdHighlights !== 'string') {
-      validatedConfig.interviewBackground.jdHighlights = '';
+    if (typeof validatedConfig.interviewBackground.jd !== 'string') {
+      validatedConfig.interviewBackground.jd = '';
+    }
+    if (typeof validatedConfig.interviewBackground.resume !== 'string') {
+      validatedConfig.interviewBackground.resume = '';
     }
   }
   

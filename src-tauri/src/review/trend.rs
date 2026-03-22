@@ -15,16 +15,18 @@ pub fn calculate_trend(db: &Database) -> Result<TrendData, String> {
     // 3. 对每个会话计算趋势点
     let mut trend_points = Vec::new();
     for session in &sessions {
-        let (completeness, accuracy, clarity) = calculate_dimension_averages(db, &session.session_id)?;
+        let (confidence, professionalism, depth, theory_practice, tech_sensitivity) = calculate_dimension_averages(db, &session.session_id)?;
         
         trend_points.push(TrendPoint {
             session_id: session.session_id.clone(),
             session_title: session.title.clone(),
             completed_at: session.completed_at,
             overall_score: session.overall_score,
-            completeness,
-            accuracy,
-            clarity,
+            confidence,
+            professionalism,
+            depth,
+            theory_practice,
+            tech_sensitivity,
         });
     }
     
@@ -37,24 +39,28 @@ pub fn calculate_trend(db: &Database) -> Result<TrendData, String> {
     })
 }
 
-/// 计算会话的各维度平均分
-fn calculate_dimension_averages(db: &Database, session_id: &str) -> Result<(f64, f64, f64), String> {
+/// 计算会话的各维度平均分（五个维度）
+fn calculate_dimension_averages(db: &Database, session_id: &str) -> Result<(f64, f64, f64, f64, f64), String> {
     let scores = database::get_message_scores(db, session_id)?;
     
     if scores.is_empty() {
-        return Ok((0.0, 0.0, 0.0));
+        return Ok((0.0, 0.0, 0.0, 0.0, 0.0));
     }
     
     let count = scores.len() as f64;
-    let completeness_sum: f64 = scores.iter().map(|s| s.completeness_score).sum();
-    let accuracy_sum: f64 = scores.iter().map(|s| s.accuracy_score).sum();
-    let clarity_sum: f64 = scores.iter().map(|s| s.clarity_score).sum();
+    let confidence_sum: f64 = scores.iter().map(|s| s.confidence_score).sum();
+    let professionalism_sum: f64 = scores.iter().map(|s| s.professionalism_score).sum();
+    let depth_sum: f64 = scores.iter().map(|s| s.depth_score).sum();
+    let theory_practice_sum: f64 = scores.iter().map(|s| s.theory_practice_score).sum();
+    let tech_sensitivity_sum: f64 = scores.iter().map(|s| s.tech_sensitivity_score).sum();
     
-    let completeness_avg = (completeness_sum / count * 100.0).round() / 100.0;
-    let accuracy_avg = (accuracy_sum / count * 100.0).round() / 100.0;
-    let clarity_avg = (clarity_sum / count * 100.0).round() / 100.0;
+    let confidence_avg = (confidence_sum / count * 100.0).round() / 100.0;
+    let professionalism_avg = (professionalism_sum / count * 100.0).round() / 100.0;
+    let depth_avg = (depth_sum / count * 100.0).round() / 100.0;
+    let theory_practice_avg = (theory_practice_sum / count * 100.0).round() / 100.0;
+    let tech_sensitivity_avg = (tech_sensitivity_sum / count * 100.0).round() / 100.0;
     
-    Ok((completeness_avg, accuracy_avg, clarity_avg))
+    Ok((confidence_avg, professionalism_avg, depth_avg, theory_practice_avg, tech_sensitivity_avg))
 }
 
 /// 计算盲点演变（对比最近两次面试）

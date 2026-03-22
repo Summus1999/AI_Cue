@@ -15,14 +15,16 @@ const MAX_CONCURRENT_SCORES: usize = 3;
 /// 单条消息评分最大重试次数
 const MAX_RETRY_COUNT: usize = 2;
 
-/// 评分 System Prompt
+/// 评分 System Prompt - 五个核心维度
 const SCORE_SYSTEM_PROMPT: &str = r#"你是一位资深技术面试官。请从面试官的专业角度，对应聘者的以下回答进行评分。
 
 请严格按照以下 JSON 格式返回评分结果（不要输出任何其他内容）:
 {
-  "completeness": <0-100 完整性: 回答是否覆盖了问题的核心要点>,
-  "accuracy": <0-100 准确性: 技术概念和术语是否正确>,
-  "clarity": <0-100 表达清晰度: 回答的逻辑条理和表达是否清晰>,
+  "confidence": <0-100 面试自信度: 回答时是否表现出自信，语气是否坚定>
+  "professionalism": <0-100 技术专业度: 是否使用正确的技术术语，语言表达是否专业>
+  "depth": <0-100 技术深度: 对技术问题的理解是否深入，是否能举一反三>
+  "theory_practice": <0-100 理论与实践结合: 能否将理论知识与实际项目经验相结合>
+  "tech_sensitivity": <0-100 技术敏感度: 对新技术、行业趋势的敏感程度>
   "feedback": "<50字以内的改进建议，从面试官角度给出>",
   "topic_tags": ["<话题标签1>", "<话题标签2>"]
 }"#;
@@ -190,9 +192,11 @@ fn to_db_message_score(score: &MessageScore) -> database::MessageScore {
         id: score.id.clone(),
         session_id: score.session_id.clone(),
         message_id: score.message_id.clone(),
-        completeness_score: score.completeness_score,
-        accuracy_score: score.accuracy_score,
-        clarity_score: score.clarity_score,
+        confidence_score: score.confidence_score,
+        professionalism_score: score.professionalism_score,
+        depth_score: score.depth_score,
+        theory_practice_score: score.theory_practice_score,
+        tech_sensitivity_score: score.tech_sensitivity_score,
         overall_score: score.overall_score,
         feedback: score.feedback.clone(),
         topic_tags: score.topic_tags.clone(),
@@ -304,9 +308,11 @@ pub async fn score_session_messages(
                     id: Uuid::new_v4().to_string(),
                     session_id: session_id.to_string(),
                     message_id: message_id.clone(),
-                    completeness_score: ai_response.completeness,
-                    accuracy_score: ai_response.accuracy,
-                    clarity_score: ai_response.clarity,
+                    confidence_score: ai_response.confidence,
+                    professionalism_score: ai_response.professionalism,
+                    depth_score: ai_response.depth,
+                    theory_practice_score: ai_response.theory_practice,
+                    tech_sensitivity_score: ai_response.tech_sensitivity,
                     overall_score: ai_response.calculate_overall(),
                     feedback: ai_response.feedback,
                     topic_tags: ai_response.topic_tags,
@@ -348,9 +354,11 @@ pub fn get_existing_scores(db: &Database, session_id: &str) -> Result<Vec<Messag
         id: s.id,
         session_id: s.session_id,
         message_id: s.message_id,
-        completeness_score: s.completeness_score,
-        accuracy_score: s.accuracy_score,
-        clarity_score: s.clarity_score,
+        confidence_score: s.confidence_score,
+        professionalism_score: s.professionalism_score,
+        depth_score: s.depth_score,
+        theory_practice_score: s.theory_practice_score,
+        tech_sensitivity_score: s.tech_sensitivity_score,
         overall_score: s.overall_score,
         feedback: s.feedback,
         topic_tags: s.topic_tags,

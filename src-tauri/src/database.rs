@@ -20,9 +20,12 @@ pub struct MessageScore {
     pub id: String,
     pub session_id: String,
     pub message_id: String,
-    pub completeness_score: f64,
-    pub accuracy_score: f64,
-    pub clarity_score: f64,
+    // 五个核心评分维度
+    pub confidence_score: f64,              // 面试自信度
+    pub professionalism_score: f64,        // 技术专业度
+    pub depth_score: f64,                  // 技术深度
+    pub theory_practice_score: f64,        // 理论和实际项目结合程度
+    pub tech_sensitivity_score: f64,        // 技术敏感度
     pub overall_score: f64,
     pub feedback: String,
     pub topic_tags: Vec<String>,
@@ -211,6 +214,94 @@ fn migrate_v3_to_v4(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v4 到 v5（更新评分维度为五个新指标）
+fn migrate_v4_to_v5(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    
+    if version < 5 {
+        println!("执行数据库迁移 v4 -> v5...");
+        
+        let tx = conn.unchecked_transaction()?;
+        
+        // 1. 更新 message_scores 表：删除旧字段，添加新字段
+        // SQLite 不支持直接删除列或重命名列，需要重建表
+        // 策略：创建新表，复制数据，删除旧表，重命名新表
+        
+        // 检查新表是否已存在（避免重复迁移）
+        let has_new_columns: bool = conn.query_row(
+            "PRAGMA table_info(message_scores)",
+            [],
+            |row| {
+                let name: String = row.get(1)?;
+                Ok(name == "confidence_score")
+            }
+        ).unwrap_or(false);
+        
+        if !has_new_columns {
+            // 创建临时新表
+            tx.execute(
+                "CREATE TABLE IF NOT EXISTS message_scores_new (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    confidence_score REAL NOT NULL DEFAULT 0,
+                    professionalism_score REAL NOT NULL DEFAULT 0,
+                    depth_score REAL NOT NULL DEFAULT 0,
+                    theory_practice_score REAL NOT NULL DEFAULT 0,
+                    tech_sensitivity_score REAL NOT NULL DEFAULT 0,
+                    overall_score REAL NOT NULL DEFAULT 0,
+                    feedback TEXT NOT NULL DEFAULT '',
+                    topic_tags TEXT NOT NULL DEFAULT '[]',
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+                )",
+                []
+            )?;
+            
+            // 从旧表复制数据（使用旧字段的默认值）
+            tx.execute(
+                "INSERT INTO message_scores_new (id, session_id, message_id, 
+                    confidence_score, professionalism_score, depth_score, 
+                    theory_practice_score, tech_sensitivity_score,
+                    overall_score, feedback, topic_tags, created_at)
+                 SELECT id, session_id, message_id,
+                    COALESCE(completeness_score, 0) as confidence_score,
+                    COALESCE(accuracy_score, 0) as professionalism_score,
+                    COALESCE(clarity_score, 0) as depth_score,
+                    0 as theory_practice_score,
+                    0 as tech_sensitivity_score,
+                    overall_score, feedback, topic_tags, created_at
+                 FROM message_scores",
+                []
+            )?;
+            
+            // 删除旧表
+            tx.execute("DROP TABLE message_scores", [])?;
+            
+            // 重命名新表
+            tx.execute("ALTER TABLE message_scores_new RENAME TO message_scores", [])?;
+            
+            // 重建索引
+            tx.execute(
+                "CREATE INDEX IF NOT EXISTS idx_message_scores_session ON message_scores(session_id)",
+                []
+            )?;
+            tx.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_message_scores_message ON message_scores(message_id)",
+                []
+            )?;
+        }
+        
+        tx.pragma_update(None, "user_version", 5)?;
+        tx.commit()?;
+        
+        println!("数据库迁移 v4 -> v5 完成");
+    }
+    
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -252,6 +343,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     migrate_v1_to_v2(&conn)?;
     migrate_v2_to_v3(&conn)?;
     migrate_v3_to_v4(&conn)?;
+    migrate_v4_to_v5(&conn)?;
     
     Ok(Database(Mutex::new(conn)))
 }
@@ -599,16 +691,19 @@ pub fn insert_message_score(db: &Database, score: &MessageScore) -> Result<(), S
     
     conn.execute(
         "INSERT INTO message_scores (
-            id, session_id, message_id, completeness_score, accuracy_score,
-            clarity_score, overall_score, feedback, topic_tags, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            id, session_id, message_id, confidence_score, professionalism_score,
+            depth_score, theory_practice_score, tech_sensitivity_score,
+            overall_score, feedback, topic_tags, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             score.id,
             score.session_id,
             score.message_id,
-            score.completeness_score,
-            score.accuracy_score,
-            score.clarity_score,
+            score.confidence_score,
+            score.professionalism_score,
+            score.depth_score,
+            score.theory_practice_score,
+            score.tech_sensitivity_score,
             score.overall_score,
             score.feedback,
             topic_tags_json,
@@ -632,16 +727,19 @@ pub fn insert_message_scores_batch(db: &Database, scores: &[MessageScore]) -> Re
         
         tx.execute(
             "INSERT INTO message_scores (
-                id, session_id, message_id, completeness_score, accuracy_score,
-                clarity_score, overall_score, feedback, topic_tags, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                id, session_id, message_id, confidence_score, professionalism_score,
+                depth_score, theory_practice_score, tech_sensitivity_score,
+                overall_score, feedback, topic_tags, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 score.id,
                 score.session_id,
                 score.message_id,
-                score.completeness_score,
-                score.accuracy_score,
-                score.clarity_score,
+                score.confidence_score,
+                score.professionalism_score,
+                score.depth_score,
+                score.theory_practice_score,
+                score.tech_sensitivity_score,
                 score.overall_score,
                 score.feedback,
                 topic_tags_json,
@@ -661,13 +759,14 @@ pub fn get_message_scores(db: &Database, session_id: &str) -> Result<Vec<Message
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, message_id, completeness_score, accuracy_score,
-                clarity_score, overall_score, feedback, topic_tags, created_at
+        "SELECT id, session_id, message_id, confidence_score, professionalism_score,
+                depth_score, theory_practice_score, tech_sensitivity_score,
+                overall_score, feedback, topic_tags, created_at
          FROM message_scores WHERE session_id = ?1 ORDER BY created_at ASC"
     ).map_err(|e| e.to_string())?;
     
     let scores = stmt.query_map(params![session_id], |row| {
-        let topic_tags_str: String = row.get(8)?;
+        let topic_tags_str: String = row.get(10)?;
         let topic_tags: Vec<String> = serde_json::from_str(&topic_tags_str)
             .unwrap_or_default();
         
@@ -675,13 +774,15 @@ pub fn get_message_scores(db: &Database, session_id: &str) -> Result<Vec<Message
             id: row.get(0)?,
             session_id: row.get(1)?,
             message_id: row.get(2)?,
-            completeness_score: row.get(3)?,
-            accuracy_score: row.get(4)?,
-            clarity_score: row.get(5)?,
-            overall_score: row.get(6)?,
-            feedback: row.get(7)?,
+            confidence_score: row.get(3)?,
+            professionalism_score: row.get(4)?,
+            depth_score: row.get(5)?,
+            theory_practice_score: row.get(6)?,
+            tech_sensitivity_score: row.get(7)?,
+            overall_score: row.get(8)?,
+            feedback: row.get(9)?,
             topic_tags,
-            created_at: row.get(9)?,
+            created_at: row.get(11)?,
         })
     }).map_err(|e| e.to_string())?;
     

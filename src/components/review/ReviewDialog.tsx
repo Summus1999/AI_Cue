@@ -1,17 +1,19 @@
 import { useState, useCallback, useEffect } from 'react';
 import { X, Play, RefreshCw, FileDown, AlertCircle } from 'lucide-react';
 import { useReviewStore } from '../../store/review';
-import { loadConfig } from '../../store/config';
+import { loadConfig, QuestionTiming } from '../../store/config';
 import { ReviewReport as ReviewReportComponent } from './ReviewReport';
 import { TrendComparison } from './TrendComparison';
 import { getSessionReviewStatus } from '../../services/reviewService';
 import { exportService } from '../../services/export/exportService';
+import type { TimingStats } from '../../types/review';
 
 interface ReviewDialogProps {
   isOpen: boolean;
   onClose: () => void;
   sessionId: string;
   sessionTitle: string;
+  questionTimings?: QuestionTiming[];  // 每题用时数据
 }
 
 // 阶段描述映射
@@ -23,7 +25,32 @@ const phaseDescriptions: Record<string, string> = {
   failed: '复盘失败',
 };
 
-export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle }: ReviewDialogProps) {
+// 计算用时统计数据
+function computeTimingStats(questionTimings?: QuestionTiming[]): TimingStats | undefined {
+  if (!questionTimings || questionTimings.length === 0) {
+    return undefined;
+  }
+
+  const durations = questionTimings.map(t => t.durationMs);
+  const totalDurationMs = durations.reduce((a, b) => a + b, 0);
+  const averageDurationMs = Math.round(totalDurationMs / durations.length);
+  const fastestDurationMs = Math.min(...durations);
+  const slowestDurationMs = Math.max(...durations);
+
+  return {
+    totalDurationMs,
+    averageDurationMs,
+    fastestDurationMs,
+    slowestDurationMs,
+    questionTimings: questionTimings.map(t => ({
+      questionIndex: t.questionIndex,
+      questionContent: t.questionContent,
+      durationMs: t.durationMs,
+    })),
+  };
+}
+
+export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questionTimings }: ReviewDialogProps) {
   const {
     reviewStatus,
     progress,
@@ -269,7 +296,11 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle }: Revie
 
               {/* 内容区域 */}
               {activeTab === 'report' && (
-                <ReviewReportComponent report={report} onExportPdf={handleExportPdf} />
+                <ReviewReportComponent 
+                  report={report} 
+                  onExportPdf={handleExportPdf}
+                  timingStats={computeTimingStats(questionTimings)}
+                />
               )}
               {activeTab === 'trend' && (
                 trend ? (

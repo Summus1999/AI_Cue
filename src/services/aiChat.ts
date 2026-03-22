@@ -67,20 +67,23 @@ export function buildScreenshotFollowUpPrompt(question: string): string {
 }
 
 function buildInterviewBackgroundPrompt(bg: InterviewBackground): string {
-  const parts: string[] = ['---', '## 当前面试背景'];
+  const parts: string[] = ['---', '## 本次面试背景信息'];
 
   if (bg.company) {
-    parts.push(`- **目标公司**: ${bg.company}`);
+    parts.push(`### 目标公司\n${bg.company}`);
   }
   if (bg.position) {
-    parts.push(`- **应聘岗位**: ${bg.position}`);
+    parts.push(`### 应聘岗位\n${bg.position}`);
   }
-  if (bg.jdHighlights) {
-    parts.push(`- **JD 要点**:\n${bg.jdHighlights}`);
+  if (bg.jd) {
+    parts.push(`### 岗位JD\n${bg.jd}`);
+  }
+  if (bg.resume) {
+    parts.push(`### 候选人简历\n${bg.resume}`);
   }
 
   parts.push('');
-  parts.push('请根据以上面试背景，调整你的回答风格和侧重点，使回答更加贴合该公司和岗位的要求。');
+  parts.push('请严格根据以上JD要求和候选人简历，有针对性地设计面试问题。优先考察JD中强调的技术能力，并结合简历中的项目经历进行追问。');
 
   return parts.join('\n');
 }
@@ -101,8 +104,8 @@ function getSystemPrompt(config: AppConfig): string {
 
   // 2. 注入面试背景（新增）
   const bg = config.interviewBackground;
-  if (bg?.enabled && (bg.company || bg.position || bg.jdHighlights)) {
-    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD要点长度=${bg.jdHighlights?.length || 0}字符`);
+  if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
+    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
     const bgSection = buildInterviewBackgroundPrompt(bg);
     return `${basePrompt}\n\n${bgSection}`;
   }

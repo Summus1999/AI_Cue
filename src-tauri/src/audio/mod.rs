@@ -18,6 +18,10 @@ pub fn start_recording() -> Result<(), String> {
     recorder::start_recording().map_err(|error| error.to_string())
 }
 
+pub fn start_recording_with_source(source: Option<&str>) -> Result<(), String> {
+    recorder::start_recording_with_source(source).map_err(|error| error.to_string())
+}
+
 pub fn stop_recording() -> Result<Vec<u8>, String> {
     let captured = recorder::stop_recording().map_err(|error| error.to_string())?;
 

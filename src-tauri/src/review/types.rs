@@ -2,16 +2,19 @@ use serde::{Deserialize, Serialize};
 use crate::database::InterviewContext;
 
 
-/// 评分维度权重(可配置化扩展)
+/// 面试评分维度定义
 pub struct ScoreDimension {
     pub name: &'static str,
     pub weight: f64, // 权重 0.0-1.0
 }
 
-pub const DEFAULT_DIMENSIONS: &[ScoreDimension] = &[
-    ScoreDimension { name: "completeness", weight: 0.35 },
-    ScoreDimension { name: "accuracy",     weight: 0.40 },
-    ScoreDimension { name: "clarity",      weight: 0.25 },
+/// 五个核心评分维度及其权重
+pub const SCORE_DIMENSIONS: &[ScoreDimension] = &[
+    ScoreDimension { name: "confidence", weight: 0.15 },            // 面试自信度
+    ScoreDimension { name: "professionalism", weight: 0.20 },       // 技术专业度
+    ScoreDimension { name: "depth", weight: 0.25 },                 // 技术深度
+    ScoreDimension { name: "theory_practice", weight: 0.25 },       // 理论和实际项目结合
+    ScoreDimension { name: "tech_sensitivity", weight: 0.15 },       // 技术敏感度
 ];
 
 /// 单条消息的评分结果
@@ -20,41 +23,50 @@ pub struct MessageScore {
     pub id: String,
     pub session_id: String,
     pub message_id: String,
-    pub completeness_score: f64,
-    pub accuracy_score: f64,
-    pub clarity_score: f64,
-    pub overall_score: f64,
-    pub feedback: String,
-    pub topic_tags: Vec<String>,
+    // 五个核心评分维度 (0-100)
+    pub confidence_score: f64,              // 面试自信度
+    pub professionalism_score: f64,        // 技术专业度
+    pub depth_score: f64,                  // 技术深度
+    pub theory_practice_score: f64,        // 理论和实际项目结合程度
+    pub tech_sensitivity_score: f64,        // 技术敏感度
+    pub overall_score: f64,                // 加权综合分
+    pub feedback: String,                   // AI 改进建议
+    pub topic_tags: Vec<String>,            // 话题标签
     pub created_at: i64,
 }
 
 /// AI 返回的原始评分 JSON 结构(需校验)
 #[derive(Debug, Deserialize)]
 pub struct AIScoreResponse {
-    pub completeness: f64,
-    pub accuracy: f64,
-    pub clarity: f64,
-    pub feedback: String,
-    pub topic_tags: Vec<String>,
+    pub confidence: f64,                // 面试自信度
+    pub professionalism: f64,          // 技术专业度
+    pub depth: f64,                    // 技术深度
+    pub theory_practice: f64,          // 理论和实际项目结合程度
+    pub tech_sensitivity: f64,          // 技术敏感度
+    pub feedback: String,              // 改进建议
+    pub topic_tags: Vec<String>,       // 话题标签
 }
 
 impl AIScoreResponse {
     /// 校验并 clamp 分数到 0-100 范围
     pub fn validate_and_clamp(&mut self) {
-        self.completeness = self.completeness.clamp(0.0, 100.0);
-        self.accuracy = self.accuracy.clamp(0.0, 100.0);
-        self.clarity = self.clarity.clamp(0.0, 100.0);
+        self.confidence = self.confidence.clamp(0.0, 100.0);
+        self.professionalism = self.professionalism.clamp(0.0, 100.0);
+        self.depth = self.depth.clamp(0.0, 100.0);
+        self.theory_practice = self.theory_practice.clamp(0.0, 100.0);
+        self.tech_sensitivity = self.tech_sensitivity.clamp(0.0, 100.0);
     }
 
     /// 计算加权综合分
     pub fn calculate_overall(&self) -> f64 {
         let mut total = 0.0;
-        for dim in DEFAULT_DIMENSIONS {
+        for dim in SCORE_DIMENSIONS {
             let score = match dim.name {
-                "completeness" => self.completeness,
-                "accuracy" => self.accuracy,
-                "clarity" => self.clarity,
+                "confidence" => self.confidence,
+                "professionalism" => self.professionalism,
+                "depth" => self.depth,
+                "theory_practice" => self.theory_practice,
+                "tech_sensitivity" => self.tech_sensitivity,
                 _ => 0.0,
             };
             total += score * dim.weight;
@@ -126,7 +138,7 @@ pub struct ReviewReport {
     pub session_title: String,
     pub interview_context: Option<InterviewContext>,
     pub overall_score: f64,
-    pub dimension_averages: DimensionAverages,
+    pub dimension_averages: DimensionAverages, // 五个维度平均分
     pub message_scores: Vec<MessageScore>,
     pub insights: Vec<SessionInsight>,
     pub completed_at: i64,
@@ -134,11 +146,14 @@ pub struct ReviewReport {
     pub scored_count: usize,   // 已评分数
 }
 
+/// 维度平均分（五个维度）
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DimensionAverages {
-    pub completeness: f64,
-    pub accuracy: f64,
-    pub clarity: f64,
+    pub confidence: f64,           // 面试自信度
+    pub professionalism: f64,       // 技术专业度
+    pub depth: f64,                 // 技术深度
+    pub theory_practice: f64,       // 理论和实际项目结合
+    pub tech_sensitivity: f64,      // 技术敏感度
 }
 
 /// 趋势对比数据(跨会话)
@@ -154,9 +169,12 @@ pub struct TrendPoint {
     pub session_title: String,
     pub completed_at: i64,
     pub overall_score: f64,
-    pub completeness: f64,
-    pub accuracy: f64,
-    pub clarity: f64,
+    // 五个维度分数
+    pub confidence: f64,
+    pub professionalism: f64,
+    pub depth: f64,
+    pub theory_practice: f64,
+    pub tech_sensitivity: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

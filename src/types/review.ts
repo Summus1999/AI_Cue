@@ -6,18 +6,22 @@
 import type { InterviewContext } from './export';
 
 /**
- * 单条消息的多维度评分
+ * 单条消息的多维度评分 - 五个核心维度
  */
 export interface MessageScore {
   id: string;
   session_id: string;
   message_id: string;
-  completeness_score: number;  // 完整性 0-100
-  accuracy_score: number;      // 准确性 0-100
-  clarity_score: number;       // 表达清晰度 0-100
-  overall_score: number;       // 加权综合分
-  feedback: string;            // AI 改进建议
-  topic_tags: string[];        // 话题标签
+  // 五个核心评分维度
+  confidence_score: number;           // 面试自信度 0-100
+  professionalism_score: number;     // 技术专业度 0-100
+  depth_score: number;              // 技术深度 0-100
+  theory_practice_score: number;    // 理论和实际项目结合程度 0-100
+  tech_sensitivity_score: number;    // 技术敏感度 0-100
+  overall_score: number;            // 加权综合分
+  feedback: string;                  // AI 改进建议
+  topic_tags: string[];              // 话题标签
+  response_time_ms?: number;         // 回答用时（毫秒）
   created_at: number;
 }
 
@@ -41,12 +45,29 @@ export interface SessionInsight {
 }
 
 /**
- * 维度平均分
+ * 维度平均分 - 五个维度
  */
 export interface DimensionAverages {
-  completeness: number;
-  accuracy: number;
-  clarity: number;
+  confidence: number;           // 面试自信度
+  professionalism: number;      // 技术专业度
+  depth: number;                // 技术深度
+  theory_practice: number;      // 理论和实际项目结合
+  tech_sensitivity: number;     // 技术敏感度
+}
+
+/**
+ * 回答用时统计
+ */
+export interface TimingStats {
+  totalDurationMs: number;       // 总面试时长
+  averageDurationMs: number;     // 平均每题用时
+  fastestDurationMs: number;     // 最快回答
+  slowestDurationMs: number;     // 最慢回答
+  questionTimings: Array<{
+    questionIndex: number;
+    questionContent: string;
+    durationMs: number;
+  }>;
 }
 
 /**
@@ -63,19 +84,23 @@ export interface ReviewReport {
   completed_at: number;
   message_count: number;
   scored_count: number;
+  timing_stats?: TimingStats;    // 回答用时统计（可选）
 }
 
 /**
- * 趋势对比中的单个数据点
+ * 趋势对比中的单个数据点 - 五个维度
  */
 export interface TrendPoint {
   session_id: string;
   session_title: string;
   completed_at: number;
   overall_score: number;
-  completeness: number;
-  accuracy: number;
-  clarity: number;
+  // 五个维度
+  confidence: number;
+  professionalism: number;
+  depth: number;
+  theory_practice: number;
+  tech_sensitivity: number;
 }
 
 /**

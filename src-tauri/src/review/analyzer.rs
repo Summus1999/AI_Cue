@@ -65,12 +65,12 @@ fn extract_json(content: &str) -> &str {
     trimmed
 }
 
-/// 构建评分摘要文本
+/// 构建评分摘要文本（五个维度）
 fn build_score_summary(
     message_scores: &[MessageScore],
     messages: &[(String, String, String)], // (message_id, question, answer) - message_id 是 user 消息 ID
 ) -> String {
-    let mut summary = String::from("编号 | 话题标签 | 完整性 | 准确性 | 清晰度 | 综合分\n");
+    let mut summary = String::from("编号 | 话题标签 | 自信度 | 专业度 | 技术深度 | 理论实践 | 技术敏感 | 综合分\n");
     
     // 建立 message_id 到序号的映射
     for (index, (message_id, _question, _answer)) in messages.iter().enumerate() {
@@ -83,12 +83,14 @@ fn build_score_summary(
             };
             
             summary.push_str(&format!(
-                "{} | {} | {:.0} | {:.0} | {:.0} | {:.1}\n",
+                "{} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.1}\n",
                 index + 1,
                 tags,
-                score.completeness_score,
-                score.accuracy_score,
-                score.clarity_score,
+                score.confidence_score,
+                score.professionalism_score,
+                score.depth_score,
+                score.theory_practice_score,
+                score.tech_sensitivity_score,
                 score.overall_score
             ));
         }
