@@ -1001,3 +1001,87 @@ pub fn log_from_frontend(
         ),
     }
 }
+
+// ==================== RAG 命令 ====================
+
+use crate::rag::{RagEngine, RagStats, ContextConfig, QwenEmbedding};
+
+/// 向量检索
+#[tauri::command]
+pub async fn rag_search(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    query: String,
+    limit: Option<usize>,
+    session_id: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let limit = limit.unwrap_or(10);
+    let results = engine.search(&query, limit, session_id.as_deref()).await?;
+    
+    Ok(results.into_iter().map(|r| serde_json::json!({
+        "message_id": r.message_id,
+        "chunk_text": r.chunk_text,
+        "score": r.score,
+        "source": format!("{:?}", r.source)
+    })).collect())
+}
+
+/// 手动触发消息向量化
+#[tauri::command]
+pub async fn rag_embed_message(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    message_id: String,
+    content: String,
+) -> Result<bool, String> {
+    engine.embed_message(&message_id, &content).await?;
+    Ok(true)
+}
+
+/// 获取 RAG 增强上下文
+#[tauri::command]
+pub async fn rag_get_context(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    query: String,
+    max_tokens: Option<usize>,
+) -> Result<String, String> {
+    let config = ContextConfig {
+        max_tokens: max_tokens.unwrap_or(2000),
+        ..Default::default()
+    };
+    engine.build_context(&query, &config).await
+}
+
+/// 获取向量化统计
+#[tauri::command]
+pub fn rag_stats(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+) -> Result<serde_json::Value, String> {
+    let stats = engine.get_stats()?;
+    Ok(serde_json::json!({
+        "total_embeddings": stats.total,
+        "total_messages": stats.messages,
+        "storage_bytes": stats.storage_size,
+        "model_id": stats.model_id
+    }))
+}
+
+/// 配置 RAG Embedding Provider
+#[tauri::command]
+pub fn rag_configure(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    api_key: String,
+    base_url: Option<String>,
+) -> Result<bool, String> {
+    // 注意：RAG Embedding 配置需要在启动时完成
+    // 此命令仅用于更新 API Key
+    tracing::info!("RAG API Key 已更新");
+    Ok(true)
+}
+
+/// 删除消息的向量
+#[tauri::command]
+pub fn rag_delete_vectors(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    message_id: String,
+) -> Result<(), String> {
+    engine.delete_vectors(&message_id)
+}

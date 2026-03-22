@@ -302,6 +302,41 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v5 到 v6（向量存储表）
+fn migrate_v5_to_v6(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    
+    if version < 6 {
+        println!("执行数据库迁移 v5 -> v6...");
+        
+        let tx = conn.unchecked_transaction()?;
+        
+        // 创建向量嵌入表
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS vec_embeddings (
+                id              TEXT PRIMARY KEY,
+                message_id      TEXT NOT NULL,
+                chunk_idx       INTEGER NOT NULL DEFAULT 0,
+                chunk_text      TEXT NOT NULL,
+                embedding       BLOB NOT NULL,
+                embedding_dim   INTEGER NOT NULL,
+                model_id        TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_vec_embeddings_message ON vec_embeddings(message_id);
+            CREATE INDEX IF NOT EXISTS idx_vec_embeddings_model ON vec_embeddings(model_id);"
+        )?;
+        
+        tx.pragma_update(None, "user_version", 6)?;
+        tx.commit()?;
+        
+        println!("数据库迁移 v5 -> v6 完成");
+    }
+    
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -344,6 +379,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     migrate_v2_to_v3(&conn)?;
     migrate_v3_to_v4(&conn)?;
     migrate_v4_to_v5(&conn)?;
+    migrate_v5_to_v6(&conn)?;
     
     Ok(Database(Mutex::new(conn)))
 }

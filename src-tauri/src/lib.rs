@@ -12,6 +12,7 @@ mod logging;  // 日志系统
 mod nls;
 mod perf;       // 性能埋点
 mod qwen;
+pub mod rag;
 mod review;
 mod screenshot;
 mod startup;     // 启动管理
@@ -55,9 +56,14 @@ pub fn run() {
             // 初始化数据库
             let db = database::init_database(&app_data_dir)
                 .expect("数据库初始化失败");
-            app.manage(db);
+            let db_arc = Arc::new(db);
+            app.manage(db_arc.clone());
             perf::perf_database_done();
-
+            
+            // 初始化 RAG 引擎
+            let rag_engine = rag::RagEngine::new(db_arc);
+            app.manage(Arc::new(rag_engine));
+            
             // 初始化 Provider 注册表（内置 Provider）
             perf::perf_provider_registry_ready();
             let registry = ai::ProviderRegistry::new();
@@ -195,6 +201,13 @@ pub fn run() {
             // 日志命令
             commands::export_logs,
             commands::log_from_frontend,
+            // RAG 命令
+            commands::rag_search,
+            commands::rag_embed_message,
+            commands::rag_get_context,
+            commands::rag_stats,
+            commands::rag_configure,
+            commands::rag_delete_vectors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
