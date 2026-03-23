@@ -251,7 +251,7 @@ export function ScreenshotSelector({
             top: y,
             width,
             height,
-            boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
+            boxShadow: '0 0 0 9999px rgba(0,0,0,0.01)',
             pointerEvents: 'none',
           }}
         />
@@ -336,7 +336,7 @@ export function ScreenshotSelector({
         }}
         draggable={false}
       />
-      {!selection && imageLoaded && <div className="absolute inset-0 bg-black/50 pointer-events-none" />}
+      {!selection && imageLoaded && <div className="absolute inset-0 bg-black/10 pointer-events-none" />}
       {renderSelection()}
 
       {/* 操作提示 */}

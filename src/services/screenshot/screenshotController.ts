@@ -153,6 +153,7 @@ export class ScreenshotController {
         skipTaskbar: true,
         focus: true,
         resizable: false,
+        contentProtected: true,
       });
       
       // 记录截图窗口创建
