@@ -206,23 +206,30 @@ mod chunker_tests {
 #[cfg(test)]
 mod context_builder_tests {
     use ai_cue_lib::rag::{ContextConfig, build_rag_context, estimate_total_tokens, truncate_to_token_limit};
-    use ai_cue_lib::rag::retriever::SearchResult;
-    use ai_cue_lib::rag::retriever::SearchSource;
+    use ai_cue_lib::rag::retriever::{SearchResult, SearchSource, SearchSourceKind};
     
     #[test]
     fn test_build_rag_context() {
         let results = vec![
             SearchResult {
-                message_id: "1".to_string(),
+                chunk_id: "message:1:0".to_string(),
+                embedding_id: Some("emb-1".to_string()),
+                message_id: Some("1".to_string()),
+                document_id: None,
                 chunk_text: "这是第一个答案".to_string(),
                 score: 0.9,
                 source: SearchSource::Vector,
+                source_kind: SearchSourceKind::Message,
             },
             SearchResult {
-                message_id: "2".to_string(),
+                chunk_id: "message:2:0".to_string(),
+                embedding_id: Some("emb-2".to_string()),
+                message_id: Some("2".to_string()),
+                document_id: None,
                 chunk_text: "这是第二个答案".to_string(),
                 score: 0.8,
                 source: SearchSource::Vector,
+                source_kind: SearchSourceKind::Message,
             },
         ];
         

@@ -1,13 +1,18 @@
 // Tauri 命令 - 音频录制、语音识别、AI 对话和数据库操作
 
-use crate::ai::{ProviderRegistry, BuiltinProviderType, types::{ProviderConfig, NetworkHealthStatus, ProviderDescriptor}};
-use crate::export::{ExportData, ExportInterviewContext, ExportMessage, ExportMetadata, ExportOptions, ExportResult};
-use crate::qwen::ChatMessage;
-use tauri::{AppHandle, Manager, State};
-use std::time::{Duration, Instant};
-use tokio::time::timeout;
-use chrono::Utc;
+use crate::ai::{
+    types::{NetworkHealthStatus, ProviderConfig, ProviderDescriptor},
+    BuiltinProviderType, ProviderRegistry,
+};
+use crate::export::{
+    ExportData, ExportInterviewContext, ExportMessage, ExportMetadata, ExportOptions, ExportResult,
+};
 use crate::logging::sanitize_log_value;
+use crate::qwen::ChatMessage;
+use chrono::Utc;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Manager, State};
+use tokio::time::timeout;
 
 // ==================== 音频命令 ====================
 
@@ -24,10 +29,7 @@ pub fn start_audio_recording_with_events(
     app_handle: AppHandle,
     audio_source: Option<String>,
 ) -> Result<(), String> {
-    crate::audio::start_recording_with_source_and_handle(
-        audio_source.as_deref(),
-        Some(app_handle),
-    )
+    crate::audio::start_recording_with_source_and_handle(audio_source.as_deref(), Some(app_handle))
 }
 
 // 停止录音并返回 WAV 数据
@@ -73,7 +75,15 @@ pub async fn ai_chat_stream(
     let cancel_rx = cancel_registry.register(&request_id);
 
     let result = registry
-        .chat_stream(app, &provider, &config, &model, messages, &event_name, cancel_rx)
+        .chat_stream(
+            app,
+            &provider,
+            &config,
+            &model,
+            messages,
+            &event_name,
+            cancel_rx,
+        )
         .await
         .map_err(|e| e.to_string());
 
@@ -135,13 +145,11 @@ pub async fn check_network_health(
     let start = Instant::now();
 
     // 1. 确定检测目标 URL
-    let target_url = base_url.unwrap_or_else(|| {
-        match provider_type.as_str() {
-            "qwen" => "https://dashscope.aliyuncs.com".to_string(),
-            "openai_compat" => "https://api.openai.com".to_string(),
-            "claude" => "https://api.anthropic.com".to_string(),
-            _ => "https://www.google.com".to_string(),
-        }
+    let target_url = base_url.unwrap_or_else(|| match provider_type.as_str() {
+        "qwen" => "https://dashscope.aliyuncs.com".to_string(),
+        "openai_compat" => "https://api.openai.com".to_string(),
+        "claude" => "https://api.anthropic.com".to_string(),
+        _ => "https://www.google.com".to_string(),
     });
 
     // 2. 创建 HTTP 客户端
@@ -151,10 +159,7 @@ pub async fn check_network_health(
         .map_err(|e| e.to_string())?;
 
     // 3. HEAD 请求检测 Provider 可达性（不带 API Key，仅检测网络层）
-    let internet_check = timeout(
-        Duration::from_secs(5),
-        client.head(&target_url).send()
-    ).await;
+    let internet_check = timeout(Duration::from_secs(5), client.head(&target_url).send()).await;
 
     let latency = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
     let now = Utc::now().to_rfc3339();
@@ -234,7 +239,8 @@ pub async fn qwen_chat_stream(
     let event_name = format!("qwen-stream:{}", request_id);
     let cancel_rx = cancel_registry.register(&request_id);
 
-    let result = crate::qwen::chat_stream(app, &api_key, &model, messages, &event_name, cancel_rx).await;
+    let result =
+        crate::qwen::chat_stream(app, &api_key, &model, messages, &event_name, cancel_rx).await;
     cancel_registry.remove(&request_id);
     result
 }
@@ -277,7 +283,7 @@ pub async fn qwen_chat_stream_vision(
 #[tauri::command]
 pub fn create_session(
     db: tauri::State<'_, crate::database::Database>,
-    metadata: Option<crate::database::SessionMetadata>
+    metadata: Option<crate::database::SessionMetadata>,
 ) -> Result<serde_json::Value, String> {
     crate::database::create_session(&db, metadata)
 }
@@ -286,32 +292,48 @@ pub fn create_session(
 #[tauri::command]
 pub fn list_sessions(
     db: tauri::State<'_, crate::database::Database>,
-    prompt_mode: Option<String>
+    prompt_mode: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     crate::database::list_sessions(&db, prompt_mode.as_deref())
 }
 
 // 获取会话的所有消息
 #[tauri::command]
-pub fn get_session_messages(db: tauri::State<'_, crate::database::Database>, session_id: String) -> Result<Vec<serde_json::Value>, String> {
+pub fn get_session_messages(
+    db: tauri::State<'_, crate::database::Database>,
+    session_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
     crate::database::get_session_messages(&db, &session_id)
 }
 
 // 保存消息
 #[tauri::command]
-pub fn save_message(db: tauri::State<'_, crate::database::Database>, session_id: String, role: String, content: String, image: Option<String>) -> Result<serde_json::Value, String> {
+pub fn save_message(
+    db: tauri::State<'_, crate::database::Database>,
+    session_id: String,
+    role: String,
+    content: String,
+    image: Option<String>,
+) -> Result<serde_json::Value, String> {
     crate::database::save_message(&db, &session_id, &role, &content, image.as_deref())
 }
 
 // 更新会话标题
 #[tauri::command]
-pub fn update_session_title(db: tauri::State<'_, crate::database::Database>, session_id: String, title: String) -> Result<(), String> {
+pub fn update_session_title(
+    db: tauri::State<'_, crate::database::Database>,
+    session_id: String,
+    title: String,
+) -> Result<(), String> {
     crate::database::update_session_title(&db, &session_id, &title)
 }
 
 // 删除会话
 #[tauri::command]
-pub fn delete_session(db: tauri::State<'_, crate::database::Database>, session_id: String) -> Result<(), String> {
+pub fn delete_session(
+    db: tauri::State<'_, crate::database::Database>,
+    session_id: String,
+) -> Result<(), String> {
     crate::database::delete_session(&db, &session_id)
 }
 
@@ -320,7 +342,7 @@ pub fn delete_session(db: tauri::State<'_, crate::database::Database>, session_i
 pub fn search_sessions(
     db: tauri::State<'_, crate::database::Database>,
     keyword: String,
-    prompt_mode: Option<String>
+    prompt_mode: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     crate::database::search_sessions(&db, &keyword, prompt_mode.as_deref())
 }
@@ -329,7 +351,7 @@ pub fn search_sessions(
 #[tauri::command]
 pub fn get_last_active_session(
     db: tauri::State<'_, crate::database::Database>,
-    prompt_mode: Option<String>
+    prompt_mode: Option<String>,
 ) -> Result<Option<serde_json::Value>, String> {
     crate::database::get_last_active_session(&db, prompt_mode.as_deref())
 }
@@ -344,7 +366,7 @@ pub fn end_interview(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis() as i64;
-    
+
     crate::database::update_completed_at(&db, &session_id, completed_at)?;
     Ok(completed_at)
 }
@@ -447,10 +469,7 @@ pub async fn export_session(
                 .and_then(|c| c.as_str())
                 .unwrap_or("")
                 .to_string(),
-            timestamp: m
-                .get("created_at")
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
+            timestamp: m.get("created_at").and_then(|t| t.as_i64()).unwrap_or(0),
             has_image: m.get("image").is_some(),
             image_data: m
                 .get("image")
@@ -497,8 +516,7 @@ pub async fn write_binary_file(path: String, data: Vec<u8>) -> Result<(), String
 
     // 确保父目录存在
     if let Some(parent) = std::path::Path::new(&path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
 
     std::fs::write(&path, data).map_err(|e| format!("写入文件失败: {}", e))
@@ -579,20 +597,21 @@ pub fn delete_file(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn convert_html_to_pdf(html_path: String, pdf_path: String) -> Result<(), String> {
     use std::process::Command;
-    
+
     // 尝试找到 Edge 浏览器路径
     let edge_paths = vec![
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     ];
-    
-    let edge_path = edge_paths.iter()
+
+    let edge_path = edge_paths
+        .iter()
         .find(|p| std::path::Path::new(p).exists())
         .ok_or_else(|| "未找到 Microsoft Edge 浏览器，无法生成 PDF".to_string())?;
-    
+
     // 将 Windows 路径转为 file:// URL
     let html_url = format!("file:///{}", html_path.replace('\\', "/"));
-    
+
     let output = Command::new(edge_path)
         .args([
             "--headless",
@@ -605,17 +624,17 @@ pub async fn convert_html_to_pdf(html_path: String, pdf_path: String) -> Result<
         ])
         .output()
         .map_err(|e| format!("启动 Edge 浏览器失败: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("PDF 转换失败: {}", stderr));
     }
-    
+
     // 验证 PDF 文件是否生成成功
     if !std::path::Path::new(&pdf_path).exists() {
         return Err("PDF 文件生成失败，请检查 Edge 浏览器是否正常".to_string());
     }
-    
+
     Ok(())
 }
 
@@ -649,15 +668,15 @@ pub async fn start_review(
     config: crate::ai::types::ProviderConfig,
     model: String,
 ) -> Result<(), String> {
-    use crate::review::types::{ReviewProgress, ReviewPhase};
+    use crate::review::types::{ReviewPhase, ReviewProgress};
     use tauri::Emitter;
-    
+
     // 1. 更新 review_status 为 "in_progress"
     crate::database::update_review_status(&db, &session_id, "in_progress")?;
-    
+
     // 2. 获取 interview_context
     let interview_context = get_interview_context(&db, &session_id)?;
-    
+
     // 3. 调用 scorer::score_session_messages() 获取评分
     let message_scores = match crate::review::scorer::score_session_messages(
         &app,
@@ -668,25 +687,30 @@ pub async fn start_review(
         &config,
         &model,
         interview_context.as_deref(),
-    ).await {
+    )
+    .await
+    {
         Ok(scores) => scores,
         Err(e) => {
             // 重置状态并推送失败事件
             let _ = reset_review_status(&db, &session_id);
-            let _ = app.emit("review-progress", ReviewProgress {
-                phase: ReviewPhase::Failed,
-                current: 0,
-                total: 0,
-                message: format!("评分失败: {}", e),
-            });
+            let _ = app.emit(
+                "review-progress",
+                ReviewProgress {
+                    phase: ReviewPhase::Failed,
+                    current: 0,
+                    total: 0,
+                    message: format!("评分失败: {}", e),
+                },
+            );
             return Err(e);
         }
     };
-    
+
     // 4. 准备 messages 列表（配对 question + answer）给 analyzer
     let messages_json = crate::database::get_session_messages(&db, &session_id)?;
     let qa_messages = extract_qa_messages(&messages_json);
-    
+
     // 5. 调用 analyzer::analyze_session() 获取洞察
     let _insights = match crate::review::analyzer::analyze_session(
         &app,
@@ -698,21 +722,26 @@ pub async fn start_review(
         &model,
         &message_scores,
         &qa_messages,
-    ).await {
+    )
+    .await
+    {
         Ok(insights) => insights,
         Err(e) => {
             // 重置状态并推送失败事件
             let _ = reset_review_status(&db, &session_id);
-            let _ = app.emit("review-progress", ReviewProgress {
-                phase: ReviewPhase::Failed,
-                current: 0,
-                total: 0,
-                message: format!("分析失败: {}", e),
-            });
+            let _ = app.emit(
+                "review-progress",
+                ReviewProgress {
+                    phase: ReviewPhase::Failed,
+                    current: 0,
+                    total: 0,
+                    message: format!("分析失败: {}", e),
+                },
+            );
             return Err(e);
         }
     };
-    
+
     // 6. 计算总体评分（所有 message_scores 的 overall_score 平均值）
     let overall_score = if message_scores.is_empty() {
         0.0
@@ -720,26 +749,29 @@ pub async fn start_review(
         let sum: f64 = message_scores.iter().map(|s| s.overall_score).sum();
         (sum / message_scores.len() as f64 * 100.0).round() / 100.0
     };
-    
+
     // 7. 获取当前时间戳
     let completed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    
+
     // 8. 更新 sessions 表：overall_score, review_status="completed", completed_at
     crate::database::update_overall_score(&db, &session_id, overall_score)?;
     crate::database::update_completed_at(&db, &session_id, completed_at)?;
     crate::database::update_review_status(&db, &session_id, "completed")?;
-    
+
     // 9. 推送完成进度事件
-    let _ = app.emit("review-progress", ReviewProgress {
-        phase: ReviewPhase::Completed,
-        current: 1,
-        total: 1,
-        message: format!("复盘完成，综合评分: {:.1}", overall_score),
-    });
-    
+    let _ = app.emit(
+        "review-progress",
+        ReviewProgress {
+            phase: ReviewPhase::Completed,
+            current: 1,
+            total: 1,
+            message: format!("复盘完成，综合评分: {:.1}", overall_score),
+        },
+    );
+
     Ok(())
 }
 
@@ -768,13 +800,13 @@ pub async fn delete_review(
 ) -> Result<(), String> {
     // 1. 删除 message_scores
     crate::database::delete_message_scores(&db, &session_id)?;
-    
+
     // 2. 删除 session_insights
     crate::database::delete_session_insights(&db, &session_id)?;
-    
+
     // 3. 重置 sessions 的 review_status 和 overall_score 为 NULL
     reset_review_status(&db, &session_id)?;
-    
+
     Ok(())
 }
 
@@ -784,14 +816,15 @@ fn get_interview_context(
     session_id: &str,
 ) -> Result<Option<String>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    
-    let mut stmt = conn.prepare(
-        "SELECT interview_context FROM sessions WHERE id = ?1"
-    ).map_err(|e| e.to_string())?;
-    
-    let mut rows = stmt.query(rusqlite::params![session_id])
+
+    let mut stmt = conn
+        .prepare("SELECT interview_context FROM sessions WHERE id = ?1")
         .map_err(|e| e.to_string())?;
-    
+
+    let mut rows = stmt
+        .query(rusqlite::params![session_id])
+        .map_err(|e| e.to_string())?;
+
     if let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let ctx: Option<String> = row.get(0).map_err(|e| e.to_string())?;
         Ok(ctx)
@@ -801,17 +834,14 @@ fn get_interview_context(
 }
 
 /// 辅助函数：重置复盘状态
-fn reset_review_status(
-    db: &crate::database::Database,
-    session_id: &str,
-) -> Result<(), String> {
+fn reset_review_status(db: &crate::database::Database, session_id: &str) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    
+
     conn.execute(
         "UPDATE sessions SET review_status = NULL, overall_score = NULL, completed_at = NULL WHERE id = ?1",
         rusqlite::params![session_id]
     ).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
@@ -823,31 +853,37 @@ fn reset_review_status(
 fn extract_qa_messages(messages: &[serde_json::Value]) -> Vec<(String, String, String)> {
     let mut pairs = Vec::new();
     let mut i = 0;
-    
+
     while i < messages.len() {
         let msg = &messages[i];
         let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-        
+
         if role == "assistant" {
             // 找到 assistant 消息（面试官提问）
-            let question = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            
+            let question = msg
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
             // 查找后续的 user 消息（应聘者回答）
             if i + 1 < messages.len() {
                 let next_msg = &messages[i + 1];
                 let next_role = next_msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                
+
                 if next_role == "user" {
                     // message_id 是 user 消息的 ID（评分对象）
-                    let message_id = next_msg.get("id")
+                    let message_id = next_msg
+                        .get("id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let answer = next_msg.get("content")
+                    let answer = next_msg
+                        .get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    
+
                     pairs.push((message_id, question, answer));
                     i += 2;
                     continue;
@@ -856,7 +892,7 @@ fn extract_qa_messages(messages: &[serde_json::Value]) -> Vec<(String, String, S
         }
         i += 1;
     }
-    
+
     pairs
 }
 
@@ -896,7 +932,15 @@ pub async fn ai_chat_stream_dynamic(
     let cancel_rx = cancel_registry.register(&request_id);
 
     let result = registry
-        .chat_stream_dynamic(app, &provider_id, &config, &model, messages, &event_name, cancel_rx)
+        .chat_stream_dynamic(
+            app,
+            &provider_id,
+            &config,
+            &model,
+            messages,
+            &event_name,
+            cancel_rx,
+        )
         .await
         .map_err(|e| e.to_string());
 
@@ -933,13 +977,15 @@ pub struct LogExportResult {
 #[tauri::command]
 pub async fn export_logs(
     app: AppHandle,
-    format: String,  // "text" | "json"
+    format: String, // "text" | "json"
     include_frontend: bool,
     frontend_logs: Option<String>,
 ) -> Result<LogExportResult, String> {
     use std::io::Write;
 
-    let log_dir = app.path().app_log_dir()
+    let log_dir = app
+        .path()
+        .app_log_dir()
         .map_err(|e| format!("获取日志目录失败: {}", e))?;
 
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
@@ -976,14 +1022,14 @@ pub async fn export_logs(
     };
 
     // 写入导出文件
-    let mut file = std::fs::File::create(&export_path)
-        .map_err(|e| format!("创建日志文件失败: {}", e))?;
+    let mut file =
+        std::fs::File::create(&export_path).map_err(|e| format!("创建日志文件失败: {}", e))?;
 
     file.write_all(combined.as_bytes())
         .map_err(|e| format!("写入日志文件失败: {}", e))?;
 
-    let metadata = std::fs::metadata(&export_path)
-        .map_err(|e| format!("获取文件信息失败: {}", e))?;
+    let metadata =
+        std::fs::metadata(&export_path).map_err(|e| format!("获取文件信息失败: {}", e))?;
 
     Ok(LogExportResult {
         success: true,
@@ -995,12 +1041,7 @@ pub async fn export_logs(
 
 /// 从前端接收日志
 #[tauri::command]
-pub fn log_from_frontend(
-    level: String,
-    module: String,
-    message: String,
-    data: Option<String>,
-) {
+pub fn log_from_frontend(level: String, module: String, message: String, data: Option<String>) {
     let sanitized_message = sanitize_log_value(&message);
     let sanitized_data = data.as_ref().map(|d| sanitize_log_value(d));
 
@@ -1046,8 +1087,8 @@ pub fn log_from_frontend(
 // ==================== RAG 命令 ====================
 
 use crate::rag::{
-    ChunkConfig, ContextConfig, DocumentChunk, ParseOptions, ParsedDocument, RagEngine,
-    chunk_document, parse_document,
+    chunk_document, parse_document, ChunkConfig, ContextConfig, DocumentChunk,
+    EmbeddingProviderConfig, ParseOptions, ParsedDocument, RagEngine,
 };
 
 /// 向量检索
@@ -1060,13 +1101,22 @@ pub async fn rag_search(
 ) -> Result<Vec<serde_json::Value>, String> {
     let limit = limit.unwrap_or(10);
     let results = engine.search(&query, limit, session_id.as_deref()).await?;
-    
-    Ok(results.into_iter().map(|r| serde_json::json!({
-        "message_id": r.message_id,
-        "chunk_text": r.chunk_text,
-        "score": r.score,
-        "source": format!("{:?}", r.source)
-    })).collect())
+
+    Ok(results
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "chunk_id": r.chunk_id,
+                "embedding_id": r.embedding_id,
+                "message_id": r.message_id,
+                "document_id": r.document_id,
+                "chunk_text": r.chunk_text,
+                "score": r.score,
+                "source": format!("{:?}", r.source),
+                "source_kind": format!("{:?}", r.source_kind),
+            })
+        })
+        .collect())
 }
 
 /// 手动触发消息向量化
@@ -1132,13 +1182,24 @@ pub fn rag_stats(
 /// 配置 RAG Embedding Provider
 #[tauri::command]
 pub fn rag_configure(
-    _engine: State<'_, std::sync::Arc<RagEngine>>,
-    _api_key: String,
-    _base_url: Option<String>,
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    config: EmbeddingProviderConfig,
 ) -> Result<bool, String> {
-    // 注意：RAG Embedding 配置需要在启动时完成
-    // 此命令仅用于更新 API Key
-    tracing::info!("RAG API Key 已更新");
+    let provider = format!("{:?}", config.provider);
+    let requested_model = config
+        .model
+        .clone()
+        .unwrap_or_else(|| "<default>".to_string());
+
+    engine.configure_embedding_provider(config)?;
+
+    tracing::info!(
+        provider = %provider,
+        requested_model = %requested_model,
+        active_model = %engine.current_embedding_model_id()?.unwrap_or_else(|| "<none>".to_string()),
+        "RAG embedding provider configured"
+    );
+
     Ok(true)
 }
 

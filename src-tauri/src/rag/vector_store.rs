@@ -1,12 +1,16 @@
-// 向量存储引擎 - SQLite BLOB 存储 + Rust 原生余弦相似度计算
+// 消息向量存储引擎 - SQLite BLOB 存储 + Rust 原生余弦相似度计算
+//
+// 注意：
+// - 当前实现只负责 `messages` 表关联的历史消息向量。
+// - 后续知识库文档会使用独立的 `kb_*` 表和独立 store 层，而不是继续复用这里的 API。
 
 use crate::database::Database;
-use rusqlite::params;
+use rusqlite::{params, Row};
 use std::sync::Arc;
 
-/// 向量条目
+/// 消息向量条目
 #[derive(Debug, Clone)]
-pub struct EmbeddingEntry {
+pub struct MessageEmbeddingEntry {
     pub id: String,
     pub message_id: String,
     pub chunk_idx: usize,
@@ -17,23 +21,31 @@ pub struct EmbeddingEntry {
     pub created_at: i64,
 }
 
-/// 向量存储
-pub struct VectorStore {
+/// 历史消息向量存储。
+///
+/// 该 store 的所有读写都绑定 `vec_embeddings -> messages` 这条关系链，
+/// 不承载知识库文档分块向量。
+pub struct MessageVectorStore {
     db: Arc<Database>,
     /// LRU 缓存：message_id -> Vec<f32>
     cache: std::sync::Mutex<lru::LruCache<String, Vec<f32>>>,
 }
 
+/// 兼容旧命名。新代码应优先使用 `MessageVectorStore`。
+pub type VectorStore = MessageVectorStore;
+/// 兼容旧命名。新代码应优先使用 `MessageEmbeddingEntry`。
+pub type EmbeddingEntry = MessageEmbeddingEntry;
+
 mod lru {
-    use std::collections::HashMap;
     use std::collections::hash_map::Entry;
-    
+    use std::collections::HashMap;
+
     pub struct LruCache<K, V> {
         capacity: usize,
         order: Vec<K>,
         map: HashMap<K, V>,
     }
-    
+
     impl<K: std::hash::Hash + Eq + Clone, V: Clone> LruCache<K, V> {
         pub fn new(capacity: usize) -> Self {
             Self {
@@ -42,7 +54,7 @@ mod lru {
                 map: HashMap::new(),
             }
         }
-        
+
         pub fn get(&mut self, key: &K) -> Option<&V> {
             if let Entry::Occupied(_) = self.map.entry(key.clone()) {
                 // 移动到末尾（最近使用）
@@ -53,7 +65,7 @@ mod lru {
                 None
             }
         }
-        
+
         pub fn put(&mut self, key: K, value: V) {
             if self.order.len() >= self.capacity {
                 if let Some(oldest) = self.order.first().cloned() {
@@ -67,8 +79,24 @@ mod lru {
     }
 }
 
-impl VectorStore {
-    /// 创建向量存储
+impl MessageVectorStore {
+    fn map_embedding_row(row: &Row<'_>) -> Result<MessageEmbeddingEntry, rusqlite::Error> {
+        let blob: Vec<u8> = row.get(4)?;
+        let embedding = Self::blob_to_embedding(&blob);
+
+        Ok(MessageEmbeddingEntry {
+            id: row.get(0)?,
+            message_id: row.get(1)?,
+            chunk_idx: row.get::<_, i32>(2)? as usize,
+            chunk_text: row.get(3)?,
+            embedding,
+            embedding_dim: row.get::<_, i32>(5)? as usize,
+            model_id: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    }
+
+    /// 创建消息向量存储
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             db,
@@ -78,9 +106,7 @@ impl VectorStore {
 
     /// 向量序列化为 BLOB（Little-Endian f32）
     pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-        embedding.iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect()
+        embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
     /// BLOB 反序列化为向量
@@ -94,19 +120,23 @@ impl VectorStore {
     #[inline]
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len(), "向量维度必须一致");
-        
+
         let mut dot = 0.0f32;
         let mut norm_a = 0.0f32;
         let mut norm_b = 0.0f32;
-        
+
         for i in 0..a.len() {
             dot += a[i] * b[i];
             norm_a += a[i] * a[i];
             norm_b += b[i] * b[i];
         }
-        
+
         let denom = (norm_a * norm_b).sqrt();
-        if denom < 1e-10 { 0.0 } else { dot / denom }
+        if denom < 1e-10 {
+            0.0
+        } else {
+            dot / denom
+        }
     }
 
     /// Top-K 检索（堆排序优化）
@@ -117,10 +147,10 @@ impl VectorStore {
         threshold: f32,
     ) -> Vec<(String, f32)> {
         use std::cmp::Ordering;
-        
+
         #[derive(PartialEq)]
         struct ScoreItem(f32, String);
-        
+
         impl Eq for ScoreItem {}
         impl Ord for ScoreItem {
             fn cmp(&self, other: &Self) -> Ordering {
@@ -132,10 +162,10 @@ impl VectorStore {
                 Some(self.cmp(other))
             }
         }
-        
+
         use std::collections::BinaryHeap;
         let mut heap = BinaryHeap::with_capacity(k + 1);
-        
+
         for (id, emb) in candidates {
             let score = Self::cosine_similarity(query, emb);
             if score >= threshold {
@@ -145,7 +175,7 @@ impl VectorStore {
                 }
             }
         }
-        
+
         heap.into_sorted_vec()
             .into_iter()
             .map(|item| (item.1, item.0))
@@ -163,61 +193,94 @@ impl VectorStore {
         embedding_dim: usize,
     ) -> Result<String, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let blob = Self::embedding_to_blob(embedding);
-        
+
         conn.execute(
             "INSERT INTO vec_embeddings (id, message_id, chunk_idx, chunk_text, embedding, embedding_dim, model_id, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![id, message_id, chunk_idx as i32, chunk_text, blob, embedding_dim as i32, model_id, now],
         ).map_err(|e| e.to_string())?;
-        
+
         Ok(id)
     }
 
-    /// 加载指定 message_id 的所有向量
-    pub fn load_embeddings_for_message(&self, message_id: &str) -> Result<Vec<EmbeddingEntry>, String> {
+    /// 加载指定 message_id 的所有消息向量
+    pub fn load_embeddings_for_message(
+        &self,
+        message_id: &str,
+    ) -> Result<Vec<MessageEmbeddingEntry>, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         let mut stmt = conn.prepare(
             "SELECT id, message_id, chunk_idx, chunk_text, embedding, embedding_dim, model_id, created_at
              FROM vec_embeddings WHERE message_id = ?1 ORDER BY chunk_idx"
         ).map_err(|e| e.to_string())?;
-        
-        let entries = stmt.query_map(params![message_id], |row| {
-            let blob: Vec<u8> = row.get(4)?;
-            let embedding = Self::blob_to_embedding(&blob);
-            
-            Ok(EmbeddingEntry {
-                id: row.get(0)?,
-                message_id: row.get(1)?,
-                chunk_idx: row.get::<_, i32>(2)? as usize,
-                chunk_text: row.get(3)?,
-                embedding,
-                embedding_dim: row.get::<_, i32>(5)? as usize,
-                model_id: row.get(6)?,
-                created_at: row.get(7)?,
+
+        let entries = stmt
+            .query_map(params![message_id], |row| {
+                let blob: Vec<u8> = row.get(4)?;
+                let embedding = Self::blob_to_embedding(&blob);
+
+                Ok(MessageEmbeddingEntry {
+                    id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    chunk_idx: row.get::<_, i32>(2)? as usize,
+                    chunk_text: row.get(3)?,
+                    embedding,
+                    embedding_dim: row.get::<_, i32>(5)? as usize,
+                    model_id: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
             })
-        }).map_err(|e| e.to_string())?;
-        
+            .map_err(|e| e.to_string())?;
+
         let mut result = Vec::new();
         for entry in entries {
             result.push(entry.map_err(|e| e.to_string())?);
         }
-        
+
         Ok(result)
     }
 
-    /// 加载所有向量（可选按 session_id 过滤）
-    pub fn load_all_embeddings(&self, session_filter: Option<&str>) -> Result<Vec<EmbeddingEntry>, String> {
+    /// 加载所有消息向量（可选按 session_id 过滤）
+    pub fn load_all_embeddings(
+        &self,
+        session_filter: Option<&str>,
+    ) -> Result<Vec<MessageEmbeddingEntry>, String> {
+        self.load_embeddings(session_filter, None)
+    }
+
+    /// 加载所有消息向量，可选按 session_id / model_id 过滤。
+    pub fn load_embeddings(
+        &self,
+        session_filter: Option<&str>,
+        model_filter: Option<&str>,
+    ) -> Result<Vec<MessageEmbeddingEntry>, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
         let mut result = Vec::new();
-        
-        match session_filter {
-            Some(session_id) => {
+
+        match (session_filter, model_filter) {
+            (Some(session_id), Some(model_id)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT ve.id, ve.message_id, ve.chunk_idx, ve.chunk_text, ve.embedding, ve.embedding_dim, ve.model_id, ve.created_at
+                     FROM vec_embeddings ve
+                     JOIN messages m ON ve.message_id = m.id
+                     WHERE m.session_id = ?1 AND ve.model_id = ?2
+                     ORDER BY ve.created_at DESC"
+                ).map_err(|e| e.to_string())?;
+
+                let entries = stmt
+                    .query_map(params![session_id, model_id], Self::map_embedding_row)
+                    .map_err(|e| e.to_string())?;
+
+                for entry in entries {
+                    result.push(entry.map_err(|e| e.to_string())?);
+                }
+            }
+            (Some(session_id), None) => {
                 let mut stmt = conn.prepare(
                     "SELECT ve.id, ve.message_id, ve.chunk_idx, ve.chunk_text, ve.embedding, ve.embedding_dim, ve.model_id, ve.created_at
                      FROM vec_embeddings ve
@@ -225,68 +288,60 @@ impl VectorStore {
                      WHERE m.session_id = ?1
                      ORDER BY ve.created_at DESC"
                 ).map_err(|e| e.to_string())?;
-                
-                let entries = stmt.query_map(params![session_id], |row| {
-                    let blob: Vec<u8> = row.get(4)?;
-                    let embedding = Self::blob_to_embedding(&blob);
-                    
-                    Ok(EmbeddingEntry {
-                        id: row.get(0)?,
-                        message_id: row.get(1)?,
-                        chunk_idx: row.get::<_, i32>(2)? as usize,
-                        chunk_text: row.get(3)?,
-                        embedding,
-                        embedding_dim: row.get::<_, i32>(5)? as usize,
-                        model_id: row.get(6)?,
-                        created_at: row.get(7)?,
-                    })
-                }).map_err(|e| e.to_string())?;
-                
+
+                let entries = stmt
+                    .query_map(params![session_id], Self::map_embedding_row)
+                    .map_err(|e| e.to_string())?;
+
                 for entry in entries {
                     result.push(entry.map_err(|e| e.to_string())?);
                 }
             }
-            None => {
+            (None, Some(model_id)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, message_id, chunk_idx, chunk_text, embedding, embedding_dim, model_id, created_at
+                     FROM vec_embeddings
+                     WHERE model_id = ?1
+                     ORDER BY created_at DESC"
+                ).map_err(|e| e.to_string())?;
+
+                let entries = stmt
+                    .query_map(params![model_id], Self::map_embedding_row)
+                    .map_err(|e| e.to_string())?;
+
+                for entry in entries {
+                    result.push(entry.map_err(|e| e.to_string())?);
+                }
+            }
+            (None, None) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, message_id, chunk_idx, chunk_text, embedding, embedding_dim, model_id, created_at
                      FROM vec_embeddings ORDER BY created_at DESC"
                 ).map_err(|e| e.to_string())?;
-                
-                let entries = stmt.query_map([], |row| {
-                    let blob: Vec<u8> = row.get(4)?;
-                    let embedding = Self::blob_to_embedding(&blob);
-                    
-                    Ok(EmbeddingEntry {
-                        id: row.get(0)?,
-                        message_id: row.get(1)?,
-                        chunk_idx: row.get::<_, i32>(2)? as usize,
-                        chunk_text: row.get(3)?,
-                        embedding,
-                        embedding_dim: row.get::<_, i32>(5)? as usize,
-                        model_id: row.get(6)?,
-                        created_at: row.get(7)?,
-                    })
-                }).map_err(|e| e.to_string())?;
-                
+
+                let entries = stmt
+                    .query_map([], Self::map_embedding_row)
+                    .map_err(|e| e.to_string())?;
+
                 for entry in entries {
                     result.push(entry.map_err(|e| e.to_string())?);
                 }
             }
         }
-        
+
         Ok(result)
     }
 
-    /// 获取消息的 chunk_text（用于填充检索结果）
+    /// 获取消息分块的 chunk_text（用于填充检索结果）
     pub fn get_chunk_text(&self, embedding_id: &str) -> Result<Option<String>, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         let result: Result<String, _> = conn.query_row(
             "SELECT chunk_text FROM vec_embeddings WHERE id = ?1",
             params![embedding_id],
             |row| row.get(0),
         );
-        
+
         match result {
             Ok(text) => Ok(Some(text)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -297,59 +352,63 @@ impl VectorStore {
     /// 按 message_id 删除向量
     pub fn delete_by_message_id(&self, message_id: &str) -> Result<(), String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         conn.execute(
             "DELETE FROM vec_embeddings WHERE message_id = ?1",
             params![message_id],
-        ).map_err(|e| e.to_string())?;
-        
+        )
+        .map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
     /// 按 model_id 删除向量（模型切换时清理旧向量）
     pub fn delete_by_model(&self, model_id: &str) -> Result<(), String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         conn.execute(
             "DELETE FROM vec_embeddings WHERE model_id = ?1",
             params![model_id],
-        ).map_err(|e| e.to_string())?;
-        
+        )
+        .map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
-    /// 获取统计信息
+    /// 获取消息向量统计信息
     pub fn get_stats(&self) -> Result<super::RagStats, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
+
         // 总向量数
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_embeddings",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
-        
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_embeddings", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+
         // 独立消息数
-        let messages: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT message_id) FROM vec_embeddings",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
-        
+        let messages: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT message_id) FROM vec_embeddings",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
         // 存储大小
         let storage_size: i64 = conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(embedding) + LENGTH(chunk_text) + 50), 0) FROM vec_embeddings",
             [],
             |row| row.get(0),
         ).map_err(|e| e.to_string())?;
-        
+
         // 最新模型 ID
-        let model_id: Option<String> = conn.query_row(
-            "SELECT model_id FROM vec_embeddings ORDER BY created_at DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
-        
+        let model_id: Option<String> = conn
+            .query_row(
+                "SELECT model_id FROM vec_embeddings ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
         Ok(super::RagStats {
             total: total as usize,
             messages: messages as usize,
@@ -361,37 +420,43 @@ impl VectorStore {
     /// 检查消息是否已向量化
     pub fn is_message_embedded(&self, message_id: &str) -> Result<bool, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vec_embeddings WHERE message_id = ?1",
-            params![message_id],
-            |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
-        
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vec_embeddings WHERE message_id = ?1",
+                params![message_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
         Ok(count > 0)
     }
 
     /// 搜索未向量化的消息
     pub fn get_unembedded_messages(&self, limit: usize) -> Result<Vec<(String, String)>, String> {
         let conn = self.db.0.lock().map_err(|e| e.to_string())?;
-        
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.content FROM messages m
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.id, m.content FROM messages m
              LEFT JOIN vec_embeddings ve ON m.id = ve.message_id
              WHERE ve.id IS NULL AND LENGTH(m.content) > 10
              ORDER BY m.created_at DESC
-             LIMIT ?1"
-        ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map(params![limit as i32], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).map_err(|e| e.to_string())?;
-        
+             LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(params![limit as i32], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+
         let mut result = Vec::new();
         for row in rows {
             result.push(row.map_err(|e| e.to_string())?);
         }
-        
+
         Ok(result)
     }
 }
@@ -399,26 +464,26 @@ impl VectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_blob_conversion() {
         let embedding = vec![0.1f32, 0.2, 0.3, 0.4];
-        let blob = VectorStore::embedding_to_blob(&embedding);
-        let restored = VectorStore::blob_to_embedding(&blob);
-        
+        let blob = MessageVectorStore::embedding_to_blob(&embedding);
+        let restored = MessageVectorStore::blob_to_embedding(&blob);
+
         assert_eq!(embedding.len(), restored.len());
         for (a, b) in embedding.iter().zip(restored.iter()) {
             assert!((a - b).abs() < 1e-6);
         }
     }
-    
+
     #[test]
     fn test_cosine_similarity() {
         let a = vec![1.0f32, 0.0, 0.0];
         let b = vec![1.0f32, 0.0, 0.0];
         let c = vec![0.0f32, 1.0, 0.0];
-        
-        assert!((VectorStore::cosine_similarity(&a, &b) - 1.0).abs() < 1e-6);
-        assert!((VectorStore::cosine_similarity(&a, &c) - 0.0).abs() < 1e-6);
+
+        assert!((MessageVectorStore::cosine_similarity(&a, &b) - 1.0).abs() < 1e-6);
+        assert!((MessageVectorStore::cosine_similarity(&a, &c) - 0.0).abs() < 1e-6);
     }
 }

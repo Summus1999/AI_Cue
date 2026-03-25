@@ -3,10 +3,14 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface SearchResult {
-  message_id: string;
+  chunk_id: string;
+  embedding_id: string | null;
+  message_id: string | null;
+  document_id: string | null;
   chunk_text: string;
   score: number;
   source: 'Vector' | 'Keyword' | 'Hybrid';
+  source_kind: 'Message' | 'KnowledgeBaseDocument';
 }
 
 export interface RagStats {
@@ -14,6 +18,15 @@ export interface RagStats {
   total_messages: number;
   storage_bytes: number;
   model_id: string | null;
+}
+
+export type EmbeddingProviderKind = 'qwen' | 'openai_compat';
+
+export interface EmbeddingProviderConfig {
+  provider: EmbeddingProviderKind;
+  apiKey: string;
+  baseUrl?: string | null;
+  model?: string | null;
 }
 
 export type DocumentType = 'markdown' | 'pdf' | 'plain_text' | 'code';
@@ -156,13 +169,11 @@ export const ragService = {
   
   /**
    * 配置 RAG Embedding Provider
-   * @param apiKey API Key
-   * @param baseUrl 可选，自定义 API 地址
+   * @param config Provider 运行时配置
    */
-  async configure(apiKey: string, baseUrl?: string): Promise<boolean> {
+  async configure(config: EmbeddingProviderConfig): Promise<boolean> {
     return invoke<boolean>('rag_configure', { 
-      apiKey, 
-      baseUrl 
+      config 
     });
   },
   
