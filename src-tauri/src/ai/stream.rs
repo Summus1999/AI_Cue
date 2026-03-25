@@ -2,6 +2,7 @@
 
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::watch;
 use crate::ai::traits::AIError;
 use crate::ai::types::{OpenAIStreamChunk, StreamEvent};
 
@@ -18,13 +19,34 @@ pub async fn parse_openai_sse_stream(
     app: &AppHandle,
     response: reqwest::Response,
     event_name: &str,
+    mut cancel_rx: watch::Receiver<bool>,
 ) -> Result<bool, AIError> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut received_done = false;
     let mut finish_reason = String::new();
-    
-    while let Some(chunk) = stream.next().await {
+
+    if *cancel_rx.borrow() {
+        emit_user_abort(app, event_name);
+        return Ok(false);
+    }
+
+    loop {
+        let next_chunk = tokio::select! {
+            changed = cancel_rx.changed() => {
+                if changed.is_ok() && *cancel_rx.borrow() {
+                    emit_user_abort(app, event_name);
+                    return Ok(false);
+                }
+                continue;
+            }
+            chunk = stream.next() => chunk,
+        };
+
+        let Some(chunk) = next_chunk else {
+            break;
+        };
+
         let chunk = chunk.map_err(|e| AIError::StreamParse(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
     
@@ -57,6 +79,10 @@ pub async fn parse_openai_sse_stream(
                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(json_str) {
                     // 检查 finish_reason
                     if let Some(choice) = chunk.choices.first() {
+                        if *cancel_rx.borrow() {
+                            emit_user_abort(app, event_name);
+                            return Ok(false);
+                        }
                         if let Some(reason) = &choice.finish_reason {
                             finish_reason = reason.clone();
                         }
@@ -99,12 +125,33 @@ pub async fn parse_claude_sse_stream(
     app: &AppHandle,
     response: reqwest::Response,
     event_name: &str,
+    mut cancel_rx: watch::Receiver<bool>,
 ) -> Result<bool, AIError> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut current_event_type = String::new();
 
-    while let Some(chunk) = stream.next().await {
+    if *cancel_rx.borrow() {
+        emit_user_abort(app, event_name);
+        return Ok(false);
+    }
+
+    loop {
+        let next_chunk = tokio::select! {
+            changed = cancel_rx.changed() => {
+                if changed.is_ok() && *cancel_rx.borrow() {
+                    emit_user_abort(app, event_name);
+                    return Ok(false);
+                }
+                continue;
+            }
+            chunk = stream.next() => chunk,
+        };
+
+        let Some(chunk) = next_chunk else {
+            break;
+        };
+
         let chunk = chunk.map_err(|e| AIError::StreamParse(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -147,6 +194,10 @@ pub async fn parse_claude_sse_stream(
                 // 内容块增量
                 if current_event_type == "content_block_delta" {
                     if let Ok(event) = serde_json::from_str::<crate::ai::types::ClaudeStreamEvent>(json_str) {
+                        if *cancel_rx.borrow() {
+                            emit_user_abort(app, event_name);
+                            return Ok(false);
+                        }
                         if let Some(delta) = event.delta {
                             if let Some(text) = delta.text {
                                 let _ = app.emit(event_name, StreamEvent {
@@ -186,4 +237,13 @@ pub fn handle_error_status(response: &reqwest::Response) -> Result<(), AIError> 
         429 => AIError::RateLimit("请求频率超限，请稍后重试".to_string()),
         _ => AIError::Api(status.as_u16(), format!("HTTP {}", status)),
     })
+}
+
+fn emit_user_abort(app: &AppHandle, event_name: &str) {
+    let _ = app.emit(event_name, StreamEvent {
+        content: String::new(),
+        done: true,
+        is_complete: Some(false),
+        finish_reason: Some("user_abort".to_string()),
+    });
 }

@@ -29,7 +29,7 @@ base64 = "0.22"
 uuid = { version = "1.10", features = ["v4"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 # 日志系统依赖
 tracing = "0.1"

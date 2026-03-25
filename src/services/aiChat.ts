@@ -47,6 +47,11 @@ interface StreamEvent {
   finishReason?: string;
 }
 
+interface StreamRequestOptions {
+  requestId: string;
+  eventPrefix?: 'ai-stream' | 'qwen-stream';
+}
+
 export const SCREENSHOT_ANALYSIS_PROMPT =
   '请识别截图中的算法题，并直接给出最终可提交的 C++ 解法。如果题面不完整，请做合理假设。';
 
@@ -124,36 +129,85 @@ export interface StreamResult {
 /** 流超时时间（毫秒）：2分钟 */
 const STREAM_TIMEOUT_MS = 2 * 60 * 1000;
 
+const localStreamControllers = new Map<string, () => void>();
+
+function buildStreamEventName(
+  requestId: string,
+  eventPrefix: 'ai-stream' | 'qwen-stream' = 'ai-stream',
+): string {
+  return `${eventPrefix}:${requestId}`;
+}
+
+export async function cancelStreamRequest(requestId: string): Promise<void> {
+  localStreamControllers.get(requestId)?.();
+
+  try {
+    await invoke('ai_cancel_stream', { requestId });
+  } catch (error) {
+    console.error('[AI] 取消流请求失败:', error);
+  }
+}
+
 async function streamWithEvent(
   invokeCommand: string,
   invokeArgs: Record<string, unknown>,
   onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
-  eventName: string = 'ai-stream',
+  options: StreamRequestOptions,
 ): Promise<StreamResult> {
+  const eventName = buildStreamEventName(options.requestId, options.eventPrefix ?? 'ai-stream');
   const charQueue: string[] = [];
   let isProcessing = false;
   let isDone = false;
   let resolveDone: ((result: StreamResult) => void) | null = null;
   let rejectDone: ((error: Error) => void) | null = null;
   let streamResult: StreamResult = { isComplete: true };
+  let isSettled = false;
+  let unlistenFn: (() => void) | null = null;
 
   const donePromise = new Promise<StreamResult>((resolve, reject) => {
     resolveDone = resolve;
     rejectDone = reject;
   });
 
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    charQueue.length = 0;
+    localStreamControllers.delete(options.requestId);
+    if (unlistenFn) {
+      unlistenFn();
+      unlistenFn = null;
+    }
+  };
+
+  const resolveStream = (result: StreamResult) => {
+    if (isSettled) return;
+    isSettled = true;
+    cleanup();
+    resolveDone?.(result);
+  };
+
+  const rejectStream = (error: Error) => {
+    if (isSettled) return;
+    isSettled = true;
+    cleanup();
+    rejectDone?.(error);
+  };
+
   // 设置超时保护
   const timeoutId = setTimeout(() => {
-    if (!isDone) {
-      rejectDone?.(new Error(`流响应超时（>${STREAM_TIMEOUT_MS / 1000}秒），请检查网络连接或稍后重试`));
+    if (!isDone && !isSettled) {
+      rejectStream(new Error(`流响应超时（>${STREAM_TIMEOUT_MS / 1000}秒），请检查网络连接或稍后重试`));
     }
   }, STREAM_TIMEOUT_MS);
 
   const processQueue = () => {
+    if (isSettled) {
+      return;
+    }
     if (isProcessing || charQueue.length === 0) {
       if (isDone && charQueue.length === 0) {
         onChunk('', true, streamResult.isComplete, streamResult.finishReason);
-        resolveDone?.(streamResult);
+        resolveStream(streamResult);
       }
       return;
     }
@@ -169,6 +223,10 @@ async function streamWithEvent(
   };
 
   const unlisten = await listen<StreamEvent>(eventName, (event) => {
+    if (isSettled) {
+      return;
+    }
+
     if (event.payload.done) {
       isDone = true;
       // 保存流完成状态
@@ -178,7 +236,7 @@ async function streamWithEvent(
       };
       if (charQueue.length === 0) {
         onChunk('', true, streamResult.isComplete, streamResult.finishReason);
-        resolveDone?.(streamResult);
+        resolveStream(streamResult);
       }
       return;
     }
@@ -191,16 +249,31 @@ async function streamWithEvent(
     }
   });
 
+  unlistenFn = unlisten;
+
+  localStreamControllers.set(options.requestId, () => {
+    if (isSettled) {
+      return;
+    }
+
+    isDone = true;
+    streamResult = {
+      isComplete: false,
+      finishReason: 'user_abort',
+    };
+    onChunk('', true, false, 'user_abort');
+    resolveStream(streamResult);
+  });
+
   try {
-    await invoke(invokeCommand, invokeArgs);
-    const result = await donePromise;
-    clearTimeout(timeoutId);
-    return result;
+    void invoke(invokeCommand, invokeArgs).catch((error) => {
+      rejectStream(error instanceof Error ? error : new Error(String(error)));
+      return null;
+    });
+    return await donePromise;
   } catch (error) {
-    clearTimeout(timeoutId);
+    rejectStream(error instanceof Error ? error : new Error(String(error)));
     throw error;
-  } finally {
-    unlisten();
   }
 }
 
@@ -214,6 +287,7 @@ export async function sendStream(
   question: string,
   config: AppConfig,
   onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
+  requestId: string,
   history: ChatMessage[] = [],
 ): Promise<StreamResult> {
   const provider = config.activeProvider;
@@ -240,9 +314,13 @@ export async function sendStream(
       },
       model: providerConfig.model,
       messages,
+      requestId,
     },
     onChunk,
-    'ai-stream',
+    {
+      requestId,
+      eventPrefix: 'ai-stream',
+    },
   );
 }
 
@@ -339,6 +417,7 @@ export async function sendToQwenStream(
   question: string,
   config: AppConfig,
   onChunk: (content: string, done: boolean) => void,
+  requestId: string,
   history: ChatMessage[] = [],
 ): Promise<void> {
   // 兼容旧配置格式
@@ -357,9 +436,12 @@ export async function sendToQwenStream(
 
   await streamWithEvent(
     'qwen_chat_stream',
-    { apiKey, model, messages },
+    { apiKey, model, messages, requestId },
     onChunk,
-    'qwen-stream',
+    {
+      requestId,
+      eventPrefix: 'qwen-stream',
+    },
   );
 }
 
@@ -370,7 +452,8 @@ export async function sendToQwenStreamWithImage(
   prompt: string,
   imageBase64: string,
   config: AppConfig,
-  onChunk: (content: string, done: boolean) => void,
+  onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
+  requestId: string,
 ): Promise<void> {
   // 截图视觉始终使用千问
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
@@ -387,8 +470,12 @@ export async function sendToQwenStreamWithImage(
       prompt,
       repoUrls: parseRepoUrls(config.highQualityRepoUrls || ''),
       localDocPath: config.localDocPath?.trim() || null,
+      requestId,
     },
     onChunk,
-    'qwen-stream',
+    {
+      requestId,
+      eventPrefix: 'qwen-stream',
+    },
   );
 }

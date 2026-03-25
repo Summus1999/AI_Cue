@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
+use tokio::sync::watch;
 use crate::ai::{
     stream::{handle_error_status, parse_openai_sse_stream},
     traits::{AIError, AIProvider},
@@ -98,6 +99,8 @@ impl AIProvider for QwenProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, AIError> {
         let url = format!("{}/chat/completions", Self::base_url(config));
         let client = create_http_client(120)?;
@@ -119,7 +122,7 @@ impl AIProvider for QwenProvider {
         handle_error_status(&response)?;
 
         // 复用通用 SSE 解析器（DashScope 使用 OpenAI 兼容格式）
-        parse_openai_sse_stream(&app, response, "ai-stream").await
+        parse_openai_sse_stream(&app, response, event_name, cancel_rx).await
     }
 
     async fn test_connection(

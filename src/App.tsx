@@ -29,10 +29,10 @@ import { recognizeSpeech, getSpeechErrorMessage } from "./services/speechRecogni
 import {
   buildScreenshotFollowUpPrompt,
   SCREENSHOT_ANALYSIS_PROMPT,
+  cancelStreamRequest,
   sendToQwenStreamWithImage,
   sendStream,
   buildContextHistory,
-  StreamResult,
 } from "./services/aiChat";
 import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
@@ -97,6 +97,13 @@ interface ScreenshotCompletePayload {
 // 生成唯一 ID
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
+function generateRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${generateId()}`;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   const chunkSize = 8192;
   let binary = "";
@@ -112,6 +119,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 // 将 finishReason 转换为 interruptReason
 function getInterruptReason(finishReason?: string): Message['interruptReason'] {
   if (!finishReason) return 'error';
+  if (finishReason === 'user_abort') return 'user_abort';
   if (finishReason === 'timeout') return 'timeout';
   if (finishReason === 'interrupted') return 'network';
   if (finishReason === 'error') return 'error';
@@ -228,6 +236,8 @@ function App() {
   const toggleRecordingRef = useRef<() => void>(() => {});
   const handleSendRef = useRef<() => void>(() => {});
   const handleScreenshotRef = useRef<() => void>(() => {});
+  const activeStreamRequestRef = useRef<{ requestId: string; assistantId: string } | null>(null);
+  const locallyCancelledRequestIdsRef = useRef<Set<string>>(new Set());
 
   // 紧凑模式切换处理函数
   const handleToggleCompactMode = useCallback(async () => {
@@ -270,6 +280,33 @@ function App() {
     });
   }, [promptMode, isInterviewEnded, currentQuestionIndex]);
 
+  const stopActiveResponse = useCallback(async () => {
+    const activeRequest = activeStreamRequestRef.current;
+    if (!activeRequest) {
+      return false;
+    }
+
+    activeStreamRequestRef.current = null;
+    locallyCancelledRequestIdsRef.current.add(activeRequest.requestId);
+    setIsGenerating(false);
+    networkResilience.setWaiting(null);
+
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === activeRequest.assistantId && message.role === 'assistant'
+          ? {
+              ...message,
+              isComplete: false,
+              interruptReason: 'user_abort',
+            }
+          : message,
+      ),
+    );
+
+    await cancelStreamRequest(activeRequest.requestId);
+    return true;
+  }, [networkResilience]);
+
   const requestAssistantReply = useCallback(async (
     userContent: string,
     requestText: string,
@@ -280,6 +317,7 @@ function App() {
     const currentMessages = [...messages];
 
     const assistantId = generateId();
+    const requestId = generateRequestId();
     setMessages((prev) => [
       ...prev,
       {
@@ -298,6 +336,10 @@ function App() {
       },
     ]);
 
+    activeStreamRequestRef.current = {
+      requestId,
+      assistantId,
+    };
     setIsGenerating(true);
     networkResilience.setWaiting(assistantId);
 
@@ -333,8 +375,14 @@ function App() {
     try {
       const config = await loadConfig();
       let hasReceivedContent = false;
+      const isLocallyCancelled = () =>
+        locallyCancelledRequestIdsRef.current.has(requestId);
 
       const onChunk = (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => {
+        if (isLocallyCancelled() && !done) {
+          return;
+        }
+
         if (!done && content) {
           hasReceivedContent = true;
           fullAssistantContent += content;
@@ -387,16 +435,19 @@ function App() {
       const send = async () => {
         if (imageBase64) {
           // 截图识别仍使用千问专用接口
-          await sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk);
-          return { isComplete: true } as StreamResult;
+          return sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk, requestId);
         }
         // 使用新的统一流式接口，传递上下文历史
-        return sendStream(requestText, config, onChunk, contextHistory);
+        return sendStream(requestText, config, onChunk, requestId, contextHistory);
       };
 
       try {
         await send();
       } catch (error) {
+        if (isLocallyCancelled()) {
+          return;
+        }
+
         // 分类错误并显示友好提示
         const friendlyError = errorClassifier.classify(
           error instanceof Error ? error.message : String(error)
@@ -409,9 +460,15 @@ function App() {
           hasReceivedContent = false;
           try {
             await send();
+            if (isLocallyCancelled()) {
+              return;
+            }
             networkResilience.clearError(assistantId);
             return;
           } catch (retryError) {
+            if (isLocallyCancelled()) {
+              return;
+            }
             const retryFriendlyError = errorClassifier.classify(
               retryError instanceof Error ? retryError.message : String(retryError)
             );
@@ -431,6 +488,10 @@ function App() {
         );
       }
     } catch (error) {
+      if (locallyCancelledRequestIdsRef.current.has(requestId)) {
+        return;
+      }
+
       const friendlyError = errorClassifier.classify(
         error instanceof Error ? error.message : String(error)
       );
@@ -441,8 +502,12 @@ function App() {
           friendlyError.message,
       );
     } finally {
-      setIsGenerating(false);
-      networkResilience.setWaiting(null);
+      locallyCancelledRequestIdsRef.current.delete(requestId);
+      if (activeStreamRequestRef.current?.requestId === requestId) {
+        activeStreamRequestRef.current = null;
+        setIsGenerating(false);
+        networkResilience.setWaiting(null);
+      }
     }
   }, [
     appendAssistantChunk,
@@ -621,7 +686,11 @@ function App() {
 
   // 发送消息并调用 AI 生成回答
   const handleSend = async () => {
-    if (!input.trim() || isGenerating) return;
+    if (!input.trim()) return;
+
+    if (isGenerating) {
+      await stopActiveResponse();
+    }
 
     const question = input.trim();
     setInput("");
@@ -1193,19 +1262,31 @@ function App() {
 
     const messageIndex = messages.findIndex(m => m.id === messageId);
     const historyMessages = messages.slice(0, messageIndex);
+    const requestId = generateRequestId();
+
+    activeStreamRequestRef.current = {
+      requestId,
+      assistantId: messageId,
+    };
 
     setIsGenerating(true);
     networkResilience.setWaiting(messageId);
 
     try {
       const config = await loadConfig();
+      const isLocallyCancelled = () =>
+        locallyCancelledRequestIdsRef.current.has(requestId);
 
       // 构建续接 prompt
       const continuePrompt = buildContinuePrompt(targetMessage.content, historyMessages, 5);
 
       let continuedContent = '';
 
-      await sendStream(continuePrompt, config, (content, done, isComplete) => {
+      await sendStream(continuePrompt, config, (content, done, isComplete, finishReason) => {
+        if (isLocallyCancelled() && !done) {
+          return;
+        }
+
         if (!done && content) {
           continuedContent += content;
           setMessages(prev => prev.map(m =>
@@ -1217,7 +1298,11 @@ function App() {
         if (done) {
           setMessages(prev => prev.map(m =>
             m.id === messageId
-              ? { ...m, isComplete: isComplete ?? true, interruptReason: undefined }
+              ? {
+                  ...m,
+                  isComplete: isComplete ?? true,
+                  interruptReason: isComplete ? undefined : getInterruptReason(finishReason),
+                }
               : m
           ));
           // 保存续接内容到数据库
@@ -1226,17 +1311,24 @@ function App() {
             saveMessage(currentSessionId, 'assistant', finalContent).catch(console.error);
           }
         }
-      }, buildContextHistory(historyMessages, config.contextWindowSize ?? 5));
+      }, requestId, buildContextHistory(historyMessages, config.contextWindowSize ?? 5));
 
     } catch (error) {
+      if (locallyCancelledRequestIdsRef.current.has(requestId)) {
+        return;
+      }
       console.error('Continue generation failed:', error);
       const friendlyError = errorClassifier.classify(
         error instanceof Error ? error.message : String(error)
       );
       networkResilience.setError(messageId, friendlyError);
     } finally {
-      setIsGenerating(false);
-      networkResilience.setWaiting(null);
+      locallyCancelledRequestIdsRef.current.delete(requestId);
+      if (activeStreamRequestRef.current?.requestId === requestId) {
+        activeStreamRequestRef.current = null;
+        setIsGenerating(false);
+        networkResilience.setWaiting(null);
+      }
     }
   }, [messages, currentSessionId, networkResilience]);
 
@@ -1732,9 +1824,17 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={promptMode === 'interviewer' && isInterviewEnded ? "面试已结束" : isRecording ? "正在录音..." : "输入问题，按 Enter 发送..."}
+            placeholder={
+              promptMode === 'interviewer' && isInterviewEnded
+                ? "面试已结束"
+                : isRecording
+                  ? "正在录音..."
+                  : isGenerating
+                    ? "AI 正在回答，你可以直接输入新问题..."
+                    : "输入问题，按 Enter 发送..."
+            }
             rows={1}
-            disabled={isGenerating || (promptMode === 'interviewer' && isInterviewEnded)}
+            disabled={promptMode === 'interviewer' && isInterviewEnded}
             className="flex-1 min-h-[40px] max-h-[120px] px-4 py-2.5 bg-white/80 text-amber-900 text-sm placeholder:text-amber-400 rounded-xl border border-amber-300 resize-none scrollbar-hide glow-focus transition-all duration-150 disabled:opacity-50"
             style={{ lineHeight: "1.5" }}
           />
@@ -1747,10 +1847,23 @@ function App() {
           >
             <Camera className="w-4 h-4" />
           </button>
+          {isGenerating && (
+            <button
+              onClick={() => {
+                void stopActiveResponse();
+              }}
+              disabled={isRecording}
+              className="flex items-center justify-center w-10 h-10 bg-red-100 hover:bg-red-200 disabled:opacity-30 disabled:cursor-not-allowed text-red-600 rounded-xl border border-red-300 transition-all duration-150"
+              title="停止当前回答"
+            >
+              <Square className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isGenerating || isRecording || (promptMode === 'interviewer' && isInterviewEnded)}
+            disabled={!input.trim() || isRecording || (promptMode === 'interviewer' && isInterviewEnded)}
             className="flex items-center justify-center w-10 h-10 bg-amber-600 hover:bg-amber-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl border border-amber-700 transition-all duration-150"
+            title={isGenerating ? "停止当前回答并发送新问题" : "发送问题"}
           >
             <Send className="w-4 h-4" />
           </button>
@@ -1758,6 +1871,8 @@ function App() {
         <div className="mt-2 text-[10px] text-amber-600 text-center">
           {isRecording ? (
             <span className="text-red-400/60">正在录制{promptMode === 'interviewer' ? '麦克风' : '电脑音频'}... 点击 🎤 停止</span>
+          ) : isGenerating ? (
+            "AI 正在回答 · 可点击 ■ 停止，或直接输入新问题后点发送"
           ) : (
             "Shift + Enter 换行 · Enter 发送 · 🎤 录音 · 📷 截图"
           )}

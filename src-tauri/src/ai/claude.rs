@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
+use tokio::sync::watch;
 use crate::ai::{
     stream::{handle_error_status, parse_claude_sse_stream},
     traits::{AIError, AIProvider},
@@ -149,6 +150,8 @@ impl AIProvider for ClaudeProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, AIError> {
         let base_url = Self::base_url(config);
         let url = format!("{}/v1/messages", base_url);
@@ -179,7 +182,7 @@ impl AIProvider for ClaudeProvider {
         handle_error_status(&response)?;
 
         // 使用 Claude 专用 SSE 解析器
-        parse_claude_sse_stream(&app, response, "ai-stream").await
+        parse_claude_sse_stream(&app, response, event_name, cancel_rx).await
     }
 
     async fn test_connection(

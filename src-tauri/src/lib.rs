@@ -68,6 +68,7 @@ pub fn run() {
             perf::perf_provider_registry_ready();
             let registry = ai::ProviderRegistry::new();
             app.manage(registry.clone());
+            app.manage(ai::cancellation::StreamCancellationRegistry::new());
 
             // 第一层完成
             drop(_layer1_timer);
@@ -157,6 +158,7 @@ pub fn run() {
             // 统一 AI 命令（新增）
             commands::ai_chat,
             commands::ai_chat_stream,
+            commands::ai_cancel_stream,
             commands::ai_test_connection,
             commands::ai_list_providers,
             // 网络健康检查命令（新增）

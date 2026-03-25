@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use tauri::AppHandle;
+use tokio::sync::watch;
 use crate::ai::types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig};
 
 /// 统一错误类型
@@ -57,6 +58,8 @@ pub trait AIProvider: Send + Sync {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, AIError>;
 
     /// 连通性测试（轻量级，用于设置页一键检测）

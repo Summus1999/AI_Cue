@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use tauri::AppHandle;
+use tokio::sync::watch;
 
 use super::traits::AIProvider;
 use super::types::{
@@ -187,6 +188,8 @@ impl AIProvider for ConfigurableProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, super::traits::AIError> {
         let transform = self.descriptor.request_transform.as_ref();
         let endpoint = transform
@@ -225,10 +228,10 @@ impl AIProvider for ConfigurableProvider {
         // 根据 SSE 格式选择解析器
         match self.descriptor.sse_format {
             SseFormat::Claude => {
-                stream::parse_claude_sse_stream(&app, response, "ai-stream").await
+                stream::parse_claude_sse_stream(&app, response, event_name, cancel_rx).await
             }
             _ => {
-                stream::parse_openai_sse_stream(&app, response, "ai-stream").await
+                stream::parse_openai_sse_stream(&app, response, event_name, cancel_rx).await
             }
         }
     }

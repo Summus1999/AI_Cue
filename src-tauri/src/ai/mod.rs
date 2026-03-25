@@ -3,6 +3,7 @@
 pub mod traits;
 pub mod types;
 pub mod stream;
+pub mod cancellation;
 pub mod qwen;
 pub mod openai_compat;
 pub mod claude;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tauri::AppHandle;
+use tokio::sync::watch;
 use traits::AIProvider;
 use types::{ChatMessage, ConnectionTestResult, ProviderConfig, ProviderDescriptor, ProviderMeta};
 use configurable::ConfigurableProvider;
@@ -90,11 +92,22 @@ impl ProviderRegistry {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, traits::AIError> {
         match provider_type {
-            BuiltinProviderType::Qwen => self.qwen.chat_stream(app, config, model, messages).await,
-            BuiltinProviderType::OpenAICompat => self.openai_compat.chat_stream(app, config, model, messages).await,
-            BuiltinProviderType::Claude => self.claude.chat_stream(app, config, model, messages).await,
+            BuiltinProviderType::Qwen => self
+                .qwen
+                .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                .await,
+            BuiltinProviderType::OpenAICompat => self
+                .openai_compat
+                .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                .await,
+            BuiltinProviderType::Claude => self
+                .claude
+                .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                .await,
         }
     }
 
@@ -228,6 +241,8 @@ impl ProviderRegistry {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, traits::AIError> {
         // 先获取 provider 的克隆
         let provider = {
@@ -241,7 +256,9 @@ impl ProviderRegistry {
             .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
 
         // 现在可以安全地 await
-        provider.chat_stream(app, config, model, messages).await
+        provider
+            .chat_stream(app, config, model, messages, event_name, cancel_rx)
+            .await
     }
 
     /// 动态 Provider 连通性测试

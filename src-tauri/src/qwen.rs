@@ -9,6 +9,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::watch;
+
+use crate::ai::types::StreamEvent;
 
 /// 截图识别使用的固定视觉模型
 const SCREENSHOT_VISION_MODEL: &str = "qwen-vl-max";
@@ -101,13 +104,6 @@ struct GitHubRepository {
 struct GitHubContentResponse {
     content: String,
     encoding: String,
-}
-
-/// 流式事件 payload
-#[derive(Debug, Clone, Serialize)]
-pub struct StreamEvent {
-    pub content: String,
-    pub done: bool,
 }
 
 fn create_http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
@@ -474,66 +470,22 @@ async fn read_chat_response_text(response: reqwest::Response) -> Result<String, 
         .ok_or_else(|| "API 返回空结果".to_string())
 }
 
-async fn stream_response(app: AppHandle, response: reqwest::Response) -> Result<(), String> {
+async fn stream_response(
+    app: AppHandle,
+    response: reqwest::Response,
+    event_name: &str,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<(), String> {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(format!("API 错误 ({}): {}", status, body));
     }
 
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| format!("读取流失败: {}", e))?;
-        let chunk_str = String::from_utf8_lossy(&chunk);
-        buffer.push_str(&chunk_str);
-
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].trim().to_string();
-            buffer = buffer[line_end + 1..].to_string();
-
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some(json_str) = line.strip_prefix("data: ") {
-                if json_str == "[DONE]" {
-                    let _ = app.emit(
-                        "qwen-stream",
-                        StreamEvent {
-                            content: String::new(),
-                            done: true,
-                        },
-                    );
-                    return Ok(());
-                }
-
-                if let Ok(chunk_data) = serde_json::from_str::<StreamChunk>(json_str) {
-                    if let Some(choice) = chunk_data.choices.first() {
-                        if let Some(content) = &choice.delta.content {
-                            let _ = app.emit(
-                                "qwen-stream",
-                                StreamEvent {
-                                    content: content.clone(),
-                                    done: false,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let _ = app.emit(
-        "qwen-stream",
-        StreamEvent {
-            content: String::new(),
-            done: true,
-        },
-    );
-    Ok(())
+    crate::ai::stream::parse_openai_sse_stream(&app, response, event_name, cancel_rx)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 async fn chat_vision_extract(
@@ -615,6 +567,8 @@ pub async fn chat_stream(
     api_key: &str,
     model: &str,
     messages: Vec<ChatMessage>,
+    event_name: &str,
+    cancel_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let client = create_http_client(120)?;
 
@@ -626,7 +580,7 @@ pub async fn chat_stream(
 
     println!("[千问API] 发送流式请求到模型: {}", model);
     let response = post_chat_request(&client, api_key, &request_body).await?;
-    stream_response(app, response).await
+    stream_response(app, response, event_name, cancel_rx).await
 }
 
 /// Two-stage screenshot pipeline:
@@ -640,6 +594,8 @@ pub async fn chat_stream_vision(
     prompt: &str,
     repo_urls: Vec<String>,
     local_doc_path: Option<String>,
+    event_name: &str,
+    cancel_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let extracted = chat_vision_extract(api_key, image_base64, prompt).await?;
     let title = extracted.problem_title.clone().unwrap_or_default();
@@ -655,12 +611,26 @@ pub async fn chat_stream_vision(
         let path = path.trim();
         if !path.is_empty() && !problem_id.trim().is_empty() {
             if let Some((_section, code)) = fetch_local_doc_section(path, &problem_id) {
+                if *cancel_rx.borrow() {
+                    let _ = app.emit(
+                        event_name,
+                        StreamEvent {
+                            content: String::new(),
+                            done: true,
+                            is_complete: Some(false),
+                            finish_reason: Some("user_abort".to_string()),
+                        },
+                    );
+                    return Ok(());
+                }
                 let code_block = format!("```cpp\n{}\n```\n\n", code);
                 let _ = app.emit(
-                    "qwen-stream",
+                    event_name,
                     StreamEvent {
                         content: code_block,
                         done: false,
+                        is_complete: None,
+                        finish_reason: None,
                     },
                 );
                 let explain_prompt = format!(
@@ -680,7 +650,15 @@ pub async fn chat_stream_vision(
                         content: explain_prompt,
                     },
                 ];
-                return chat_stream(app, api_key, SCREENSHOT_CODER_MODEL, coder_messages).await;
+                return chat_stream(
+                    app,
+                    api_key,
+                    SCREENSHOT_CODER_MODEL,
+                    coder_messages,
+                    event_name,
+                    cancel_rx,
+                )
+                .await;
             }
         }
     }
@@ -811,5 +789,13 @@ pub async fn chat_stream_vision(
         },
     ];
 
-    chat_stream(app, api_key, SCREENSHOT_CODER_MODEL, coder_messages).await
+    chat_stream(
+        app,
+        api_key,
+        SCREENSHOT_CODER_MODEL,
+        coder_messages,
+        event_name,
+        cancel_rx,
+    )
+    .await
 }

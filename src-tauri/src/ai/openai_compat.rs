@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
+use tokio::sync::watch;
 use crate::ai::{
     stream::{handle_error_status, parse_openai_sse_stream},
     traits::{AIError, AIProvider},
@@ -99,6 +100,8 @@ impl AIProvider for OpenAICompatProvider {
         config: &ProviderConfig,
         model: &str,
         messages: Vec<ChatMessage>,
+        event_name: &str,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, AIError> {
         let base_url = Self::base_url(config);
         let url = format!("{}/chat/completions", base_url);
@@ -121,7 +124,7 @@ impl AIProvider for OpenAICompatProvider {
         handle_error_status(&response)?;
 
         // 复用通用 SSE 解析器
-        parse_openai_sse_stream(&app, response, "ai-stream").await
+        parse_openai_sse_stream(&app, response, event_name, cancel_rx).await
     }
 
     async fn test_connection(

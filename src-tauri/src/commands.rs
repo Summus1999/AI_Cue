@@ -62,15 +62,31 @@ pub async fn nls_recognize_speech(
 pub async fn ai_chat_stream(
     app: AppHandle,
     registry: State<'_, ProviderRegistry>,
+    cancel_registry: State<'_, crate::ai::cancellation::StreamCancellationRegistry>,
     provider: BuiltinProviderType,
     config: ProviderConfig,
     model: String,
     messages: Vec<crate::ai::types::ChatMessage>,
+    request_id: String,
 ) -> Result<bool, String> {
-    registry
-        .chat_stream(app, &provider, &config, &model, messages)
+    let event_name = format!("ai-stream:{}", request_id);
+    let cancel_rx = cancel_registry.register(&request_id);
+
+    let result = registry
+        .chat_stream(app, &provider, &config, &model, messages, &event_name, cancel_rx)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+
+    cancel_registry.remove(&request_id);
+    result
+}
+
+#[tauri::command]
+pub fn ai_cancel_stream(
+    cancel_registry: State<'_, crate::ai::cancellation::StreamCancellationRegistry>,
+    request_id: String,
+) -> Result<bool, String> {
+    Ok(cancel_registry.cancel(&request_id))
 }
 
 /// 统一非流式聊天命令
@@ -209,11 +225,18 @@ pub async fn qwen_chat(
 #[tauri::command]
 pub async fn qwen_chat_stream(
     app: AppHandle,
+    cancel_registry: State<'_, crate::ai::cancellation::StreamCancellationRegistry>,
     api_key: String,
     model: String,
     messages: Vec<ChatMessage>,
+    request_id: String,
 ) -> Result<(), String> {
-    crate::qwen::chat_stream(app, &api_key, &model, messages).await
+    let event_name = format!("qwen-stream:{}", request_id);
+    let cancel_rx = cancel_registry.register(&request_id);
+
+    let result = crate::qwen::chat_stream(app, &api_key, &model, messages, &event_name, cancel_rx).await;
+    cancel_registry.remove(&request_id);
+    result
 }
 
 // 千问视觉 API 流式对话（截图识别，固定使用 qwen-vl-max）
@@ -221,21 +244,31 @@ pub async fn qwen_chat_stream(
 #[tauri::command]
 pub async fn qwen_chat_stream_vision(
     app: AppHandle,
+    cancel_registry: State<'_, crate::ai::cancellation::StreamCancellationRegistry>,
     api_key: String,
     image_base64: String,
     prompt: String,
     repo_urls: Vec<String>,
     local_doc_path: Option<String>,
+    request_id: String,
 ) -> Result<(), String> {
-    crate::qwen::chat_stream_vision(
+    let event_name = format!("qwen-stream:{}", request_id);
+    let cancel_rx = cancel_registry.register(&request_id);
+
+    let result = crate::qwen::chat_stream_vision(
         app,
         &api_key,
         &image_base64,
         &prompt,
         repo_urls,
         local_doc_path,
+        &event_name,
+        cancel_rx,
     )
-    .await
+    .await;
+
+    cancel_registry.remove(&request_id);
+    result
 }
 
 // ==================== 数据库命令 ====================
@@ -852,15 +885,23 @@ pub fn ai_unregister_provider(
 pub async fn ai_chat_stream_dynamic(
     app: AppHandle,
     registry: State<'_, ProviderRegistry>,
+    cancel_registry: State<'_, crate::ai::cancellation::StreamCancellationRegistry>,
     provider_id: String,
     config: ProviderConfig,
     model: String,
     messages: Vec<crate::ai::types::ChatMessage>,
+    request_id: String,
 ) -> Result<bool, String> {
-    registry
-        .chat_stream_dynamic(app, &provider_id, &config, &model, messages)
+    let event_name = format!("ai-stream:{}", request_id);
+    let cancel_rx = cancel_registry.register(&request_id);
+
+    let result = registry
+        .chat_stream_dynamic(app, &provider_id, &config, &model, messages, &event_name, cancel_rx)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+
+    cancel_registry.remove(&request_id);
+    result
 }
 
 /// 动态 Provider 连通性测试
