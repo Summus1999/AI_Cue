@@ -159,7 +159,9 @@ pub(crate) fn spawn_capture_thread(
         #[cfg(target_os = "windows")]
         {
             match source.as_deref().unwrap_or("system") {
-                "microphone" => super::windows_wasapi::capture_default_microphone(ready_tx, stop_rx),
+                "microphone" => {
+                    super::windows_wasapi::capture_default_microphone(ready_tx, stop_rx)
+                }
                 _ => super::windows_wasapi::capture_default_loopback(ready_tx, stop_rx),
             }
         }
@@ -194,7 +196,9 @@ pub(crate) fn spawn_capture_thread_with_context(
         #[cfg(target_os = "windows")]
         {
             match source.as_deref().unwrap_or("system") {
-                "microphone" => super::windows_wasapi::capture_microphone_with_events(ready_tx, stop_rx, &ctx),
+                "microphone" => {
+                    super::windows_wasapi::capture_microphone_with_events(ready_tx, stop_rx, &ctx)
+                }
                 _ => super::windows_wasapi::capture_loopback_with_events(ready_tx, stop_rx, &ctx),
             }
         }

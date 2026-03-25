@@ -40,14 +40,10 @@ impl UrlValidator {
 
     /// 验证 URL 是否安全
     pub fn validate(&self, url_str: &str) -> Result<(), String> {
-        let url = Url::parse(url_str)
-            .map_err(|e| format!("无效 URL: {}", e))?;
+        let url = Url::parse(url_str).map_err(|e| format!("无效 URL: {}", e))?;
 
         // 必须是 HTTPS（localhost 除外）
-        let host = url
-            .host_str()
-            .ok_or("URL 缺少主机名")?
-            .to_string();
+        let host = url.host_str().ok_or("URL 缺少主机名")?.to_string();
 
         if url.scheme() != "https" {
             if !self.allow_localhost || host != "localhost" {
@@ -74,8 +70,7 @@ impl UrlValidator {
 
     /// 添加允许的域名
     pub fn allow_domain(&mut self, domain: &str) {
-        self.allowed_domains
-            .insert(domain.to_lowercase());
+        self.allowed_domains.insert(domain.to_lowercase());
         self.blocked_domains.remove(&domain.to_lowercase());
     }
 
@@ -103,9 +98,7 @@ impl Default for UrlValidator {
 
 fn is_private_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_private() || v4.is_loopback() || v4.is_link_local()
-        }
+        std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
         std::net::IpAddr::V6(v6) => v6.is_loopback(),
     }
 }
@@ -165,8 +158,6 @@ mod tests {
     fn test_allow_custom_domain() {
         let mut validator = UrlValidator::new();
         validator.allow_domain("my-custom-api.com");
-        assert!(validator
-            .validate("https://my-custom-api.com/v1")
-            .is_ok());
+        assert!(validator.validate("https://my-custom-api.com/v1").is_ok());
     }
 }

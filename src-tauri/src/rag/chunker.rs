@@ -45,9 +45,7 @@ pub enum ChunkType {
     /// 普通文本
     Text,
     /// 代码块
-    Code {
-        language: Option<String>,
-    },
+    Code { language: Option<String> },
     /// Q&A 对
     QaPair,
 }
@@ -176,11 +174,7 @@ fn split_by_code_blocks(content: &str, code_blocks: &[CodeBlock]) -> Vec<(String
     }
 
     if last_end < content.len() {
-        parts.push((
-            content[last_end..].to_string(),
-            last_end,
-            content.len(),
-        ));
+        parts.push((content[last_end..].to_string(), last_end, content.len()));
     }
 
     parts
@@ -418,7 +412,10 @@ pub fn chunk_document(document: &ParsedDocument, config: &ChunkConfig) -> Vec<Do
             flush_pending_document_chunk(&mut chunks, &document.metadata, &mut pending);
 
             let code_type = ChunkType::Code {
-                language: block.language.clone().or(document.metadata.language.clone()),
+                language: block
+                    .language
+                    .clone()
+                    .or(document.metadata.language.clone()),
             };
             let windows = split_code_windows(&block_text, block.start_offset, config);
             if windows.is_empty() {
@@ -436,7 +433,10 @@ pub fn chunk_document(document: &ParsedDocument, config: &ChunkConfig) -> Vec<Do
                     document_type: document.metadata.document_type,
                     heading_path: block.heading_path.clone(),
                     page_number: block.page_number,
-                    language: block.language.clone().or(document.metadata.language.clone()),
+                    language: block
+                        .language
+                        .clone()
+                        .or(document.metadata.language.clone()),
                     start_offset: window.start_offset,
                     end_offset: window.end_offset,
                     block_count: 1,
@@ -459,7 +459,10 @@ pub fn chunk_document(document: &ParsedDocument, config: &ChunkConfig) -> Vec<Do
                     document_type: document.metadata.document_type,
                     heading_path: block.heading_path.clone(),
                     page_number: block.page_number,
-                    language: block.language.clone().or(document.metadata.language.clone()),
+                    language: block
+                        .language
+                        .clone()
+                        .or(document.metadata.language.clone()),
                     start_offset: window.start_offset,
                     end_offset: window.end_offset,
                     block_count: 1,
@@ -527,11 +530,7 @@ fn flush_pending_document_chunk(
     pending: &mut Option<PendingDocumentChunk>,
 ) {
     if let Some(pending_chunk) = pending.take() {
-        let text = pending_chunk
-            .text_parts
-            .join("\n\n")
-            .trim()
-            .to_string();
+        let text = pending_chunk.text_parts.join("\n\n").trim().to_string();
         if text.is_empty() {
             return;
         }
@@ -653,8 +652,8 @@ pub fn merge_qa_pairs(messages: &[SimpleMessage]) -> Vec<Chunk> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::parser::{BlockKind, DocumentType, ParsedDocument, ParsedDocumentMetadata};
+    use super::*;
 
     #[test]
     fn test_extract_code_blocks() {

@@ -6,8 +6,8 @@ use tokio::sync::watch;
 
 use super::traits::AIProvider;
 use super::types::{
-    AuthType, ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig,
-    ProviderDescriptor, SseFormat,
+    AuthType, ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig, ProviderDescriptor,
+    SseFormat,
 };
 use super::{create_http_client, map_reqwest_error, stream};
 
@@ -41,7 +41,10 @@ impl ConfigurableProvider {
         match self.descriptor.auth_type {
             AuthType::Bearer => {
                 let prefix = self.descriptor.auth_prefix.as_deref().unwrap_or("Bearer ");
-                Some(("Authorization".to_string(), format!("{}{}", prefix, api_key)))
+                Some((
+                    "Authorization".to_string(),
+                    format!("{}{}", prefix, api_key),
+                ))
             }
             AuthType::ApiKeyHeader => {
                 let header = self
@@ -230,9 +233,7 @@ impl AIProvider for ConfigurableProvider {
             SseFormat::Claude => {
                 stream::parse_claude_sse_stream(&app, response, event_name, cancel_rx).await
             }
-            _ => {
-                stream::parse_openai_sse_stream(&app, response, event_name, cancel_rx).await
-            }
+            _ => stream::parse_openai_sse_stream(&app, response, event_name, cancel_rx).await,
         }
     }
 

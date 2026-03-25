@@ -1,8 +1,8 @@
 // Provider 配置加载器 - 从文件系统加载 Provider 描述符
 
-use std::path::PathBuf;
-use super::types::ProviderDescriptor;
 use super::security::UrlValidator;
+use super::types::ProviderDescriptor;
+use std::path::PathBuf;
 
 /// Provider 配置加载器
 #[derive(Debug)]
@@ -36,8 +36,8 @@ impl ProviderLoader {
         }
 
         let mut files = Vec::new();
-        let entries = std::fs::read_dir(&self.providers_dir)
-            .map_err(|e| format!("读取目录失败: {}", e))?;
+        let entries =
+            std::fs::read_dir(&self.providers_dir).map_err(|e| format!("读取目录失败: {}", e))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -52,18 +52,18 @@ impl ProviderLoader {
 
     /// 加载单个配置文件
     pub fn load_single(&self, path: &PathBuf) -> Result<ProviderDescriptor, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
 
-        let descriptor: ProviderDescriptor = serde_json::from_str(&content)
-            .map_err(|e| format!("JSON 解析失败: {}", e))?;
+        let descriptor: ProviderDescriptor =
+            serde_json::from_str(&content).map_err(|e| format!("JSON 解析失败: {}", e))?;
 
         // 校验描述符
         descriptor.validate()?;
 
         // URL 安全校验
         let validator = UrlValidator::new();
-        validator.validate(&descriptor.base_url)
+        validator
+            .validate(&descriptor.base_url)
             .map_err(|e| format!("URL 安全校验失败: {}", e))?;
 
         tracing::info!(

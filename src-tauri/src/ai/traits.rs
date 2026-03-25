@@ -1,18 +1,18 @@
 // AI Provider Trait 定义 - 所有 AI Provider 必须实现的接口
 
+use crate::ai::types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig};
 use async_trait::async_trait;
 use tauri::AppHandle;
 use tokio::sync::watch;
-use crate::ai::types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig};
 
 /// 统一错误类型
 #[derive(Debug)]
 pub enum AIError {
     Timeout,
     Network(String),
-    Auth(String),              // 401/403
-    RateLimit(String),         // 429
-    Api(u16, String),          // 其他 HTTP 状态码
+    Auth(String),      // 401/403
+    RateLimit(String), // 429
+    Api(u16, String),  // 其他 HTTP 状态码
     InvalidRequest(String),
     StreamParse(String),
     Config(String),

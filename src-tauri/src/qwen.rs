@@ -212,7 +212,10 @@ fn json_value_to_text(value: Option<&Value>) -> Option<String> {
             }
         }
         Value::Object(map) => {
-            if let Some(text) = map.get("text").and_then(|item| json_value_to_text(Some(item))) {
+            if let Some(text) = map
+                .get("text")
+                .and_then(|item| json_value_to_text(Some(item)))
+            {
                 return Some(text);
             }
             Some(Value::Object(map.clone()).to_string())

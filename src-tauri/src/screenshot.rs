@@ -41,7 +41,7 @@ pub struct PreviewData {
     pub logical_height: u32,
     pub physical_width: u32,
     pub physical_height: u32,
-    pub transport_type: String,  // "memory" 或 "disk"
+    pub transport_type: String, // "memory" 或 "disk"
     pub payload_ref: String,    // 内存传输：Base64；磁盘传输：文件路径
 }
 
@@ -71,7 +71,7 @@ fn primary_screen() -> Result<Screen, String> {
 #[tauri::command]
 pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
     let timer = perf::perf_capture_start();
-    
+
     let screen = primary_screen()?;
     let image = screen.capture().map_err(|e| format!("截图失败: {}", e))?;
     let source_path = active_source_path()?;
@@ -83,7 +83,7 @@ pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
     // 获取显示信息
     let logical_width = image.width();
     let logical_height = image.height();
-    
+
     // 记录截图完成
     let mut metadata = HashMap::new();
     metadata.insert("logical_width".to_string(), logical_width.to_string());
@@ -113,35 +113,41 @@ pub fn capture_full_screen() -> Result<ScreenCaptureResult, String> {
 #[tauri::command]
 pub fn capture_with_preview() -> Result<PreviewData, String> {
     let timer = perf::perf_capture_start();
-    
+
     let screen = primary_screen()?;
     let image = screen.capture().map_err(|e| format!("截图失败: {}", e))?;
-    
+
     let logical_width = image.width();
     let logical_height = image.height();
-    
+
     // 生成唯一 ID 用于追踪
     let capture_id = uuid::Uuid::new_v4().to_string();
-    
+
     // 判断是否使用内存传输
-    let use_memory = logical_width <= MEMORY_THRESHOLD_WIDTH 
-        && logical_height <= MEMORY_THRESHOLD_HEIGHT;
-    
+    let use_memory =
+        logical_width <= MEMORY_THRESHOLD_WIDTH && logical_height <= MEMORY_THRESHOLD_HEIGHT;
+
     let (transport_type, payload_ref) = if use_memory {
         // 内存传输：将图片编码为 Base64
         let mut buffer = Vec::new();
-        image.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
+        image
+            .write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
             .map_err(|e| format!("编码图片失败: {}", e))?;
-        let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buffer);
+        let base64_data =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buffer);
         ("memory".to_string(), base64_data)
     } else {
         // 磁盘传输：保存到临时文件
         let source_path = active_source_path()?;
-        image.save(&source_path)
+        image
+            .save(&source_path)
             .map_err(|e| format!("保存截图失败: {}", e))?;
-        ("disk".to_string(), source_path.to_string_lossy().to_string())
+        (
+            "disk".to_string(),
+            source_path.to_string_lossy().to_string(),
+        )
     };
-    
+
     // 记录截图完成
     let mut metadata = HashMap::new();
     metadata.insert("logical_width".to_string(), logical_width.to_string());
@@ -157,7 +163,7 @@ pub fn capture_with_preview() -> Result<PreviewData, String> {
         "[PERF] capture_with_preview"
     );
     perf::perf_capture_done();
-    
+
     Ok(PreviewData {
         capture_id,
         logical_width,
@@ -178,7 +184,7 @@ pub fn crop_screenshot(
     height: u32,
 ) -> Result<CropScreenshotResult, String> {
     let timer = perf::perf_crop_start();
-    
+
     if width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE {
         return Err(format!(
             "选区太小，请至少选择 {}x{} 像素的区域",

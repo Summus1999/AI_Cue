@@ -1,13 +1,8 @@
 // 日志系统 - 基于 tracing crate 的统一日志管理
 
 use std::path::PathBuf;
-use tracing_subscriber::{
-    fmt,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-    EnvFilter,
-};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// 日志配置
 #[derive(Debug, Clone)]
@@ -62,15 +57,10 @@ pub struct LogGuard {
 /// 初始化日志系统
 pub fn init_logging(config: LogConfig) -> Result<LogGuard, String> {
     // 确保日志目录存在
-    std::fs::create_dir_all(&config.log_dir)
-        .map_err(|e| format!("创建日志目录失败: {}", e))?;
+    std::fs::create_dir_all(&config.log_dir).map_err(|e| format!("创建日志目录失败: {}", e))?;
 
     // 文件输出（按日轮转）
-    let file_appender = RollingFileAppender::new(
-        Rotation::DAILY,
-        &config.log_dir,
-        "ai-cue.log",
-    );
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &config.log_dir, "ai-cue.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // 构建过滤器
@@ -89,10 +79,12 @@ pub fn init_logging(config: LogConfig) -> Result<LogGuard, String> {
 
     // 控制台层（仅开发环境）
     let console_layer = if config.console_output {
-        Some(fmt::layer()
-            .with_target(true)
-            .with_thread_ids(false)
-            .pretty())
+        Some(
+            fmt::layer()
+                .with_target(true)
+                .with_thread_ids(false)
+                .pretty(),
+        )
     } else {
         None
     };
@@ -101,7 +93,7 @@ pub fn init_logging(config: LogConfig) -> Result<LogGuard, String> {
     let registry = tracing_subscriber::registry()
         .with(env_filter)
         .with(file_layer);
-    
+
     if let Some(layer) = console_layer {
         registry.with(layer).init();
     } else {
@@ -123,17 +115,17 @@ pub fn sanitize_log_value(value: &str) -> String {
     let sanitized = regex::Regex::new(r"(sk-|Bearer\s+)[a-zA-Z0-9]{20,}")
         .map(|re| re.replace_all(value, "$1[REDACTED]").to_string())
         .unwrap_or_else(|_| value.to_string());
-    
+
     // 密码脱敏
     let sanitized = regex::Regex::new(r#"("password"\s*:\s*")[^"]+""#)
         .map(|re| re.replace_all(&sanitized, r#"$1[REDACTED]""#).to_string())
         .unwrap_or(sanitized);
-    
+
     // X-API-Key 脱敏
     let sanitized = regex::Regex::new(r#"("api[_-]?key"\s*[:=]\s*")[^"]+""#)
         .map(|re| re.replace_all(&sanitized, r#"$1[REDACTED]""#).to_string())
         .unwrap_or(sanitized);
-    
+
     sanitized
 }
 

@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 use tauri::Emitter;
 use windows::core::GUID;
 use windows::Win32::Media::Audio::{
-    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-    WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVE_FORMAT_PCM,
+    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator,
+    MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVE_FORMAT_PCM,
 };
 use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
 use windows::Win32::System::Com::{
@@ -219,7 +219,8 @@ pub fn capture_loopback_with_events(
         .send(Ok(source_format.audio))
         .map_err(|error| AudioError::Synchronization(error.to_string()))?;
 
-    let result = capture_packets_with_events(&audio_client, &capture_client, source_format, stop_rx, ctx);
+    let result =
+        capture_packets_with_events(&audio_client, &capture_client, source_format, stop_rx, ctx);
 
     unsafe {
         let _ = audio_client.Stop();
@@ -268,7 +269,7 @@ pub fn capture_default_microphone(
     let initialize_result = unsafe {
         audio_client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            0,  // 不使用 LOOPBACK 标志
+            0, // 不使用 LOOPBACK 标志
             BUFFER_DURATION_HNS,
             0,
             mix_format_ptr,
@@ -346,7 +347,7 @@ pub fn capture_microphone_with_events(
     let initialize_result = unsafe {
         audio_client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            0,  // 不使用 LOOPBACK 标志
+            0, // 不使用 LOOPBACK 标志
             BUFFER_DURATION_HNS,
             0,
             mix_format_ptr,
@@ -377,7 +378,8 @@ pub fn capture_microphone_with_events(
         .send(Ok(source_format.audio))
         .map_err(|error| AudioError::Synchronization(error.to_string()))?;
 
-    let result = capture_packets_with_events(&audio_client, &capture_client, source_format, stop_rx, ctx);
+    let result =
+        capture_packets_with_events(&audio_client, &capture_client, source_format, stop_rx, ctx);
 
     unsafe {
         let _ = audio_client.Stop();
@@ -528,7 +530,12 @@ fn capture_packets_with_events(
 
                     // 发射事件（忽略错误，不影响采集）
                     match app.emit("audio-level", &event) {
-                        Ok(_) => println!("[AudioLevel] Emitted: rms={:.4}, peak={:.4}, points={}", event.rms, event.peak, event.waveform.len()),
+                        Ok(_) => println!(
+                            "[AudioLevel] Emitted: rms={:.4}, peak={:.4}, points={}",
+                            event.rms,
+                            event.peak,
+                            event.waveform.len()
+                        ),
                         Err(e) => eprintln!("[AudioLevel] Emit failed: {:?}", e),
                     }
 

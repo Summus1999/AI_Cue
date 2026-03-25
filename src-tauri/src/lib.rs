@@ -8,14 +8,14 @@ mod audio;
 mod commands;
 mod database;
 mod export;
-mod logging;  // 日志系统
+mod logging; // 日志系统
 mod nls;
-mod perf;       // 性能埋点
+mod perf; // 性能埋点
 mod qwen;
 pub mod rag;
 mod review;
 mod screenshot;
-mod startup;     // 启动管理
+mod startup; // 启动管理
 
 pub fn run() {
     tauri::Builder::default()
@@ -44,8 +44,7 @@ pub fn run() {
                 console_output: cfg!(debug_assertions),
                 json_format: false,
             };
-            let _log_guard = logging::init_logging(log_config)
-                .expect("日志系统初始化失败");
+            let _log_guard = logging::init_logging(log_config).expect("日志系统初始化失败");
             perf::perf_logging_done();
 
             tracing::info!(
@@ -54,16 +53,15 @@ pub fn run() {
             );
 
             // 初始化数据库
-            let db = database::init_database(&app_data_dir)
-                .expect("数据库初始化失败");
+            let db = database::init_database(&app_data_dir).expect("数据库初始化失败");
             let db_arc = Arc::new(db);
             app.manage(db_arc.clone());
             perf::perf_database_done();
-            
+
             // 初始化 RAG 引擎
             let rag_engine = rag::RagEngine::new(db_arc);
             app.manage(Arc::new(rag_engine));
-            
+
             // 初始化 Provider 注册表（内置 Provider）
             perf::perf_provider_registry_ready();
             let registry = ai::ProviderRegistry::new();
@@ -97,7 +95,8 @@ pub fn run() {
                         rt.block_on(async {
                             // 同步调用，不需要 await
                             startup_mgr.set_stage(startup::StartupStage::Layer2EarlyAsync);
-                            startup_mgr.set_provider_load_state(startup::ProviderLoadState::Loading);
+                            startup_mgr
+                                .set_provider_load_state(startup::ProviderLoadState::Loading);
 
                             // 加载动态 Provider
                             let loader = ai::loader::ProviderLoader::new(&app_data_for_async);
@@ -106,7 +105,9 @@ pub fn run() {
                                     let total_count = descriptors.len();
                                     let mut failures = 0;
                                     for descriptor in descriptors {
-                                        if let Err(e) = registry_for_async.register_dynamic(descriptor) {
+                                        if let Err(e) =
+                                            registry_for_async.register_dynamic(descriptor)
+                                        {
                                             tracing::warn!(error = %e, "动态 Provider 注册失败");
                                             failures += 1;
                                         }
@@ -118,13 +119,17 @@ pub fn run() {
                                             failures = failures,
                                             "部分动态 Provider 加载失败，切换到降级状态"
                                         );
-                                        startup_mgr.set_provider_load_state(startup::ProviderLoadState::Degraded);
+                                        startup_mgr.set_provider_load_state(
+                                            startup::ProviderLoadState::Degraded,
+                                        );
                                     } else {
                                         tracing::info!(
                                             count = total_count,
                                             "动态 Provider 加载完成"
                                         );
-                                        startup_mgr.set_provider_load_state(startup::ProviderLoadState::Ready);
+                                        startup_mgr.set_provider_load_state(
+                                            startup::ProviderLoadState::Ready,
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -132,7 +137,9 @@ pub fn run() {
                                         error = %e,
                                         "动态 Provider 加载失败，切换到降级状态"
                                     );
-                                    startup_mgr.set_provider_load_state(startup::ProviderLoadState::Degraded);
+                                    startup_mgr.set_provider_load_state(
+                                        startup::ProviderLoadState::Degraded,
+                                    );
                                 }
                             }
 

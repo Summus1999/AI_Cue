@@ -51,11 +51,11 @@ pub struct ExportData {
 #[derive(Debug, Deserialize)]
 pub struct ExportOptions {
     pub session_id: String,
-    pub format: String,              // "markdown" | "pdf" | "json"
+    pub format: String, // "markdown" | "pdf" | "json"
     pub include_metadata: bool,
     pub include_prompt_content: bool,
     pub include_images: bool,
-    pub image_handling: String,      // "embed" | "extract"
+    pub image_handling: String, // "embed" | "extract"
     pub selected_message_ids: Option<Vec<String>>,
 }
 
@@ -77,22 +77,25 @@ fn get_app_version() -> String {
 
 /// 格式化日期时间（用于 Markdown）
 fn format_datetime(timestamp: i64) -> String {
-    let datetime = chrono::DateTime::from_timestamp_millis(timestamp)
-        .unwrap_or_else(|| chrono::Utc::now());
+    let datetime =
+        chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_else(|| chrono::Utc::now());
     datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 /// 格式化为日期（用于文件名）
 fn format_date(timestamp: i64) -> String {
-    let datetime = chrono::DateTime::from_timestamp_millis(timestamp)
-        .unwrap_or_else(|| chrono::Utc::now());
+    let datetime =
+        chrono::DateTime::from_timestamp_millis(timestamp).unwrap_or_else(|| chrono::Utc::now());
     datetime.format("%Y-%m-%d").to_string()
 }
 
 /// 构建安全的文件名
 fn sanitize_filename(title: &str) -> String {
     title
-        .replace(|c: char| c.is_ascii_punctuation() && c != '-' && c != '_', "_")
+        .replace(
+            |c: char| c.is_ascii_punctuation() && c != '-' && c != '_',
+            "_",
+        )
         .replace(' ', "_")
 }
 
@@ -104,8 +107,14 @@ pub fn export_to_markdown(data: &ExportData, options: &ExportOptions) -> String 
     if options.include_metadata {
         lines.push("---".to_string());
         lines.push(format!("title: {}", data.metadata.session_title));
-        lines.push(format!("exported_at: {}", format_datetime(data.metadata.exported_at)));
-        lines.push(format!("created_at: {}", format_datetime(data.metadata.created_at)));
+        lines.push(format!(
+            "exported_at: {}",
+            format_datetime(data.metadata.exported_at)
+        ));
+        lines.push(format!(
+            "created_at: {}",
+            format_datetime(data.metadata.created_at)
+        ));
         lines.push(format!("message_count: {}", data.metadata.message_count));
 
         if let Some(provider) = &data.metadata.provider {
@@ -318,9 +327,17 @@ pub fn export_to_pdf_html(data: &ExportData, options: &ExportOptions) -> String 
 
     let mut message_html = String::new();
     for msg in &data.messages {
-        let role_class = if msg.role == "user" { "user" } else { "assistant" };
+        let role_class = if msg.role == "user" {
+            "user"
+        } else {
+            "assistant"
+        };
         let role_label = if msg.role == "user" { "用户" } else { "AI" };
-        let role_badge_class = if msg.role == "user" { "role-user" } else { "role-assistant" };
+        let role_badge_class = if msg.role == "user" {
+            "role-user"
+        } else {
+            "role-assistant"
+        };
         let timestamp = format_datetime(msg.timestamp);
 
         let mut content_html = msg.content.replace('\n', "<br>");

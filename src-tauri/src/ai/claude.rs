@@ -1,15 +1,15 @@
 // Claude Provider 实现 - Anthropic Claude API
 
+use crate::ai::{
+    create_http_client, map_reqwest_error,
+    stream::{handle_error_status, parse_claude_sse_stream},
+    traits::{AIError, AIProvider},
+    types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig},
+};
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
 use tokio::sync::watch;
-use crate::ai::{
-    stream::{handle_error_status, parse_claude_sse_stream},
-    traits::{AIError, AIProvider},
-    types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig},
-    create_http_client, map_reqwest_error,
-};
 
 /// 非流式响应体
 #[derive(Debug, Deserialize)]
@@ -33,7 +33,9 @@ impl ClaudeProvider {
     }
 
     fn base_url(config: &ProviderConfig) -> String {
-        config.base_url.clone()
+        config
+            .base_url
+            .clone()
             .unwrap_or_else(|| "https://api.anthropic.com".into())
     }
 
@@ -101,7 +103,8 @@ impl AIProvider for ClaudeProvider {
             body["system"] = serde_json::Value::String(sys);
         }
 
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("x-api-key", &config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
@@ -113,7 +116,9 @@ impl AIProvider for ClaudeProvider {
         handle_error_status(&response)?;
 
         let status = response.status();
-        let body_text = response.text().await
+        let body_text = response
+            .text()
+            .await
             .map_err(|e| AIError::Network(e.to_string()))?;
 
         if !status.is_success() {
@@ -170,7 +175,8 @@ impl AIProvider for ClaudeProvider {
             body["system"] = serde_json::Value::String(sys);
         }
 
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("x-api-key", &config.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
@@ -203,7 +209,8 @@ impl AIProvider for ClaudeProvider {
 
         let client = create_http_client(15)?;
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("x-api-key", &config.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -229,28 +236,32 @@ impl AIProvider for ClaudeProvider {
 
     fn default_models(&self) -> Vec<ModelInfo> {
         vec![
-            ModelInfo { 
-                id: "claude-sonnet-4-20250514".into(), 
+            ModelInfo {
+                id: "claude-sonnet-4-20250514".into(),
                 name: "Claude Sonnet 4".into(),
-                description: "平衡性能与质量".into(), 
-                supports_vision: true 
+                description: "平衡性能与质量".into(),
+                supports_vision: true,
             },
-            ModelInfo { 
-                id: "claude-opus-4-20250514".into(), 
+            ModelInfo {
+                id: "claude-opus-4-20250514".into(),
                 name: "Claude Opus 4".into(),
-                description: "最强推理能力".into(), 
-                supports_vision: true 
+                description: "最强推理能力".into(),
+                supports_vision: true,
             },
-            ModelInfo { 
-                id: "claude-haiku-3-5-20241022".into(), 
+            ModelInfo {
+                id: "claude-haiku-3-5-20241022".into(),
                 name: "Claude 3.5 Haiku".into(),
-                description: "快速响应".into(), 
-                supports_vision: false 
+                description: "快速响应".into(),
+                supports_vision: false,
             },
         ]
     }
 
-    fn id(&self) -> &'static str { "claude" }
-    
-    fn display_name(&self) -> &'static str { "Anthropic Claude" }
+    fn id(&self) -> &'static str {
+        "claude"
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Anthropic Claude"
+    }
 }

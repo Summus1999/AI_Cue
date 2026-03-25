@@ -143,7 +143,9 @@ pub fn parse_document(path: &str, options: Option<ParseOptions>) -> Result<Parse
     match document_type {
         DocumentType::Markdown => parse_markdown_document(source_path, metadata.len(), extension),
         DocumentType::Pdf => parse_pdf_document(source_path, metadata.len(), extension),
-        DocumentType::PlainText => parse_plain_text_document(source_path, metadata.len(), extension),
+        DocumentType::PlainText => {
+            parse_plain_text_document(source_path, metadata.len(), extension)
+        }
         DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
     }
 }
@@ -464,7 +466,12 @@ fn parse_pdf_document(
         let normalized = normalize_pdf_text(&page_text);
         total_chars += normalized.chars().count();
 
-        let page_blocks = split_text_into_blocks(&normalized, BlockKind::Paragraph, Vec::new(), Some(*page_number));
+        let page_blocks = split_text_into_blocks(
+            &normalized,
+            BlockKind::Paragraph,
+            Vec::new(),
+            Some(*page_number),
+        );
         if page_blocks.is_empty() && !normalized.trim().is_empty() {
             blocks.push(ParsedBlock {
                 index: blocks.len(),
@@ -587,7 +594,11 @@ fn flush_pending_text(blocks: &mut Vec<ParsedBlock>, pending: &mut Option<Pendin
     }
 }
 
-fn push_code_block(blocks: &mut Vec<ParsedBlock>, code: Option<PendingCodeBlock>, end_offset: usize) {
+fn push_code_block(
+    blocks: &mut Vec<ParsedBlock>,
+    code: Option<PendingCodeBlock>,
+    end_offset: usize,
+) {
     if let Some(code_block) = code {
         let text = code_block.lines.join("\n").trim().to_string();
         if text.is_empty() {
@@ -671,8 +682,7 @@ fn is_markdown_list_item(line: &str) -> bool {
 fn is_code_extension(ext: &str) -> bool {
     matches!(
         ext,
-        "rs"
-            | "ts"
+        "rs" | "ts"
             | "tsx"
             | "js"
             | "jsx"
@@ -718,11 +728,14 @@ fn detect_code_language(ext: &str) -> Option<&'static str> {
 }
 
 fn detect_code_symbol(line: &str) -> Option<String> {
-    CODE_SYMBOL_PATTERNS.iter().find_map(|(regex, capture_idx)| {
-        regex
-            .captures(line)
-            .and_then(|caps| caps.get(*capture_idx).map(|symbol| symbol.as_str().to_string()))
-    })
+    CODE_SYMBOL_PATTERNS
+        .iter()
+        .find_map(|(regex, capture_idx)| {
+            regex.captures(line).and_then(|caps| {
+                caps.get(*capture_idx)
+                    .map(|symbol| symbol.as_str().to_string())
+            })
+        })
 }
 
 fn is_code_preamble(line: &str) -> bool {
@@ -782,10 +795,7 @@ fn is_probably_binary(bytes: &[u8]) -> bool {
 
     let suspicious = bytes
         .iter()
-        .filter(|byte| {
-            !matches!(**byte, 0x09 | 0x0A | 0x0D)
-                && (**byte < 0x20 || **byte == 0x7F)
-        })
+        .filter(|byte| !matches!(**byte, 0x09 | 0x0A | 0x0D) && (**byte < 0x20 || **byte == 0x7F))
         .count();
     suspicious * 10 > bytes.len()
 }
@@ -826,8 +836,14 @@ mod tests {
 
     #[test]
     fn test_detect_code_symbol() {
-        assert_eq!(detect_code_symbol("pub fn parse_document() -> Result<()> {"), Some("parse_document".to_string()));
-        assert_eq!(detect_code_symbol("class Parser {"), Some("Parser".to_string()));
+        assert_eq!(
+            detect_code_symbol("pub fn parse_document() -> Result<()> {"),
+            Some("parse_document".to_string())
+        );
+        assert_eq!(
+            detect_code_symbol("class Parser {"),
+            Some("Parser".to_string())
+        );
         assert_eq!(detect_code_symbol("plain text"), None);
     }
 }

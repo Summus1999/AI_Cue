@@ -1,16 +1,17 @@
 // AI Provider 统一模块
 
-pub mod traits;
-pub mod types;
-pub mod stream;
 pub mod cancellation;
-pub mod qwen;
-pub mod openai_compat;
 pub mod claude;
-pub mod configurable;  // 可配置 Provider
-pub mod security;      // URL 安全验证
-pub mod loader;        // 配置文件加载器
+pub mod configurable; // 可配置 Provider
+pub mod loader;
+pub mod openai_compat;
+pub mod qwen;
+pub mod security; // URL 安全验证
+pub mod stream;
+pub mod traits;
+pub mod types; // 配置文件加载器
 
+use configurable::ConfigurableProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -18,7 +19,6 @@ use tauri::AppHandle;
 use tokio::sync::watch;
 use traits::AIProvider;
 use types::{ChatMessage, ConnectionTestResult, ProviderConfig, ProviderDescriptor, ProviderMeta};
-use configurable::ConfigurableProvider;
 
 /// 内置 Provider 类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,9 +51,10 @@ impl Clone for ProviderRegistry {
             claude: self.claude.clone(),
             // 深拷贝 dynamic HashMap
             dynamic: RwLock::new(
-                self.dynamic.read()
+                self.dynamic
+                    .read()
                     .map(|map| map.clone())
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
             ),
         }
     }
@@ -79,7 +80,9 @@ impl ProviderRegistry {
     ) -> Result<String, traits::AIError> {
         match provider_type {
             BuiltinProviderType::Qwen => self.qwen.chat(config, model, messages).await,
-            BuiltinProviderType::OpenAICompat => self.openai_compat.chat(config, model, messages).await,
+            BuiltinProviderType::OpenAICompat => {
+                self.openai_compat.chat(config, model, messages).await
+            }
             BuiltinProviderType::Claude => self.claude.chat(config, model, messages).await,
         }
     }
@@ -96,18 +99,21 @@ impl ProviderRegistry {
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<bool, traits::AIError> {
         match provider_type {
-            BuiltinProviderType::Qwen => self
-                .qwen
-                .chat_stream(app, config, model, messages, event_name, cancel_rx)
-                .await,
-            BuiltinProviderType::OpenAICompat => self
-                .openai_compat
-                .chat_stream(app, config, model, messages, event_name, cancel_rx)
-                .await,
-            BuiltinProviderType::Claude => self
-                .claude
-                .chat_stream(app, config, model, messages, event_name, cancel_rx)
-                .await,
+            BuiltinProviderType::Qwen => {
+                self.qwen
+                    .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                    .await
+            }
+            BuiltinProviderType::OpenAICompat => {
+                self.openai_compat
+                    .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                    .await
+            }
+            BuiltinProviderType::Claude => {
+                self.claude
+                    .chat_stream(app, config, model, messages, event_name, cancel_rx)
+                    .await
+            }
         }
     }
 
@@ -192,7 +198,9 @@ impl ProviderRegistry {
         let id = descriptor.id.clone();
         let provider = configurable::ConfigurableProvider::new(descriptor);
 
-        let mut dynamic = self.dynamic.write()
+        let mut dynamic = self
+            .dynamic
+            .write()
             .map_err(|e| format!("锁获取失败: {}", e))?;
 
         if dynamic.contains_key(&id) {
@@ -206,10 +214,13 @@ impl ProviderRegistry {
 
     /// 注销动态 Provider
     pub fn unregister_dynamic(&self, id: &str) -> Result<(), String> {
-        let mut dynamic = self.dynamic.write()
+        let mut dynamic = self
+            .dynamic
+            .write()
             .map_err(|e| format!("锁获取失败: {}", e))?;
 
-        dynamic.remove(id)
+        dynamic
+            .remove(id)
             .ok_or_else(|| format!("Provider '{}' 不存在", id))?;
 
         tracing::info!(provider_id = %id, "动态 Provider 注销成功");
@@ -224,10 +235,13 @@ impl ProviderRegistry {
         model: &str,
         messages: Vec<ChatMessage>,
     ) -> Result<String, traits::AIError> {
-        let dynamic = self.dynamic.read()
+        let dynamic = self
+            .dynamic
+            .read()
             .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
 
-        let provider = dynamic.get(provider_id)
+        let provider = dynamic
+            .get(provider_id)
             .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
 
         provider.chat(config, model, messages).await
@@ -246,10 +260,15 @@ impl ProviderRegistry {
     ) -> Result<bool, traits::AIError> {
         // 先获取 provider 的克隆
         let provider = {
-            let dynamic = self.dynamic.read()
+            let dynamic = self
+                .dynamic
+                .read()
                 .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
             // 从 guard 中获取 provider 指针
-            dynamic.get(provider_id).map(|p| Box::new(ConfigurableProvider::new(p.descriptor().clone())) as Box<dyn AIProvider + Send + Sync>)
+            dynamic.get(provider_id).map(|p| {
+                Box::new(ConfigurableProvider::new(p.descriptor().clone()))
+                    as Box<dyn AIProvider + Send + Sync>
+            })
         };
 
         let provider = provider
@@ -269,10 +288,15 @@ impl ProviderRegistry {
     ) -> Result<ConnectionTestResult, traits::AIError> {
         // 先获取 provider 的克隆
         let provider = {
-            let dynamic = self.dynamic.read()
+            let dynamic = self
+                .dynamic
+                .read()
                 .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
             // 从 guard 中获取 provider 指针
-            dynamic.get(provider_id).map(|p| Box::new(ConfigurableProvider::new(p.descriptor().clone())) as Box<dyn AIProvider + Send + Sync>)
+            dynamic.get(provider_id).map(|p| {
+                Box::new(ConfigurableProvider::new(p.descriptor().clone()))
+                    as Box<dyn AIProvider + Send + Sync>
+            })
         };
 
         let provider = provider

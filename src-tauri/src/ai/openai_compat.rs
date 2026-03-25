@@ -1,16 +1,16 @@
 // OpenAI 兼容 Provider 实现
 // 支持 GPT-4o、DeepSeek、Ollama、vLLM 等所有 OpenAI 兼容接口
 
+use crate::ai::{
+    create_http_client, map_reqwest_error,
+    stream::{handle_error_status, parse_openai_sse_stream},
+    traits::{AIError, AIProvider},
+    types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig},
+};
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
 use tokio::sync::watch;
-use crate::ai::{
-    stream::{handle_error_status, parse_openai_sse_stream},
-    traits::{AIError, AIProvider},
-    types::{ChatMessage, ConnectionTestResult, ModelInfo, ProviderConfig},
-    create_http_client, map_reqwest_error,
-};
 
 /// 非流式响应体
 #[derive(Debug, Deserialize)]
@@ -37,7 +37,9 @@ impl OpenAICompatProvider {
     }
 
     fn base_url(config: &ProviderConfig) -> String {
-        config.base_url.clone()
+        config
+            .base_url
+            .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".into())
     }
 }
@@ -66,7 +68,8 @@ impl AIProvider for OpenAICompatProvider {
             "stream": false
         });
 
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", config.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -77,7 +80,9 @@ impl AIProvider for OpenAICompatProvider {
         handle_error_status(&response)?;
 
         let status = response.status();
-        let body_text = response.text().await
+        let body_text = response
+            .text()
+            .await
             .map_err(|e| AIError::Network(e.to_string()))?;
 
         if !status.is_success() {
@@ -113,7 +118,8 @@ impl AIProvider for OpenAICompatProvider {
             "stream": true
         });
 
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", config.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -147,7 +153,8 @@ impl AIProvider for OpenAICompatProvider {
 
         let client = create_http_client(15)?;
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", config.api_key))
             .json(&body)
             .send()
@@ -172,34 +179,38 @@ impl AIProvider for OpenAICompatProvider {
 
     fn default_models(&self) -> Vec<ModelInfo> {
         vec![
-            ModelInfo { 
-                id: "gpt-4o".into(), 
+            ModelInfo {
+                id: "gpt-4o".into(),
                 name: "GPT-4o".into(),
-                description: "OpenAI 多模态旗舰模型".into(), 
-                supports_vision: true 
+                description: "OpenAI 多模态旗舰模型".into(),
+                supports_vision: true,
             },
-            ModelInfo { 
-                id: "gpt-4o-mini".into(), 
+            ModelInfo {
+                id: "gpt-4o-mini".into(),
                 name: "GPT-4o Mini".into(),
-                description: "轻量级，性价比高".into(), 
-                supports_vision: true 
+                description: "轻量级，性价比高".into(),
+                supports_vision: true,
             },
-            ModelInfo { 
-                id: "deepseek-chat".into(), 
+            ModelInfo {
+                id: "deepseek-chat".into(),
                 name: "DeepSeek Chat".into(),
-                description: "DeepSeek 对话模型".into(), 
-                supports_vision: false 
+                description: "DeepSeek 对话模型".into(),
+                supports_vision: false,
             },
-            ModelInfo { 
-                id: "deepseek-reasoner".into(), 
+            ModelInfo {
+                id: "deepseek-reasoner".into(),
                 name: "DeepSeek R1".into(),
-                description: "DeepSeek 推理模型".into(), 
-                supports_vision: false 
+                description: "DeepSeek 推理模型".into(),
+                supports_vision: false,
             },
         ]
     }
 
-    fn id(&self) -> &'static str { "openai_compat" }
-    
-    fn display_name(&self) -> &'static str { "OpenAI 兼容" }
+    fn id(&self) -> &'static str {
+        "openai_compat"
+    }
+
+    fn display_name(&self) -> &'static str {
+        "OpenAI 兼容"
+    }
 }

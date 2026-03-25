@@ -1,10 +1,10 @@
 //! 性能埋点模块
-//! 
+//!
 //! 后端统一性能埋点基础设施，用于记录启动链路、截图链路等关键时间点。
 
 use serde::Serialize;
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// 埋点事件枚举
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -20,7 +20,7 @@ pub enum PerfEvent {
     ProviderRegistryReady,
     DynamicProviderLoadStart,
     DynamicProviderLoadDone,
-    
+
     // 截图链路
     CaptureFullScreenStart,
     CaptureFullScreenDone,
@@ -76,12 +76,12 @@ impl PerfTimer {
             is_active: true,
         }
     }
-    
+
     /// 获取耗时（毫秒）
     pub fn elapsed_ms(&self) -> f64 {
         self.start.elapsed().as_secs_f64() * 1000.0
     }
-    
+
     /// 停止计时并返回埋点记录
     pub fn finish(self) -> PerfRecord {
         PerfRecord {
@@ -90,7 +90,7 @@ impl PerfTimer {
             metadata: None,
         }
     }
-    
+
     /// 停止计时并返回埋点记录（带元数据）
     pub fn finish_with_metadata(self, metadata: HashMap<String, String>) -> PerfRecord {
         PerfRecord {
@@ -99,7 +99,7 @@ impl PerfTimer {
             metadata: Some(metadata),
         }
     }
-    
+
     /// 取消计时器（不产生记录）
     pub fn cancel(mut self) {
         self.is_active = false;
@@ -128,17 +128,17 @@ impl PerfRecorder {
             records: std::sync::Mutex::new(Vec::new()),
         }
     }
-    
+
     pub fn add_record(&self, record: PerfRecord) {
         if let Ok(mut records) = self.records.lock() {
             records.push(record);
         }
     }
-    
+
     pub fn get_records(&self) -> Vec<PerfRecord> {
         self.records.lock().map(|r| r.clone()).unwrap_or_default()
     }
-    
+
     pub fn clear(&self) {
         if let Ok(mut records) = self.records.lock() {
             records.clear();
@@ -155,7 +155,11 @@ pub fn record(event: PerfEvent) -> PerfRecord {
     let timer = PerfTimer::new(event);
     let record = timer.finish();
     get_recorder().add_record(record.clone());
-    tracing::debug!(event = record.event, elapsed_ms = record.elapsed_ms, "[PERF]");
+    tracing::debug!(
+        event = record.event,
+        elapsed_ms = record.elapsed_ms,
+        "[PERF]"
+    );
     record
 }
 
@@ -263,7 +267,7 @@ mod tests {
         let timer = PerfTimer::new(PerfEvent::CaptureFullScreenStart);
         std::thread::sleep(std::time::Duration::from_millis(10));
         let record = timer.finish();
-        
+
         assert_eq!(record.event, "capture_full_screen_start");
         assert!(record.elapsed_ms >= 10.0);
     }
@@ -273,7 +277,7 @@ mod tests {
         clear_all_records();
         let _ = record(PerfEvent::LoggingInitDone);
         let records = get_all_records();
-        
+
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].event, "logging_init_done");
     }

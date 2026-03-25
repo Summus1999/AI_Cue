@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfig {
     pub api_key: String,
-    pub base_url: Option<String>,       // 自定义 Base URL（私有化部署）
+    pub base_url: Option<String>, // 自定义 Base URL（私有化部署）
     pub extra: Option<serde_json::Value>, // Provider 专属扩展字段
 }
 
@@ -79,7 +79,9 @@ pub struct Capabilities {
     pub function_calling: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// 健康检查配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,7 +144,11 @@ impl ProviderDescriptor {
         if self.id.is_empty() {
             return Err("id 不能为空".to_string());
         }
-        if !self.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        if !self
+            .id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
             return Err("id 只能包含小写字母、数字和下划线".to_string());
         }
         if self.models.is_empty() {
@@ -230,7 +236,7 @@ pub struct ProviderMeta {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub provider_type: String,  // 改为字符串，支持动态 Provider
+    pub provider_type: String, // 改为字符串，支持动态 Provider
     pub default_base_url: String,
     pub supports_custom_url: bool,
     pub models: Vec<ModelInfo>,

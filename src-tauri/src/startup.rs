@@ -174,12 +174,18 @@ impl StartupManager {
 
     /// 获取 Provider 加载状态（同步）
     pub fn get_provider_load_state(&self) -> ProviderLoadState {
-        self.state.lock().map(|r| r.provider_load_state).unwrap_or(ProviderLoadState::Idle)
+        self.state
+            .lock()
+            .map(|r| r.provider_load_state)
+            .unwrap_or(ProviderLoadState::Idle)
     }
 
     /// 获取启动阶段（同步）
     pub fn get_stage(&self) -> StartupStage {
-        self.state.lock().map(|r| r.stage).unwrap_or(StartupStage::Idle)
+        self.state
+            .lock()
+            .map(|r| r.stage)
+            .unwrap_or(StartupStage::Idle)
     }
 }
 

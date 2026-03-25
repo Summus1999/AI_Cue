@@ -1,9 +1,9 @@
 //! 知识盲点分析器 - 分析会话中的知识盲点、优势和改进建议
 
+use super::types::*;
 use crate::ai::types::{ChatMessage, ProviderConfig};
 use crate::ai::{ProviderRegistry, ProviderType};
 use crate::database::{self, Database};
-use super::types::*;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -38,7 +38,7 @@ fn parse_provider_type(provider: &str) -> Result<ProviderType, String> {
 /// 从 AI 返回内容中提取 JSON
 fn extract_json(content: &str) -> &str {
     let trimmed = content.trim();
-    
+
     // 尝试提取 ```json...``` 代码块
     if let Some(start) = trimmed.find("```json") {
         let json_start = start + 7;
@@ -46,7 +46,7 @@ fn extract_json(content: &str) -> &str {
             return trimmed[json_start..json_start + end].trim();
         }
     }
-    
+
     // 尝试提取 ```...``` 代码块
     if let Some(start) = trimmed.find("```") {
         let json_start = start + 3;
@@ -60,7 +60,7 @@ fn extract_json(content: &str) -> &str {
             return trimmed[actual_start..actual_start + end].trim();
         }
     }
-    
+
     // 直接返回 trimmed 内容
     trimmed
 }
@@ -70,8 +70,10 @@ fn build_score_summary(
     message_scores: &[MessageScore],
     messages: &[(String, String, String)], // (message_id, question, answer) - message_id 是 user 消息 ID
 ) -> String {
-    let mut summary = String::from("编号 | 话题标签 | 自信度 | 专业度 | 技术深度 | 理论实践 | 技术敏感 | 综合分\n");
-    
+    let mut summary = String::from(
+        "编号 | 话题标签 | 自信度 | 专业度 | 技术深度 | 理论实践 | 技术敏感 | 综合分\n",
+    );
+
     // 建立 message_id 到序号的映射
     for (index, (message_id, _question, _answer)) in messages.iter().enumerate() {
         // 查找对应的评分
@@ -81,7 +83,7 @@ fn build_score_summary(
             } else {
                 format!("[{}]", score.topic_tags.join(", "))
             };
-            
+
             summary.push_str(&format!(
                 "{} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.1}\n",
                 index + 1,
@@ -95,7 +97,7 @@ fn build_score_summary(
             ));
         }
     }
-    
+
     summary
 }
 
@@ -110,31 +112,35 @@ fn convert_insights(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    
-    items.into_iter().map(|item| {
-        // 将问题序号映射为 message_id
-        let related_message_ids: Vec<String> = item.related_questions
-            .iter()
-            .filter_map(|&q| {
-                if q > 0 && q <= message_id_map.len() {
-                    Some(message_id_map[q - 1].clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        SessionInsight {
-            id: Uuid::new_v4().to_string(),
-            session_id: session_id.to_string(),
-            insight_type: insight_type.clone(),
-            title: item.title,
-            detail: item.detail,
-            related_message_ids,
-            priority: item.priority,
-            created_at: now,
-        }
-    }).collect()
+
+    items
+        .into_iter()
+        .map(|item| {
+            // 将问题序号映射为 message_id
+            let related_message_ids: Vec<String> = item
+                .related_questions
+                .iter()
+                .filter_map(|&q| {
+                    if q > 0 && q <= message_id_map.len() {
+                        Some(message_id_map[q - 1].clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            SessionInsight {
+                id: Uuid::new_v4().to_string(),
+                session_id: session_id.to_string(),
+                insight_type: insight_type.clone(),
+                title: item.title,
+                detail: item.detail,
+                related_message_ids,
+                priority: item.priority,
+                created_at: now,
+            }
+        })
+        .collect()
 }
 
 /// 将 review::types::SessionInsight 转换为 database::SessionInsight
@@ -166,19 +172,22 @@ pub async fn analyze_session(
 ) -> Result<Vec<SessionInsight>, String> {
     // 1. 解析 provider 类型
     let provider_type = parse_provider_type(provider)?;
-    
+
     // 2. 推送进度：Analyzing 阶段
-    let _ = app.emit("review-progress", ReviewProgress {
-        phase: ReviewPhase::Analyzing,
-        current: 0,
-        total: 1,
-        message: "正在分析知识盲点和优势...".to_string(),
-    });
-    
+    let _ = app.emit(
+        "review-progress",
+        ReviewProgress {
+            phase: ReviewPhase::Analyzing,
+            current: 0,
+            total: 1,
+            message: "正在分析知识盲点和优势...".to_string(),
+        },
+    );
+
     // 3. 构建评分摘要文本
     let summary = build_score_summary(message_scores, messages);
     let user_message = format!("评分摘要：\n{}", summary);
-    
+
     // 4. 构建消息
     let chat_messages = vec![
         ChatMessage {
@@ -190,81 +199,87 @@ pub async fn analyze_session(
             content: user_message,
         },
     ];
-    
+
     // 5. 调用 AI 进行全局分析
-    let response = providers.chat(&provider_type, config, model, chat_messages)
+    let response = providers
+        .chat(&provider_type, config, model, chat_messages)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // 6. 解析 AIAnalysisResponse
     let json_str = extract_json(&response);
     let analysis: AIAnalysisResponse = serde_json::from_str(json_str)
         .map_err(|e| format!("解析分析结果失败: {} (原始: {})", e, json_str))?;
-    
+
     // 7. 构建 message_id 映射 (序号 -> message_id)
-    let message_id_map: Vec<String> = messages.iter()
-        .map(|(id, _, _)| id.clone())
-        .collect();
-    
+    let message_id_map: Vec<String> = messages.iter().map(|(id, _, _)| id.clone()).collect();
+
     // 8. 转换为 SessionInsight 列表
     let mut insights = Vec::new();
-    
+
     insights.extend(convert_insights(
         session_id,
         analysis.knowledge_gaps,
         InsightType::KnowledgeGap,
         &message_id_map,
     ));
-    
+
     insights.extend(convert_insights(
         session_id,
         analysis.strengths,
         InsightType::Strength,
         &message_id_map,
     ));
-    
+
     insights.extend(convert_insights(
         session_id,
         analysis.suggestions,
         InsightType::Suggestion,
         &message_id_map,
     ));
-    
+
     // 9. 先清除旧的 insights
     database::delete_session_insights(db, session_id)?;
-    
+
     // 10. 写入新的 insights
-    let db_insights: Vec<database::SessionInsight> = insights.iter()
-        .map(to_db_insight)
-        .collect();
+    let db_insights: Vec<database::SessionInsight> = insights.iter().map(to_db_insight).collect();
     database::insert_session_insights(db, &db_insights)?;
-    
+
     // 11. 推送分析阶段完成进度（进入报告生成阶段）
-    let _ = app.emit("review-progress", ReviewProgress {
-        phase: ReviewPhase::Summarizing,
-        current: 1,
-        total: 1,
-        message: format!("分析完成，发现 {} 条洞察", insights.len()),
-    });
-    
+    let _ = app.emit(
+        "review-progress",
+        ReviewProgress {
+            phase: ReviewPhase::Summarizing,
+            current: 1,
+            total: 1,
+            message: format!("分析完成，发现 {} 条洞察", insights.len()),
+        },
+    );
+
     Ok(insights)
 }
 
 /// 获取已有洞察（从数据库读取并转换类型）
-pub fn get_existing_insights(db: &Database, session_id: &str) -> Result<Vec<SessionInsight>, String> {
+pub fn get_existing_insights(
+    db: &Database,
+    session_id: &str,
+) -> Result<Vec<SessionInsight>, String> {
     let db_insights = database::get_session_insights(db, session_id)?;
-    
-    db_insights.into_iter().map(|i| {
-        let insight_type = InsightType::from_str(&i.insight_type)?;
-        Ok(SessionInsight {
-            id: i.id,
-            session_id: i.session_id,
-            insight_type,
-            title: i.title,
-            detail: i.detail,
-            related_message_ids: i.related_message_ids,
-            priority: i.priority,
-            created_at: i.created_at,
+
+    db_insights
+        .into_iter()
+        .map(|i| {
+            let insight_type = InsightType::from_str(&i.insight_type)?;
+            Ok(SessionInsight {
+                id: i.id,
+                session_id: i.session_id,
+                insight_type,
+                title: i.title,
+                detail: i.detail,
+                related_message_ids: i.related_message_ids,
+                priority: i.priority,
+                created_at: i.created_at,
+            })
         })
-    }).collect()
+        .collect()
 }

@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::database::InterviewContext;
-
+use serde::{Deserialize, Serialize};
 
 /// 面试评分维度定义
 pub struct ScoreDimension {
@@ -10,11 +9,26 @@ pub struct ScoreDimension {
 
 /// 五个核心评分维度及其权重
 pub const SCORE_DIMENSIONS: &[ScoreDimension] = &[
-    ScoreDimension { name: "confidence", weight: 0.15 },            // 面试自信度
-    ScoreDimension { name: "professionalism", weight: 0.20 },       // 技术专业度
-    ScoreDimension { name: "depth", weight: 0.25 },                 // 技术深度
-    ScoreDimension { name: "theory_practice", weight: 0.25 },       // 理论和实际项目结合
-    ScoreDimension { name: "tech_sensitivity", weight: 0.15 },       // 技术敏感度
+    ScoreDimension {
+        name: "confidence",
+        weight: 0.15,
+    }, // 面试自信度
+    ScoreDimension {
+        name: "professionalism",
+        weight: 0.20,
+    }, // 技术专业度
+    ScoreDimension {
+        name: "depth",
+        weight: 0.25,
+    }, // 技术深度
+    ScoreDimension {
+        name: "theory_practice",
+        weight: 0.25,
+    }, // 理论和实际项目结合
+    ScoreDimension {
+        name: "tech_sensitivity",
+        weight: 0.15,
+    }, // 技术敏感度
 ];
 
 /// 单条消息的评分结果
@@ -24,27 +38,27 @@ pub struct MessageScore {
     pub session_id: String,
     pub message_id: String,
     // 五个核心评分维度 (0-100)
-    pub confidence_score: f64,              // 面试自信度
-    pub professionalism_score: f64,        // 技术专业度
-    pub depth_score: f64,                  // 技术深度
-    pub theory_practice_score: f64,        // 理论和实际项目结合程度
-    pub tech_sensitivity_score: f64,        // 技术敏感度
-    pub overall_score: f64,                // 加权综合分
-    pub feedback: String,                   // AI 改进建议
-    pub topic_tags: Vec<String>,            // 话题标签
+    pub confidence_score: f64,       // 面试自信度
+    pub professionalism_score: f64,  // 技术专业度
+    pub depth_score: f64,            // 技术深度
+    pub theory_practice_score: f64,  // 理论和实际项目结合程度
+    pub tech_sensitivity_score: f64, // 技术敏感度
+    pub overall_score: f64,          // 加权综合分
+    pub feedback: String,            // AI 改进建议
+    pub topic_tags: Vec<String>,     // 话题标签
     pub created_at: i64,
 }
 
 /// AI 返回的原始评分 JSON 结构(需校验)
 #[derive(Debug, Deserialize)]
 pub struct AIScoreResponse {
-    pub confidence: f64,                // 面试自信度
-    pub professionalism: f64,          // 技术专业度
-    pub depth: f64,                    // 技术深度
-    pub theory_practice: f64,          // 理论和实际项目结合程度
-    pub tech_sensitivity: f64,          // 技术敏感度
-    pub feedback: String,              // 改进建议
-    pub topic_tags: Vec<String>,       // 话题标签
+    pub confidence: f64,         // 面试自信度
+    pub professionalism: f64,    // 技术专业度
+    pub depth: f64,              // 技术深度
+    pub theory_practice: f64,    // 理论和实际项目结合程度
+    pub tech_sensitivity: f64,   // 技术敏感度
+    pub feedback: String,        // 改进建议
+    pub topic_tags: Vec<String>, // 话题标签
 }
 
 impl AIScoreResponse {
@@ -142,18 +156,18 @@ pub struct ReviewReport {
     pub message_scores: Vec<MessageScore>,
     pub insights: Vec<SessionInsight>,
     pub completed_at: i64,
-    pub message_count: usize,  // 总消息数
-    pub scored_count: usize,   // 已评分数
+    pub message_count: usize, // 总消息数
+    pub scored_count: usize,  // 已评分数
 }
 
 /// 维度平均分（五个维度）
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DimensionAverages {
-    pub confidence: f64,           // 面试自信度
-    pub professionalism: f64,       // 技术专业度
-    pub depth: f64,                 // 技术深度
-    pub theory_practice: f64,       // 理论和实际项目结合
-    pub tech_sensitivity: f64,      // 技术敏感度
+    pub confidence: f64,       // 面试自信度
+    pub professionalism: f64,  // 技术专业度
+    pub depth: f64,            // 技术深度
+    pub theory_practice: f64,  // 理论和实际项目结合
+    pub tech_sensitivity: f64, // 技术敏感度
 }
 
 /// 趋势对比数据(跨会话)
@@ -179,9 +193,9 @@ pub struct TrendPoint {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GapEvolution {
-    pub resolved: Vec<String>,    // 已消除的盲点标题
-    pub persistent: Vec<String>,  // 持续存在的盲点
-    pub new_gaps: Vec<String>,    // 新出现的盲点
+    pub resolved: Vec<String>,   // 已消除的盲点标题
+    pub persistent: Vec<String>, // 持续存在的盲点
+    pub new_gaps: Vec<String>,   // 新出现的盲点
 }
 
 /// 复盘进度事件(流式推送到前端)
