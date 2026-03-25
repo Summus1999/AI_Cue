@@ -37,7 +37,7 @@ import {
 import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
-import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isPassthroughEnabled, setPassthrough } from './services/windowManager';
+import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isCompactMode, isPassthroughEnabled, setPassthrough, minimizeToRightDock } from './services/windowManager';
 import { saveMessage, updateSessionTitle, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -1344,7 +1344,10 @@ function App() {
   }, [messageSearch.currentIndex, messageSearch.isSearchOpen, messageSearch]);
 
   // 最小化窗口
-  const handleMinimize = () => {};
+  const handleMinimize = async () => {
+    await minimizeToRightDock();
+    setCompactModeState(isCompactMode());
+  };
 
   // 关闭窗口
   const handleClose = async () => {
@@ -1567,7 +1570,7 @@ function App() {
           <button
             onClick={handleMinimize}
             className="flex items-center justify-center w-6 h-6 rounded hover:bg-amber-200/50 transition-colors duration-150"
-            title="最小化"
+            title="最小化到右侧"
           >
             <Minus className="w-3 h-3 text-amber-700" />
           </button>

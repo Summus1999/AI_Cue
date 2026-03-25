@@ -1,5 +1,5 @@
 // 窗口状态管理服务
-import { getCurrentWindow, availableMonitors, LogicalPosition, LogicalSize, cursorPosition } from '@tauri-apps/api/window';
+import { getCurrentWindow, availableMonitors, currentMonitor, primaryMonitor, LogicalPosition, LogicalSize, PhysicalPosition, cursorPosition } from '@tauri-apps/api/window';
 import { loadConfig, saveConfig, WindowBounds } from '../store/config';
 
 // 注意：不要在模块顶层调用 getCurrentWindow()，因为在 Tauri IPC 就绪前可能导致错误
@@ -159,6 +159,54 @@ async function applyDefaultBounds(_appWindow: ReturnType<typeof getCurrentWindow
   }
   // 完整模式：默认位置由 tauri.conf.json 控制（440×640），不额外调整
   // 首次启动位置交给系统决定
+}
+
+/**
+ * 获取当前窗口所在显示器的工作区，失败时降级到主显示器
+ */
+async function getActiveMonitorWorkArea(): Promise<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null> {
+  const monitor =
+    (await currentMonitor()) ??
+    (await primaryMonitor()) ??
+    (await availableMonitors())[0] ??
+    null;
+
+  if (!monitor) {
+    return null;
+  }
+
+  return {
+    x: monitor.workArea.position.x,
+    y: monitor.workArea.position.y,
+    width: monitor.workArea.size.width,
+    height: monitor.workArea.size.height,
+  };
+}
+
+/**
+ * 将当前窗口吸附到所在屏幕的最右侧，同时保证窗口仍在工作区内可见
+ */
+async function dockCurrentWindowToRightEdge(): Promise<void> {
+  const appWindow = getCurrentWindow();
+  const workArea = await getActiveMonitorWorkArea();
+
+  if (!workArea) {
+    return;
+  }
+
+  const currentPosition = await appWindow.outerPosition();
+  const windowSize = await appWindow.outerSize();
+
+  const targetX = Math.max(workArea.x, workArea.x + workArea.width - windowSize.width);
+  const maxY = workArea.y + workArea.height - windowSize.height;
+  const targetY = Math.min(Math.max(currentPosition.y, workArea.y), Math.max(workArea.y, maxY));
+
+  await appWindow.setPosition(new PhysicalPosition(targetX, targetY));
 }
 
 // ====== 悬停恢复模块 ======
@@ -408,6 +456,24 @@ export async function toggleCompactMode(): Promise<boolean> {
   const newMode = !compactModeEnabled;
   await setCompactMode(newMode);
   return compactModeEnabled;
+}
+
+/**
+ * 将窗口切换为紧凑模式，并吸附到当前屏幕最右侧
+ */
+export async function minimizeToRightDock(): Promise<boolean> {
+  try {
+    if (!compactModeEnabled) {
+      await setCompactMode(true);
+    }
+
+    await dockCurrentWindowToRightEdge();
+    await saveWindowBoundsImmediate('compact');
+    return compactModeEnabled;
+  } catch (err) {
+    console.warn('最小化到右侧失败:', err);
+    return compactModeEnabled;
+  }
 }
 
 /**
