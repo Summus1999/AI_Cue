@@ -206,6 +206,8 @@ pub fn run() {
             // RAG 命令
             commands::rag_search,
             commands::rag_embed_message,
+            commands::rag_parse_document,
+            commands::rag_chunk_document,
             commands::rag_get_context,
             commands::rag_stats,
             commands::rag_configure,

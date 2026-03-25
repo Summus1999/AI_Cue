@@ -1045,7 +1045,10 @@ pub fn log_from_frontend(
 
 // ==================== RAG 命令 ====================
 
-use crate::rag::{RagEngine, RagStats, ContextConfig, QwenEmbedding};
+use crate::rag::{
+    ChunkConfig, ContextConfig, DocumentChunk, ParseOptions, ParsedDocument, RagEngine,
+    chunk_document, parse_document,
+};
 
 /// 向量检索
 #[tauri::command]
@@ -1075,6 +1078,27 @@ pub async fn rag_embed_message(
 ) -> Result<bool, String> {
     engine.embed_message(&message_id, &content).await?;
     Ok(true)
+}
+
+/// 解析文档为结构化块
+#[tauri::command]
+pub fn rag_parse_document(
+    path: String,
+    options: Option<ParseOptions>,
+) -> Result<ParsedDocument, String> {
+    parse_document(&path, options)
+}
+
+/// 解析并分块文档
+#[tauri::command]
+pub fn rag_chunk_document(
+    path: String,
+    options: Option<ParseOptions>,
+    config: Option<ChunkConfig>,
+) -> Result<Vec<DocumentChunk>, String> {
+    let document = parse_document(&path, options)?;
+    let chunk_config = config.unwrap_or_else(ChunkConfig::document_default);
+    Ok(chunk_document(&document, &chunk_config))
 }
 
 /// 获取 RAG 增强上下文
@@ -1108,9 +1132,9 @@ pub fn rag_stats(
 /// 配置 RAG Embedding Provider
 #[tauri::command]
 pub fn rag_configure(
-    engine: State<'_, std::sync::Arc<RagEngine>>,
-    api_key: String,
-    base_url: Option<String>,
+    _engine: State<'_, std::sync::Arc<RagEngine>>,
+    _api_key: String,
+    _base_url: Option<String>,
 ) -> Result<bool, String> {
     // 注意：RAG Embedding 配置需要在启动时完成
     // 此命令仅用于更新 API Key

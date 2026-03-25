@@ -16,6 +16,68 @@ export interface RagStats {
   model_id: string | null;
 }
 
+export type DocumentType = 'markdown' | 'pdf' | 'plain_text' | 'code';
+export type BlockKind = 'heading' | 'paragraph' | 'list' | 'quote' | 'code' | 'code_symbol';
+export type ChunkType = 'text' | 'qa_pair' | { code: { language?: string | null } };
+
+export interface ParseOptions {
+  maxFileSizeBytes?: number;
+}
+
+export interface ParsedBlock {
+  index: number;
+  blockKind: BlockKind;
+  text: string;
+  headingPath: string[];
+  pageNumber: number | null;
+  language: string | null;
+  symbol: string | null;
+  startOffset: number;
+  endOffset: number;
+  lineStart: number | null;
+  lineEnd: number | null;
+}
+
+export interface ParsedDocumentMetadata {
+  sourcePath: string;
+  fileName: string;
+  extension: string | null;
+  title: string;
+  documentType: DocumentType;
+  byteSize: number;
+  language: string | null;
+}
+
+export interface ParsedDocument {
+  metadata: ParsedDocumentMetadata;
+  blocks: ParsedBlock[];
+  totalChars: number;
+  totalPages: number | null;
+}
+
+export interface ChunkConfig {
+  maxChunkSize?: number;
+  overlapSize?: number;
+  minChunkSize?: number;
+  preferStructureBoundary?: boolean;
+}
+
+export interface DocumentChunk {
+  chunkIndex: number;
+  text: string;
+  chunkType: ChunkType;
+  sourcePath: string;
+  fileName: string;
+  title: string;
+  documentType: DocumentType;
+  headingPath: string[];
+  pageNumber: number | null;
+  language: string | null;
+  startOffset: number;
+  endOffset: number;
+  blockCount: number;
+}
+
 export const ragService = {
   /**
    * 语义检索
@@ -52,6 +114,36 @@ export const ragService = {
     return invoke<boolean>('rag_embed_message', { 
       messageId, 
       content 
+    });
+  },
+
+  /**
+   * 解析文档
+   * @param path 本地文件路径
+   * @param options 解析配置
+   */
+  async parseDocument(path: string, options?: ParseOptions): Promise<ParsedDocument> {
+    return invoke<ParsedDocument>('rag_parse_document', {
+      path,
+      options,
+    });
+  },
+
+  /**
+   * 解析并分块文档
+   * @param path 本地文件路径
+   * @param options 解析配置
+   * @param config 分块配置
+   */
+  async chunkDocument(
+    path: string,
+    options?: ParseOptions,
+    config?: ChunkConfig,
+  ): Promise<DocumentChunk[]> {
+    return invoke<DocumentChunk[]>('rag_chunk_document', {
+      path,
+      options,
+      config,
     });
   },
   

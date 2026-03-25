@@ -3,13 +3,15 @@
 mod chunker;
 mod context_builder;
 mod embedder;
+mod parser;
 mod retriever;
 mod vector_store;
 
 // 公开导出
-pub use self::chunker::{Chunk, ChunkConfig, ChunkType, chunk_message, merge_qa_pairs};
+pub use self::chunker::{Chunk, ChunkConfig, ChunkType, DocumentChunk, SimpleMessage, chunk_document, chunk_message, merge_qa_pairs};
 pub use self::context_builder::{build_rag_context, ContextConfig};
 pub use self::embedder::{EmbeddingProvider, EmbedError, QwenEmbedding};
+pub use self::parser::{BlockKind, DocumentType, ParseOptions, ParsedBlock, ParsedDocument, ParsedDocumentMetadata, parse_document};
 pub use self::retriever::{SearchResult, SearchSource};
 pub use self::vector_store::VectorStore;
 
