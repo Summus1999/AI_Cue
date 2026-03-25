@@ -154,3 +154,12 @@
 ### P3 - 自定义 Agent 与社区生态
 
 19.自定义 Agent 工作流编排（可视化拖拽编辑器 + 社区市场）❌
+## RAG 知识库后续 TODO
+
+- 已完成：RAG 第一阶段基础稳固，包含 `SearchResult / VectorStore` 身份模型梳理、`vector_search()` 身份修正、消息向量存储边界澄清、`RagEngine` 可插拔 `EmbeddingProvider`、运行时 `rag_configure` 和对应回归测试。
+- 未完成：知识库持久化 Schema 与后端 CRUD，包括 `knowledge_bases`、`kb_documents`、`kb_chunks`、`kb_embeddings` 表、文档 fingerprint、索引状态字段、迁移与级联删除测试。
+- 未完成：文档导入与 Embedding 入库流水线，包括 import orchestrator、chunk 元数据落库、batch embedding、失败重试、阶段进度上报、导入/重建索引/详情/删除命令与集成测试。
+- 未完成：PDF OCR fallback，包括 `ocr.rs` 抽象、扫描页检测、OCR 结果归一化、页码与引用元数据保留、feature flag 或配置开关，以及 text/scanned/mixed PDF 测试。
+- 未完成：知识库管理 UI，包括 RAG 设置项扩展、`ragService`/前端 store 扩展、`KnowledgeBasePanel`、文档列表/筛选/预览、导入进度、删除与重建索引操作。
+- 未完成：检索增强对话接入，包括后端 retrieval 命令、`App.tsx` 发送前检索、`aiChat.ts` 上下文注入、检索失败非阻塞 fallback、回答下方引用渲染与回归测试。
+- 未完成：增量索引与运维加固，包括基于 fingerprint 的跳过策略、后台扫描/重试命令、parse/OCR/embed/retrieve 结构化日志、RAG 统计指标，以及 README/TODO/设计文档同步更新。
