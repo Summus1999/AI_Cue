@@ -3,6 +3,7 @@
 mod chunker;
 mod context_builder;
 mod embedder;
+mod knowledge_base;
 mod parser;
 mod retriever;
 mod vector_store;
@@ -15,6 +16,10 @@ pub use self::context_builder::{build_rag_context, ContextConfig};
 pub use self::embedder::{
     create_embedding_provider, EmbedError, EmbeddingProvider, EmbeddingProviderConfig,
     EmbeddingProviderKind, OpenAiEmbedding, QwenEmbedding,
+};
+pub use self::knowledge_base::{
+    KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest, PreparedKnowledgeBaseImport,
+    SourceDocumentSnapshot,
 };
 pub use self::parser::{
     parse_document, BlockKind, DocumentType, ParseOptions, ParsedBlock, ParsedDocument,
