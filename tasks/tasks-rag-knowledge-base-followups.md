@@ -50,13 +50,13 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.5 Implement a real `rag_configure` or startup configuration path so Qwen/OpenAI embedding models can be selected at runtime
   - [x] 1.6 Add regression tests covering engine configuration, vector identity mapping, and search result hydration
 
-- [ ] 2.0 Add persistent knowledge-base schema and backend CRUD
-  - [ ] 2.1 Design tables for `knowledge_bases`, `kb_documents`, `kb_chunks`, and `kb_embeddings`, with indexes and cascade delete rules
-  - [ ] 2.2 Add a new migration in `database.rs` to create the knowledge-base tables and bump `user_version`
-  - [ ] 2.3 Implement database CRUD for creating/listing/deleting knowledge bases and listing/getting/deleting documents
-  - [ ] 2.4 Store document fingerprint metadata such as absolute path, byte size, modified time, and content hash for dedupe and reindex decisions
-  - [ ] 2.5 Add index state fields such as `pending`, `indexing`, `ready`, and `failed`, plus `last_error`, so the UI can render retries and failure states
-  - [ ] 2.6 Add tests for migration success, duplicate-document protection, and cascade delete behavior
+- [x] 2.0 Add persistent knowledge-base schema and backend CRUD
+  - [x] 2.1 Design tables for `knowledge_bases`, `kb_documents`, `kb_chunks`, and `kb_embeddings`, with indexes and cascade delete rules
+  - [x] 2.2 Add a new migration in `database.rs` to create the knowledge-base tables and bump `user_version`
+  - [x] 2.3 Implement database CRUD for creating/listing/deleting knowledge bases and listing/getting/deleting documents
+  - [x] 2.4 Store document fingerprint metadata such as absolute path, byte size, modified time, and content hash for dedupe and reindex decisions
+  - [x] 2.5 Add index state fields such as `pending`, `indexing`, `ready`, and `failed`, plus `last_error`, so the UI can render retries and failure states
+  - [x] 2.6 Add tests for migration success, duplicate-document protection, and cascade delete behavior
 
 - [ ] 3.0 Implement the document import and embedding ingestion pipeline
   - [ ] 3.1 Create a knowledge-base import orchestrator that runs `parse_document()` and `chunk_document()` for a selected file

@@ -1,6 +1,6 @@
 // SQLite 数据库模块 - 会话和消息持久化
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
@@ -73,6 +73,158 @@ fn default_prompt_mode() -> String {
 
 /// 数据库封装结构
 pub struct Database(pub Mutex<Connection>);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeDocumentIndexState {
+    Pending,
+    Indexing,
+    Ready,
+    Failed,
+}
+
+impl Default for KnowledgeDocumentIndexState {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+impl KnowledgeDocumentIndexState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Indexing => "indexing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl TryFrom<&str> for KnowledgeDocumentIndexState {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexing" => Ok(Self::Indexing),
+            "ready" => Ok(Self::Ready),
+            "failed" => Ok(Self::Failed),
+            _ => Err(format!("未知的知识库索引状态: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeBaseInput {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeBaseRecord {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub document_count: usize,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeDocumentInput {
+    pub knowledge_base_id: String,
+    pub title: String,
+    pub file_name: String,
+    pub file_extension: Option<String>,
+    pub document_type: String,
+    pub source_path: String,
+    pub source_byte_size: u64,
+    pub source_modified_at: i64,
+    pub content_hash: String,
+    pub fingerprint: String,
+    pub index_state: Option<KnowledgeDocumentIndexState>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeDocumentRecord {
+    pub id: String,
+    pub knowledge_base_id: String,
+    pub title: String,
+    pub file_name: String,
+    pub file_extension: Option<String>,
+    pub document_type: String,
+    pub source_path: String,
+    pub source_byte_size: u64,
+    pub source_modified_at: i64,
+    pub content_hash: String,
+    pub fingerprint: String,
+    pub index_state: KnowledgeDocumentIndexState,
+    pub last_error: Option<String>,
+    pub chunk_count: usize,
+    pub embedding_count: usize,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub indexed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeChunkInput {
+    pub chunk_index: usize,
+    pub text: String,
+    pub chunk_type: String,
+    pub heading_path: Vec<String>,
+    pub page_number: Option<u32>,
+    pub language: Option<String>,
+    pub start_offset: usize,
+    pub end_offset: usize,
+    pub block_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeChunkRecord {
+    pub id: String,
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub text: String,
+    pub chunk_type: String,
+    pub heading_path: Vec<String>,
+    pub page_number: Option<u32>,
+    pub language: Option<String>,
+    pub start_offset: usize,
+    pub end_offset: usize,
+    pub block_count: usize,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeEmbeddingInput {
+    pub knowledge_base_id: String,
+    pub document_id: String,
+    pub chunk_id: String,
+    pub embedding: Vec<f32>,
+    pub embedding_dim: usize,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeEmbeddingRecord {
+    pub id: String,
+    pub knowledge_base_id: String,
+    pub document_id: String,
+    pub chunk_id: String,
+    pub embedding_dim: usize,
+    pub model_id: String,
+    pub created_at: i64,
+}
 
 /// 数据库迁移 - v1 到 v2
 fn migrate_v1_to_v2(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
@@ -338,6 +490,107 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v6 到 v7（知识库持久化表）
+fn migrate_v6_to_v7(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if version < 7 {
+        println!("执行数据库迁移 v6 -> v7...");
+
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS knowledge_bases (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_knowledge_bases_updated
+                ON knowledge_bases(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS kb_documents (
+                id                  TEXT PRIMARY KEY,
+                knowledge_base_id   TEXT NOT NULL,
+                title               TEXT NOT NULL,
+                file_name           TEXT NOT NULL,
+                file_extension      TEXT,
+                document_type       TEXT NOT NULL,
+                source_path         TEXT NOT NULL,
+                source_byte_size    INTEGER NOT NULL,
+                source_modified_at  INTEGER NOT NULL,
+                content_hash        TEXT NOT NULL,
+                fingerprint         TEXT NOT NULL,
+                index_state         TEXT NOT NULL DEFAULT 'pending',
+                last_error          TEXT,
+                chunk_count         INTEGER NOT NULL DEFAULT 0,
+                embedding_count     INTEGER NOT NULL DEFAULT 0,
+                created_at          INTEGER NOT NULL,
+                updated_at          INTEGER NOT NULL,
+                indexed_at          INTEGER,
+                FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                UNIQUE (knowledge_base_id, source_path)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_documents_base
+                ON kb_documents(knowledge_base_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_kb_documents_state
+                ON kb_documents(knowledge_base_id, index_state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_kb_documents_fingerprint
+                ON kb_documents(knowledge_base_id, fingerprint);
+            CREATE INDEX IF NOT EXISTS idx_kb_documents_content_hash
+                ON kb_documents(knowledge_base_id, content_hash);
+
+            CREATE TABLE IF NOT EXISTS kb_chunks (
+                id              TEXT PRIMARY KEY,
+                document_id      TEXT NOT NULL,
+                chunk_index      INTEGER NOT NULL,
+                text             TEXT NOT NULL,
+                chunk_type       TEXT NOT NULL,
+                heading_path     TEXT NOT NULL DEFAULT '[]',
+                page_number      INTEGER,
+                language         TEXT,
+                start_offset     INTEGER NOT NULL,
+                end_offset       INTEGER NOT NULL,
+                block_count      INTEGER NOT NULL DEFAULT 1,
+                created_at       INTEGER NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES kb_documents(id) ON DELETE CASCADE,
+                UNIQUE (document_id, chunk_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_chunks_document
+                ON kb_chunks(document_id, chunk_index);
+
+            CREATE TABLE IF NOT EXISTS kb_embeddings (
+                id                  TEXT PRIMARY KEY,
+                knowledge_base_id   TEXT NOT NULL,
+                document_id         TEXT NOT NULL,
+                chunk_id            TEXT NOT NULL,
+                embedding           BLOB NOT NULL,
+                embedding_dim       INTEGER NOT NULL,
+                model_id            TEXT NOT NULL,
+                created_at          INTEGER NOT NULL,
+                FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                FOREIGN KEY (document_id) REFERENCES kb_documents(id) ON DELETE CASCADE,
+                FOREIGN KEY (chunk_id) REFERENCES kb_chunks(id) ON DELETE CASCADE,
+                UNIQUE (chunk_id, model_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_embeddings_base_model
+                ON kb_embeddings(knowledge_base_id, model_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_kb_embeddings_document
+                ON kb_embeddings(document_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_kb_embeddings_chunk
+                ON kb_embeddings(chunk_id);",
+        )?;
+
+        tx.pragma_update(None, "user_version", 7)?;
+        tx.commit()?;
+
+        println!("数据库迁移 v6 -> v7 完成");
+    }
+
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -381,6 +634,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     migrate_v3_to_v4(&conn)?;
     migrate_v4_to_v5(&conn)?;
     migrate_v5_to_v6(&conn)?;
+    migrate_v6_to_v7(&conn)?;
 
     Ok(Database(Mutex::new(conn)))
 }
@@ -391,6 +645,69 @@ fn current_timestamp_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
+}
+
+fn serialize_embedding_blob(embedding: &[f32]) -> Vec<u8> {
+    embedding
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn parse_index_state(value: String) -> KnowledgeDocumentIndexState {
+    KnowledgeDocumentIndexState::try_from(value.as_str()).unwrap_or_default()
+}
+
+fn map_knowledge_base_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeBaseRecord> {
+    Ok(KnowledgeBaseRecord {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+        document_count: row.get::<_, i64>(5)? as usize,
+    })
+}
+
+fn map_knowledge_document_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<KnowledgeDocumentRecord> {
+    let index_state: String = row.get(11)?;
+
+    Ok(KnowledgeDocumentRecord {
+        id: row.get(0)?,
+        knowledge_base_id: row.get(1)?,
+        title: row.get(2)?,
+        file_name: row.get(3)?,
+        file_extension: row.get(4)?,
+        document_type: row.get(5)?,
+        source_path: row.get(6)?,
+        source_byte_size: row.get::<_, i64>(7)? as u64,
+        source_modified_at: row.get(8)?,
+        content_hash: row.get(9)?,
+        fingerprint: row.get(10)?,
+        index_state: parse_index_state(index_state),
+        last_error: row.get(12)?,
+        chunk_count: row.get::<_, i64>(13)? as usize,
+        embedding_count: row.get::<_, i64>(14)? as usize,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+        indexed_at: row.get(17)?,
+    })
+}
+
+fn touch_knowledge_base(
+    conn: &Connection,
+    knowledge_base_id: &str,
+    updated_at: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE knowledge_bases SET updated_at = ?1 WHERE id = ?2",
+        params![updated_at, knowledge_base_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 /// 创建新会话（支持元数据）
@@ -754,6 +1071,406 @@ pub fn get_last_active_session(
     Ok(None)
 }
 
+// ==================== Knowledge Base CRUD Functions ====================
+
+/// 创建知识库
+pub fn create_knowledge_base(
+    db: &Database,
+    input: CreateKnowledgeBaseInput,
+) -> Result<KnowledgeBaseRecord, String> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("知识库名称不能为空".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = current_timestamp_ms();
+    let description = input.description.unwrap_or_default().trim().to_string();
+
+    conn.execute(
+        "INSERT INTO knowledge_bases (id, name, description, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, name, description, now, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(KnowledgeBaseRecord {
+        id,
+        name: name.to_string(),
+        description,
+        document_count: 0,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+/// 列出知识库
+pub fn list_knowledge_bases(db: &Database) -> Result<Vec<KnowledgeBaseRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT kb.id, kb.name, kb.description, kb.created_at, kb.updated_at, COUNT(d.id) AS document_count
+             FROM knowledge_bases kb
+             LEFT JOIN kb_documents d ON d.knowledge_base_id = kb.id
+             GROUP BY kb.id, kb.name, kb.description, kb.created_at, kb.updated_at
+             ORDER BY kb.updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], map_knowledge_base_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
+}
+
+/// 删除知识库
+pub fn delete_knowledge_base(db: &Database, knowledge_base_id: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let affected = conn
+        .execute(
+            "DELETE FROM knowledge_bases WHERE id = ?1",
+            params![knowledge_base_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if affected == 0 {
+        return Err(format!("知识库不存在: {knowledge_base_id}"));
+    }
+
+    Ok(())
+}
+
+/// 创建知识库文档记录
+pub fn create_knowledge_document(
+    db: &Database,
+    input: CreateKnowledgeDocumentInput,
+) -> Result<KnowledgeDocumentRecord, String> {
+    let CreateKnowledgeDocumentInput {
+        knowledge_base_id,
+        title,
+        file_name,
+        file_extension,
+        document_type,
+        source_path,
+        source_byte_size,
+        source_modified_at,
+        content_hash,
+        fingerprint,
+        index_state,
+        last_error,
+    } = input;
+
+    if knowledge_base_id.trim().is_empty() {
+        return Err("knowledgeBaseId 不能为空".to_string());
+    }
+    if source_path.trim().is_empty() {
+        return Err("sourcePath 不能为空".to_string());
+    }
+    if file_name.trim().is_empty() {
+        return Err("fileName 不能为空".to_string());
+    }
+    if document_type.trim().is_empty() {
+        return Err("documentType 不能为空".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = current_timestamp_ms();
+    let index_state = index_state.unwrap_or_default();
+
+    let insert_result = conn.execute(
+        "INSERT INTO kb_documents (
+            id, knowledge_base_id, title, file_name, file_extension, document_type,
+            source_path, source_byte_size, source_modified_at, content_hash, fingerprint,
+            index_state, last_error, chunk_count, embedding_count, created_at, updated_at, indexed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, 0, ?14, ?15, NULL)",
+        params![
+            &id,
+            &knowledge_base_id,
+            &title,
+            &file_name,
+            file_extension,
+            &document_type,
+            &source_path,
+            source_byte_size as i64,
+            source_modified_at,
+            &content_hash,
+            &fingerprint,
+            index_state.as_str(),
+            last_error,
+            now,
+            now,
+        ],
+    );
+
+    if let Err(err) = insert_result {
+        let raw = err.to_string();
+        if raw.contains("FOREIGN KEY constraint failed") {
+            return Err(format!("知识库不存在: {knowledge_base_id}"));
+        }
+        if raw.contains(
+            "UNIQUE constraint failed: kb_documents.knowledge_base_id, kb_documents.source_path",
+        ) {
+            return Err("该知识库中已存在同一路径的文档，请改用重建索引而不是重复导入".to_string());
+        }
+        return Err(raw);
+    }
+
+    touch_knowledge_base(&conn, &knowledge_base_id, now)?;
+    drop(conn);
+
+    get_knowledge_document(db, &id)?.ok_or_else(|| format!("知识库文档创建后读取失败: {id}"))
+}
+
+/// 列出知识库中的文档
+pub fn list_knowledge_documents(
+    db: &Database,
+    knowledge_base_id: &str,
+) -> Result<Vec<KnowledgeDocumentRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, knowledge_base_id, title, file_name, file_extension, document_type,
+                    source_path, source_byte_size, source_modified_at, content_hash, fingerprint,
+                    index_state, last_error, chunk_count, embedding_count, created_at, updated_at, indexed_at
+             FROM kb_documents
+             WHERE knowledge_base_id = ?1
+             ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![knowledge_base_id], map_knowledge_document_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
+}
+
+/// 获取单个知识库文档
+pub fn get_knowledge_document(
+    db: &Database,
+    document_id: &str,
+) -> Result<Option<KnowledgeDocumentRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, knowledge_base_id, title, file_name, file_extension, document_type,
+                    source_path, source_byte_size, source_modified_at, content_hash, fingerprint,
+                    index_state, last_error, chunk_count, embedding_count, created_at, updated_at, indexed_at
+             FROM kb_documents
+             WHERE id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row(params![document_id], map_knowledge_document_row)
+        .optional()
+        .map_err(|e| e.to_string())
+}
+
+/// 更新知识库文档索引状态
+pub fn update_knowledge_document_index_state(
+    db: &Database,
+    document_id: &str,
+    index_state: KnowledgeDocumentIndexState,
+    last_error: Option<String>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
+
+    let affected = conn
+        .execute(
+            "UPDATE kb_documents
+             SET index_state = ?1,
+                 last_error = ?2,
+                 updated_at = ?3,
+                 indexed_at = CASE
+                     WHEN ?1 = 'ready' THEN COALESCE(indexed_at, ?3)
+                     ELSE indexed_at
+                 END
+             WHERE id = ?4",
+            params![index_state.as_str(), last_error, now, document_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if affected == 0 {
+        return Err(format!("知识库文档不存在: {document_id}"));
+    }
+
+    Ok(())
+}
+
+/// 删除知识库文档
+pub fn delete_knowledge_document(db: &Database, document_id: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let knowledge_base_id: Option<String> = conn
+        .query_row(
+            "SELECT knowledge_base_id FROM kb_documents WHERE id = ?1",
+            params![document_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let Some(knowledge_base_id) = knowledge_base_id else {
+        return Err(format!("知识库文档不存在: {document_id}"));
+    };
+
+    conn.execute(
+        "DELETE FROM kb_documents WHERE id = ?1",
+        params![document_id],
+    )
+    .map_err(|e| e.to_string())?;
+    touch_knowledge_base(&conn, &knowledge_base_id, current_timestamp_ms())?;
+
+    Ok(())
+}
+
+/// 插入文档分块
+pub fn insert_knowledge_chunks(
+    db: &Database,
+    document_id: &str,
+    chunks: &[CreateKnowledgeChunkInput],
+) -> Result<Vec<KnowledgeChunkRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
+    let mut inserted = Vec::with_capacity(chunks.len());
+
+    for chunk in chunks {
+        let id = uuid::Uuid::new_v4().to_string();
+        let heading_path = serde_json::to_string(&chunk.heading_path).map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "INSERT INTO kb_chunks (
+                id, document_id, chunk_index, text, chunk_type, heading_path,
+                page_number, language, start_offset, end_offset, block_count, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                &id,
+                document_id,
+                chunk.chunk_index as i64,
+                &chunk.text,
+                &chunk.chunk_type,
+                &heading_path,
+                chunk.page_number.map(|value| value as i64),
+                chunk.language.as_deref(),
+                chunk.start_offset as i64,
+                chunk.end_offset as i64,
+                chunk.block_count as i64,
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        inserted.push(KnowledgeChunkRecord {
+            id,
+            document_id: document_id.to_string(),
+            chunk_index: chunk.chunk_index,
+            text: chunk.text.clone(),
+            chunk_type: chunk.chunk_type.clone(),
+            heading_path: chunk.heading_path.clone(),
+            page_number: chunk.page_number,
+            language: chunk.language.clone(),
+            start_offset: chunk.start_offset,
+            end_offset: chunk.end_offset,
+            block_count: chunk.block_count,
+            created_at: now,
+        });
+    }
+
+    tx.execute(
+        "UPDATE kb_documents
+         SET chunk_count = (SELECT COUNT(*) FROM kb_chunks WHERE document_id = ?1),
+             updated_at = ?2
+         WHERE id = ?1",
+        params![document_id, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(inserted)
+}
+
+/// 插入文档向量
+pub fn insert_knowledge_embeddings(
+    db: &Database,
+    embeddings: &[CreateKnowledgeEmbeddingInput],
+) -> Result<Vec<KnowledgeEmbeddingRecord>, String> {
+    if embeddings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
+    let mut inserted = Vec::with_capacity(embeddings.len());
+    let mut touched_documents = std::collections::HashSet::new();
+
+    for item in embeddings {
+        let id = uuid::Uuid::new_v4().to_string();
+        let blob = serialize_embedding_blob(&item.embedding);
+
+        tx.execute(
+            "INSERT INTO kb_embeddings (
+                id, knowledge_base_id, document_id, chunk_id, embedding, embedding_dim, model_id, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                &id,
+                &item.knowledge_base_id,
+                &item.document_id,
+                &item.chunk_id,
+                blob,
+                item.embedding_dim as i64,
+                &item.model_id,
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        touched_documents.insert(item.document_id.clone());
+        inserted.push(KnowledgeEmbeddingRecord {
+            id,
+            knowledge_base_id: item.knowledge_base_id.clone(),
+            document_id: item.document_id.clone(),
+            chunk_id: item.chunk_id.clone(),
+            embedding_dim: item.embedding_dim,
+            model_id: item.model_id.clone(),
+            created_at: now,
+        });
+    }
+
+    for document_id in touched_documents {
+        tx.execute(
+            "UPDATE kb_documents
+             SET embedding_count = (SELECT COUNT(*) FROM kb_embeddings WHERE document_id = ?1),
+                 index_state = 'ready',
+                 last_error = NULL,
+                 indexed_at = COALESCE(indexed_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![document_id, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(inserted)
+}
+
 // ==================== Review CRUD Functions ====================
 
 /// 插入单条消息评分
@@ -1088,4 +1805,225 @@ pub fn get_knowledge_gap_titles(db: &Database, session_id: &str) -> Result<Vec<S
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_db() -> Database {
+        let temp_dir =
+            std::env::temp_dir().join(format!("knowledge_base_db_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        init_database(&temp_dir).unwrap()
+    }
+
+    fn sample_document_input(
+        knowledge_base_id: &str,
+        source_path: &str,
+    ) -> CreateKnowledgeDocumentInput {
+        CreateKnowledgeDocumentInput {
+            knowledge_base_id: knowledge_base_id.to_string(),
+            title: "Rust Guide".to_string(),
+            file_name: "rust-guide.md".to_string(),
+            file_extension: Some("md".to_string()),
+            document_type: "markdown".to_string(),
+            source_path: source_path.to_string(),
+            source_byte_size: 1024,
+            source_modified_at: 1_710_000_000_000,
+            content_hash: "sha1:test-hash".to_string(),
+            fingerprint: format!("fp:{source_path}:1024:1710000000000:test-hash"),
+            index_state: Some(KnowledgeDocumentIndexState::Pending),
+            last_error: None,
+        }
+    }
+
+    fn count_rows(db: &Database, table: &str) -> i64 {
+        let conn = db.0.lock().unwrap();
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_v7_migration_creates_knowledge_base_tables() {
+        let db = create_test_db();
+        let conn = db.0.lock().unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+
+        for table in [
+            "knowledge_bases",
+            "kb_documents",
+            "kb_chunks",
+            "kb_embeddings",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table should exist: {table}");
+        }
+
+        let mut stmt = conn.prepare("PRAGMA table_info(kb_documents)").unwrap();
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect::<Vec<_>>();
+
+        for required in [
+            "source_path",
+            "source_byte_size",
+            "source_modified_at",
+            "content_hash",
+            "fingerprint",
+            "index_state",
+            "last_error",
+        ] {
+            assert!(
+                columns.contains(&required.to_string()),
+                "missing column: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_duplicate_document_protection_prevents_same_path_reimport() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "Backend Docs".to_string(),
+                description: Some("RAG documents".to_string()),
+            },
+        )
+        .unwrap();
+
+        let first =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\rust.md"))
+                .unwrap();
+        let err =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\rust.md"))
+                .unwrap_err();
+
+        assert!(err.contains("已存在同一路径的文档"));
+
+        let docs = list_knowledge_documents(&db, &kb.id).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].id, first.id);
+        assert_eq!(docs[0].source_path, "C:\\docs\\rust.md");
+        assert_eq!(
+            docs[0].fingerprint,
+            "fp:C:\\docs\\rust.md:1024:1710000000000:test-hash"
+        );
+    }
+
+    #[test]
+    fn test_delete_knowledge_base_cascades_documents_chunks_and_embeddings() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "System Design".to_string(),
+                description: None,
+            },
+        )
+        .unwrap();
+
+        let document = create_knowledge_document(
+            &db,
+            sample_document_input(&kb.id, "C:\\docs\\system-design.md"),
+        )
+        .unwrap();
+
+        let chunks = insert_knowledge_chunks(
+            &db,
+            &document.id,
+            &[
+                CreateKnowledgeChunkInput {
+                    chunk_index: 0,
+                    text: "第一段内容".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["第1章".to_string()],
+                    page_number: Some(1),
+                    language: None,
+                    start_offset: 0,
+                    end_offset: 12,
+                    block_count: 1,
+                },
+                CreateKnowledgeChunkInput {
+                    chunk_index: 1,
+                    text: "第二段内容".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["第1章".to_string(), "小节".to_string()],
+                    page_number: Some(1),
+                    language: None,
+                    start_offset: 13,
+                    end_offset: 24,
+                    block_count: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        let document_after_chunks = get_knowledge_document(&db, &document.id).unwrap().unwrap();
+        assert_eq!(document_after_chunks.chunk_count, 2);
+        assert_eq!(document_after_chunks.embedding_count, 0);
+        assert_eq!(
+            document_after_chunks.index_state,
+            KnowledgeDocumentIndexState::Pending
+        );
+
+        insert_knowledge_embeddings(
+            &db,
+            &[
+                CreateKnowledgeEmbeddingInput {
+                    knowledge_base_id: kb.id.clone(),
+                    document_id: document.id.clone(),
+                    chunk_id: chunks[0].id.clone(),
+                    embedding: vec![0.1, 0.2, 0.3],
+                    embedding_dim: 3,
+                    model_id: "test-embedding-model".to_string(),
+                },
+                CreateKnowledgeEmbeddingInput {
+                    knowledge_base_id: kb.id.clone(),
+                    document_id: document.id.clone(),
+                    chunk_id: chunks[1].id.clone(),
+                    embedding: vec![0.3, 0.2, 0.1],
+                    embedding_dim: 3,
+                    model_id: "test-embedding-model".to_string(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let document_after_embeddings = get_knowledge_document(&db, &document.id).unwrap().unwrap();
+        assert_eq!(document_after_embeddings.chunk_count, 2);
+        assert_eq!(document_after_embeddings.embedding_count, 2);
+        assert_eq!(
+            document_after_embeddings.index_state,
+            KnowledgeDocumentIndexState::Ready
+        );
+        assert!(document_after_embeddings.indexed_at.is_some());
+
+        assert_eq!(count_rows(&db, "knowledge_bases"), 1);
+        assert_eq!(count_rows(&db, "kb_documents"), 1);
+        assert_eq!(count_rows(&db, "kb_chunks"), 2);
+        assert_eq!(count_rows(&db, "kb_embeddings"), 2);
+
+        delete_knowledge_base(&db, &kb.id).unwrap();
+
+        assert_eq!(count_rows(&db, "knowledge_bases"), 0);
+        assert_eq!(count_rows(&db, "kb_documents"), 0);
+        assert_eq!(count_rows(&db, "kb_chunks"), 0);
+        assert_eq!(count_rows(&db, "kb_embeddings"), 0);
+    }
 }

@@ -1211,3 +1211,56 @@ pub fn rag_delete_vectors(
 ) -> Result<(), String> {
     engine.delete_vectors(&message_id)
 }
+
+/// 创建知识库
+#[tauri::command]
+pub fn rag_create_knowledge_base(
+    db: State<'_, crate::database::Database>,
+    input: crate::database::CreateKnowledgeBaseInput,
+) -> Result<crate::database::KnowledgeBaseRecord, String> {
+    crate::database::create_knowledge_base(&db, input)
+}
+
+/// 列出知识库
+#[tauri::command]
+pub fn rag_list_knowledge_bases(
+    db: State<'_, crate::database::Database>,
+) -> Result<Vec<crate::database::KnowledgeBaseRecord>, String> {
+    crate::database::list_knowledge_bases(&db)
+}
+
+/// 删除知识库
+#[tauri::command]
+pub fn rag_delete_knowledge_base(
+    db: State<'_, crate::database::Database>,
+    knowledge_base_id: String,
+) -> Result<(), String> {
+    crate::database::delete_knowledge_base(&db, &knowledge_base_id)
+}
+
+/// 列出知识库中的文档
+#[tauri::command]
+pub fn rag_list_knowledge_documents(
+    db: State<'_, crate::database::Database>,
+    knowledge_base_id: String,
+) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
+    crate::database::list_knowledge_documents(&db, &knowledge_base_id)
+}
+
+/// 获取单个知识库文档
+#[tauri::command]
+pub fn rag_get_knowledge_document(
+    db: State<'_, crate::database::Database>,
+    document_id: String,
+) -> Result<Option<crate::database::KnowledgeDocumentRecord>, String> {
+    crate::database::get_knowledge_document(&db, &document_id)
+}
+
+/// 删除知识库文档
+#[tauri::command]
+pub fn rag_delete_knowledge_document(
+    db: State<'_, crate::database::Database>,
+    document_id: String,
+) -> Result<(), String> {
+    crate::database::delete_knowledge_document(&db, &document_id)
+}

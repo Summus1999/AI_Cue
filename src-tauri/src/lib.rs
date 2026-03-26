@@ -219,6 +219,12 @@ pub fn run() {
             commands::rag_stats,
             commands::rag_configure,
             commands::rag_delete_vectors,
+            commands::rag_create_knowledge_base,
+            commands::rag_list_knowledge_bases,
+            commands::rag_delete_knowledge_base,
+            commands::rag_list_knowledge_documents,
+            commands::rag_get_knowledge_document,
+            commands::rag_delete_knowledge_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

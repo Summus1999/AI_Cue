@@ -119,7 +119,7 @@
 1.Rust 后端集成向量存储引擎（SQLite 扩展向量表 + Rust 原生余弦相似度计算）✅
 2.文档解析与分块引擎（支持 Markdown/PDF/纯文本/代码文件，智能分块）✅
 当前进度：已完成 Markdown、文本型 PDF、纯文本、代码文件解析，已完成结构化分块、Tauri 命令接口、前端服务调用接入；OCR、Embedding 入库、知识库管理界面、检索增强对话管道属于后续条目范围。
-3.Embedding 向量化引擎（双模式：API 模式如千问 embedding + 本地 ONNX 模型可选）❌
+3.Embedding 向量化引擎（模式：API 模式如千问 embedding）❌
 4.知识库管理界面（文档上传/预览/分类管理/删除）❌
 5.RAG 检索增强对话管道（用户提问自动检索知识库，注入上下文，引用来源标注）❌
 
@@ -154,6 +154,7 @@
 ### P3 - 自定义 Agent 与社区生态
 
 19.自定义 Agent 工作流编排（可视化拖拽编辑器 + 社区市场）❌
+
 ## RAG 知识库后续 TODO
 
 - 已完成：RAG 第一阶段基础稳固，包含 `SearchResult / VectorStore` 身份模型梳理、`vector_search()` 身份修正、消息向量存储边界澄清、`RagEngine` 可插拔 `EmbeddingProvider`、运行时 `rag_configure` 和对应回归测试。
