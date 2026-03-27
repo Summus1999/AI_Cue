@@ -7,6 +7,8 @@ mod knowledge_base;
 mod parser;
 mod retriever;
 mod vector_store;
+#[cfg(test)]
+mod integration_test;
 
 pub use self::chunker::{
     chunk_document, chunk_message, merge_qa_pairs, Chunk, ChunkConfig, ChunkType, DocumentChunk,
@@ -18,8 +20,8 @@ pub use self::embedder::{
     EmbeddingProviderKind, OpenAiEmbedding, QwenEmbedding,
 };
 pub use self::knowledge_base::{
-    KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest, PreparedKnowledgeBaseImport,
-    SourceDocumentSnapshot,
+    CompletedKnowledgeBaseImport, KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest,
+    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, SourceDocumentSnapshot,
 };
 pub use self::parser::{
     parse_document, BlockKind, DocumentType, ParseOptions, ParsedBlock, ParsedDocument,

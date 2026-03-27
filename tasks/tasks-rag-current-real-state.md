@@ -6,10 +6,10 @@
 - `src-tauri/src/rag/context_builder.rs` - RAG 上下文构建；需要输出 token 受控的 prompt 上下文和前端可渲染的 citation 元信息。
 - `src-tauri/src/rag/parser.rs` - 文档解析入口；需要补充扫描版 PDF 检测和 OCR fallback。
 - `src-tauri/src/rag/chunker.rs` - 文档分块逻辑；需要确保 heading path、页码、offset、语言等元数据完整保留到入库链路。
-- `src-tauri/src/rag/knowledge_base.rs` - 新文件；负责知识库导入编排、批量嵌入、重建索引和阶段进度上报。
+- `src-tauri/src/rag/knowledge_base.rs` - 新文件；负责知识库导入编排，当前已完成文档快照落库、解析/分块、`kb_chunks` 持久化、基于 `EmbeddingProvider` 的批量 embedding 准备与 `kb_embeddings` 入库，并补齐 embedding/持久化失败后的恢复语义；后续继续补重建索引和阶段进度上报。
 - `src-tauri/src/rag/ocr.rs` - 新文件；封装 OCR 抽象、实现和错误模型，避免 parser 直接耦合具体 OCR 库。
-- `src-tauri/src/rag/integration_test.rs` - Rust 端集成测试；需要覆盖导入、OCR fallback、检索、删除、重建索引和失败回退。
-- `src-tauri/src/database.rs` - 知识库 Schema 与基础 CRUD 已有；后续需要补充导入链路用到的读写接口、fingerprint 跳过和统计查询。
+- `src-tauri/src/rag/integration_test.rs` - Rust 端集成测试；当前已覆盖知识库首次导入成功、重复导入同一路径拒绝、删除后的级联清理，以及基于“删除后重导入”的当前重建索引路径；后续继续补 OCR fallback、检索和失败回退。
+- `src-tauri/src/database.rs` - 知识库 Schema、基础 CRUD 与 chunk/embedding 基础写入接口已就绪；后续需要补充 fingerprint 跳过、统计查询和更完整的导入/重建辅助接口。
 - `src-tauri/src/commands.rs` - Tauri 命令入口；需要新增导入、重建索引、检索增强和后台扫描/重试命令。
 - `src-tauri/src/lib.rs` - 应用启动入口；需要注册新增命令并初始化可能新增的 RAG 运行时组件。
 - `src/services/ragService.ts` - 前端 RAG 服务层；目前只有基础搜索/解析接口，需要扩展知识库 CRUD、导入进度、文档详情、检索引用等接口。
@@ -45,14 +45,14 @@ Update the file after completing each sub-task, not just after completing an ent
 - [x] 0.0 Create feature branch
   - [x] 0.1 Create and checkout a new branch for this feature (for example `git checkout -b feature/rag-current-real-state`)
 
-- [ ] 1.0 打通知识库导入与 Embedding 入库主链路
+- [x] 1.0 打通知识库导入与 Embedding 入库主链路
   - [x] 1.1 新建 `src-tauri/src/rag/knowledge_base.rs`，定义导入编排器，串联 `parse_document()`、`chunk_document()`、文档记录初始化和最终状态收口
   - [x] 1.2 在导入链路中落库文档级元数据，复用现有 `kb_documents` 表，正确写入 source path、byte size、modified time、content hash、fingerprint 和 index state
-  - [ ] 1.3 将每个 chunk 按顺序写入 `kb_chunks`，确保 heading path、page number、language、start/end offset、block count 等元数据不丢失
-  - [ ] 1.4 为知识库文档实现批量 embedding 调用，优先复用现有 `EmbeddingProvider` 抽象，而不是再引入一套平行接口
-  - [ ] 1.5 将 chunk embedding 写入 `kb_embeddings`，并在成功后回填 `embedding_count`、`chunk_count`、`indexed_at` 和 `ready` 状态
-  - [ ] 1.6 为单批次 embedding 失败实现可恢复语义，至少保证文档状态进入 `failed`，并写入 `last_error`，避免半成功半失败的脏状态
-  - [ ] 1.7 增加导入、重建索引、删除后的集成测试，覆盖首次导入成功、重复导入同一文件、删除后级联清理和重建索引成功
+  - [x] 1.3 将每个 chunk 按顺序写入 `kb_chunks`，确保 heading path、page number、language、start/end offset、block count 等元数据不丢失
+  - [x] 1.4 为知识库文档实现批量 embedding 调用，优先复用现有 `EmbeddingProvider` 抽象，而不是再引入一套平行接口
+  - [x] 1.5 将 chunk embedding 写入 `kb_embeddings`，并在成功后回填 `embedding_count`、`chunk_count`、`indexed_at` 和 `ready` 状态
+  - [x] 1.6 为单批次 embedding 失败实现可恢复语义，至少保证文档状态进入 `failed`，并写入 `last_error`，避免半成功半失败的脏状态
+  - [x] 1.7 增加导入、重建索引、删除后的集成测试，覆盖首次导入成功、重复导入同一文件、删除后级联清理和重建索引成功
 
 - [ ] 2.0 补齐 OCR fallback，覆盖扫描版 PDF
   - [ ] 2.1 新建 `src-tauri/src/rag/ocr.rs`，定义 OCR trait、统一错误模型和首个可替换实现
