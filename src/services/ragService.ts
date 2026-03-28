@@ -437,6 +437,14 @@ export const ragService = {
   },
 
   /**
+   * 列出单个知识库文档的分块明细
+   * @param documentId 文档 ID
+   */
+  async listKnowledgeDocumentChunks(documentId: string): Promise<KnowledgeChunkRecord[]> {
+    return invoke<KnowledgeChunkRecord[]>('rag_list_knowledge_document_chunks', { documentId });
+  },
+
+  /**
    * 删除知识库文档
    * @param documentId 文档 ID
    */

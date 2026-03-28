@@ -1324,6 +1324,15 @@ pub fn rag_get_knowledge_document(
     crate::database::get_knowledge_document(&db, &document_id)
 }
 
+/// 列出单个知识库文档的分块明细
+#[tauri::command]
+pub fn rag_list_knowledge_document_chunks(
+    db: State<'_, crate::database::Database>,
+    document_id: String,
+) -> Result<Vec<crate::database::KnowledgeChunkRecord>, String> {
+    crate::database::list_knowledge_document_chunks(&db, &document_id)
+}
+
 /// 删除知识库文档
 #[tauri::command]
 pub fn rag_delete_knowledge_document(

@@ -227,6 +227,7 @@ pub fn run() {
             commands::rag_delete_knowledge_base,
             commands::rag_list_knowledge_documents,
             commands::rag_get_knowledge_document,
+            commands::rag_list_knowledge_document_chunks,
             commands::rag_delete_knowledge_document,
         ])
         .run(tauri::generate_context!())

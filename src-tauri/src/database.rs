@@ -696,6 +696,26 @@ fn map_knowledge_document_row(
     })
 }
 
+fn map_knowledge_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeChunkRecord> {
+    let heading_path_json: String = row.get(5)?;
+    let heading_path = serde_json::from_str(&heading_path_json).unwrap_or_default();
+
+    Ok(KnowledgeChunkRecord {
+        id: row.get(0)?,
+        document_id: row.get(1)?,
+        chunk_index: row.get::<_, i64>(2)? as usize,
+        text: row.get(3)?,
+        chunk_type: row.get(4)?,
+        heading_path,
+        page_number: row.get::<_, Option<i64>>(6)?.map(|value| value as u32),
+        language: row.get(7)?,
+        start_offset: row.get::<_, i64>(8)? as usize,
+        end_offset: row.get::<_, i64>(9)? as usize,
+        block_count: row.get::<_, i64>(10)? as usize,
+        created_at: row.get(11)?,
+    })
+}
+
 fn touch_knowledge_base(
     conn: &Connection,
     knowledge_base_id: &str,
@@ -1393,6 +1413,47 @@ pub fn get_knowledge_document(
     stmt.query_row(params![document_id], map_knowledge_document_row)
         .optional()
         .map_err(|e| e.to_string())
+}
+
+/// 列出单个知识库文档的分块明细，供预览界面使用
+pub fn list_knowledge_document_chunks(
+    db: &Database,
+    document_id: &str,
+) -> Result<Vec<KnowledgeChunkRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let document_exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM kb_documents WHERE id = ?1)",
+            params![document_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        != 0;
+
+    if !document_exists {
+        return Err(format!("知识库文档不存在: {document_id}"));
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, document_id, chunk_index, text, chunk_type, heading_path,
+                    page_number, language, start_offset, end_offset, block_count, created_at
+             FROM kb_chunks
+             WHERE document_id = ?1
+             ORDER BY chunk_index ASC, created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![document_id], map_knowledge_chunk_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
 }
 
 /// 更新知识库文档索引状态
@@ -2228,5 +2289,93 @@ mod tests {
         assert_eq!(count_rows(&db, "kb_documents"), 0);
         assert_eq!(count_rows(&db, "kb_chunks"), 0);
         assert_eq!(count_rows(&db, "kb_embeddings"), 0);
+    }
+
+    #[test]
+    fn test_list_knowledge_document_chunks_returns_sorted_preview_details() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "Preview".to_string(),
+                description: Some("preview chunks".to_string()),
+            },
+        )
+        .unwrap();
+
+        let document =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\preview.md"))
+                .unwrap();
+
+        insert_knowledge_chunks(
+            &db,
+            &document.id,
+            &[
+                CreateKnowledgeChunkInput {
+                    chunk_index: 2,
+                    text: "第三段".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["第二章".to_string()],
+                    page_number: Some(3),
+                    language: Some("zh".to_string()),
+                    start_offset: 21,
+                    end_offset: 30,
+                    block_count: 1,
+                },
+                CreateKnowledgeChunkInput {
+                    chunk_index: 0,
+                    text: "第一段".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["第一章".to_string()],
+                    page_number: Some(1),
+                    language: Some("zh".to_string()),
+                    start_offset: 0,
+                    end_offset: 9,
+                    block_count: 1,
+                },
+                CreateKnowledgeChunkInput {
+                    chunk_index: 1,
+                    text: "第二段".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["第一章".to_string(), "小节".to_string()],
+                    page_number: Some(2),
+                    language: Some("zh".to_string()),
+                    start_offset: 10,
+                    end_offset: 20,
+                    block_count: 2,
+                },
+            ],
+        )
+        .unwrap();
+
+        let chunks = list_knowledge_document_chunks(&db, &document.id).unwrap();
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.chunk_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(chunks[0].text, "第一段");
+        assert_eq!(chunks[0].page_number, Some(1));
+        assert_eq!(chunks[0].heading_path, vec!["第一章".to_string()]);
+        assert_eq!(
+            chunks[1].heading_path,
+            vec!["第一章".to_string(), "小节".to_string()]
+        );
+        assert_eq!(chunks[1].block_count, 2);
+        assert_eq!(chunks[2].page_number, Some(3));
+        assert_eq!(chunks[2].language.as_deref(), Some("zh"));
+    }
+
+    #[test]
+    fn test_list_knowledge_document_chunks_rejects_missing_document() {
+        let db = create_test_db();
+
+        let error = list_knowledge_document_chunks(&db, "missing-document-id").unwrap_err();
+
+        assert!(error.contains("知识库文档不存在"));
     }
 }
