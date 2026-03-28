@@ -20,8 +20,10 @@
 - `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback 的前端回归测试。
 - `src/services/__tests__/chatReplay.test.ts` - 覆盖 continue generate / retry 请求准备逻辑的前端回归测试。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
-- `src/store/rag.ts` - 当前前端 RAG store。
-- `src/App.tsx` - 主聊天编排与消息渲染。
+- `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、导入任务、文档详情/分块、重建索引状态与错误状态。
+- `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、文档详情/分块、任务快照与重建索引状态同步。
+- `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口，并将知识库页面切换到独立面板组件。
+- `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择和后续文档管理区的挂载点。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
 - `src/components/SettingsPanel.tsx` - 当前设置面板，当前会在保存配置后同步 RAG runtime 配置。
@@ -109,9 +111,9 @@
   - ✅️ 6.8 已补齐 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证
 
 - ❌️ 7.0 构建知识库管理 UI
-  - ❌️ 7.1 `src/store/rag.ts` 仍只管理 search / embed / stats，尚未保存知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
-  - ❌️ 7.2 当前 `App.tsx` 没有知识库视图入口，`currentView` 也没有知识库面板状态
-  - ❌️ 7.3 仓库中尚无 `src/components/KnowledgeBasePanel.tsx`
+  - ✅️ 7.1 `src/store/rag.ts` 已补齐知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
+  - ✅️ 7.2 `App.tsx` 已增加知识库视图入口，`currentView` 也已支持知识库面板状态
+  - ✅️ 7.3 已新增 `src/components/KnowledgeBasePanel.tsx`，并替换 `App.tsx` 内联占位页
   - ❌️ 7.4 仓库中尚无 `src/components/knowledge/KnowledgeDocumentList.tsx`
   - ❌️ 7.5 仓库中尚无 `src/components/knowledge/KnowledgeDocumentPreview.tsx`
   - ❌️ 7.6 界面里尚未实现文件选择、导入、乐观状态行、阶段进度显示和失败可见性
