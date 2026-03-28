@@ -75,6 +75,29 @@ interface Message {
   responseTimeMs?: number;
   /** 当前回答实际使用的 RAG 引用 */
   citations?: CitationMetadata[];
+  /** 关联的用户消息 ID，用于继续生成/重试时恢复请求上下文 */
+  sourceUserMessageId?: string;
+  /** 最近一次用于生成该 assistant 消息的请求文本 */
+  requestText?: string;
+  /** 最近一次请求对应的图片上下文 */
+  requestImageBase64?: string;
+  /** 最近一次请求用于 RAG 检索的查询文本 */
+  retrievalQuery?: string;
+  /** 最近一次请求开始前该 assistant 已有的内容前缀 */
+  requestContentPrefix?: string;
+}
+
+interface RequestAssistantReplyOptions {
+  assistantId?: string;
+  userMessageId?: string;
+  imageBase64?: string;
+  responseTimeMs?: number;
+  baseMessages?: Message[];
+  persistUserMessage?: boolean;
+  sessionId?: string | null;
+  retrievalQuery?: string;
+  fallbackCitations?: CitationMetadata[];
+  existingAssistantContentPrefix?: string;
 }
 
 interface ScreenshotContext {
@@ -116,6 +139,35 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
+}
+
+function findSourceUserMessage(
+  messages: Message[],
+  assistantMessageIndex: number,
+  sourceUserMessageId?: string,
+): { message: Message; index: number } | undefined {
+  if (sourceUserMessageId) {
+    const sourceUserIndex = messages.findIndex(
+      (message, index) => index < assistantMessageIndex && message.id === sourceUserMessageId,
+    );
+    if (sourceUserIndex >= 0 && messages[sourceUserIndex].role === 'user') {
+      return {
+        message: messages[sourceUserIndex],
+        index: sourceUserIndex,
+      };
+    }
+  }
+
+  for (let index = assistantMessageIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      return {
+        message: messages[index],
+        index,
+      };
+    }
+  }
+
+  return undefined;
 }
 
 // 注意：getSpeechErrorMessage 现在从 speechRecognition.ts 导入
@@ -457,29 +509,63 @@ function App() {
     requestText: string,
     imageBase64?: string,
     responseTimeMs?: number,
+    options: RequestAssistantReplyOptions = {},
   ) => {
-    // 在添加新消息之前，先捕获当前消息列表用于构建上下文历史
-    const currentMessages = [...messages];
-
-    const assistantId = generateId();
+    const assistantId = options.assistantId ?? generateId();
+    const userMessageId = options.userMessageId ?? generateId();
     const requestId = generateRequestId();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateId(),
-        role: "user",
-        content: userContent,
-        timestamp: Date.now(),
-        responseTimeMs, // 附加回答用时
-      },
-      {
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-        isComplete: false, // 初始状态为未完成
-      },
-    ]);
+    const assistantPrefixContent = options.existingAssistantContentPrefix ?? '';
+    const retrievalQuery = options.retrievalQuery ?? userContent;
+    const persistUserMessage = options.persistUserMessage ?? !options.assistantId;
+    const fallbackCitations = options.fallbackCitations;
+    // 在写入新消息前，先捕获用于上下文构建的历史切片。
+    const currentMessages = options.baseMessages ? [...options.baseMessages] : [...messages];
+
+    if (options.assistantId) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: assistantPrefixContent,
+                timestamp: Date.now(),
+                isComplete: false,
+                interruptReason: undefined,
+                citations: fallbackCitations,
+                sourceUserMessageId: options.userMessageId ?? message.sourceUserMessageId,
+                requestText,
+                requestImageBase64: imageBase64,
+                retrievalQuery,
+                requestContentPrefix: assistantPrefixContent,
+              }
+            : message,
+        ),
+      );
+    } else {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userMessageId,
+          role: "user",
+          content: userContent,
+          timestamp: Date.now(),
+          responseTimeMs,
+        },
+        {
+          id: assistantId,
+          role: "assistant",
+          content: assistantPrefixContent,
+          timestamp: Date.now(),
+          isComplete: false,
+          citations: fallbackCitations,
+          sourceUserMessageId: userMessageId,
+          requestText,
+          requestImageBase64: imageBase64,
+          retrievalQuery,
+          requestContentPrefix: assistantPrefixContent,
+        },
+      ]);
+    }
 
     activeStreamRequestRef.current = {
       requestId,
@@ -488,33 +574,33 @@ function App() {
     setIsGenerating(true);
     networkResilience.setWaiting(assistantId);
 
-    // 捕获当前会话 ID，处理闭包问题
-    let sessionId = currentSessionId;
+    let sessionId = options.sessionId ?? currentSessionId;
     let isNewSession = false;
 
-    // 保存用户消息到数据库（延迟创建会话）
     try {
-      if (!sessionId) {
-        // 创建新会话时传递 promptMode
-        const newSession = await invoke<{ id: string }>('create_session', {
-          metadata: {
-            prompt_mode: promptMode,
-          },
-        });
-        sessionId = newSession.id;
-        setCurrentSessionId(sessionId);
-        isNewSession = true;
-      }
-      await saveMessage(sessionId, 'user', userContent, imageBase64);
-      // 如果是新会话，用用户消息的前 20 个字符作为标题
-      if (isNewSession) {
-        await updateSessionTitle(sessionId, userContent.slice(0, 20));
+      if (persistUserMessage) {
+        if (!sessionId) {
+          const newSession = await invoke<{ id: string }>('create_session', {
+            metadata: {
+              prompt_mode: promptMode,
+            },
+          });
+          sessionId = newSession.id;
+          setCurrentSessionId(sessionId);
+          isNewSession = true;
+        }
+
+        if (sessionId) {
+          await saveMessage(sessionId, 'user', userContent, imageBase64);
+          if (isNewSession) {
+            await updateSessionTitle(sessionId, userContent.slice(0, 20));
+          }
+        }
       }
     } catch (dbError) {
       console.error('Failed to save user message:', dbError);
     }
 
-    // 用于收集完整的 AI 回复
     let fullAssistantContent = '';
 
     try {
@@ -522,6 +608,14 @@ function App() {
       let hasReceivedContent = false;
       const isLocallyCancelled = () =>
         locallyCancelledRequestIdsRef.current.has(requestId);
+      const preserveAssistantContentOnFailure = () => {
+        if (fullAssistantContent) {
+          return;
+        }
+        if (assistantPrefixContent) {
+          updateAssistantMessage(assistantId, assistantPrefixContent);
+        }
+      };
 
       const onChunk = (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => {
         if (isLocallyCancelled() && !done) {
@@ -533,9 +627,10 @@ function App() {
           fullAssistantContent += content;
           appendAssistantChunk(assistantId, content);
         }
-        // AI 回复完成时保存到数据库
+
         if (done) {
-          // 更新消息完成状态
+          const finalAssistantContent = assistantPrefixContent + fullAssistantContent;
+
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId
@@ -544,25 +639,24 @@ function App() {
                     isComplete: isComplete ?? true,
                     interruptReason: isComplete ? undefined : getInterruptReason(finishReason),
                   }
-                : msg
-            )
+                : msg,
+            ),
           );
-          // AI 消息完成时触发 side effect（面试计时等逻辑移到 useEffect 中处理，避免闭包过期）
+
           if (isComplete) {
             setLastCompletedMessageId(assistantId);
           }
-          // 保存到数据库
+
           if (sessionId && fullAssistantContent) {
-            saveMessage(sessionId, 'assistant', fullAssistantContent).catch((err) => {
+            saveMessage(sessionId, 'assistant', finalAssistantContent).catch((err) => {
               console.error('Failed to save assistant message:', err);
             });
           }
-          // 检测代码模式（自动展开编辑器）
-          if (isComplete && codeEditor.codeModeAutoDetect && fullAssistantContent) {
-            const detection = codeDetector.detect(fullAssistantContent);
+
+          if (isComplete && codeEditor.codeModeAutoDetect && finalAssistantContent) {
+            const detection = codeDetector.detect(finalAssistantContent);
             if (detection.suggestion === 'code_mode' && detection.codeBlocks.length > 0) {
               codeEditor.setShowEditor(true);
-              // 预填充第一个代码块
               const firstBlock = detection.codeBlocks[0];
               codeEditor.insertCode(firstBlock.content, firstBlock.language, 'replace');
             }
@@ -570,23 +664,20 @@ function App() {
         }
       };
 
-      // 构建上下文历史（只取本次打开/切换后的消息用于上下文）
       const recentMessages = currentMessages.filter(m => m.timestamp >= sessionResumeTimestamp);
       const contextHistory = buildContextHistory(
         recentMessages,
         config.contextWindowSize ?? 5,
       );
       const retrievalPayload = !imageBase64
-        ? await resolveChatRetrievalContext(config, promptMode, userContent, sessionId ?? undefined)
+        ? await resolveChatRetrievalContext(config, promptMode, retrievalQuery, sessionId ?? undefined)
         : undefined;
-      updateAssistantCitations(assistantId, retrievalPayload?.citations);
+      updateAssistantCitations(assistantId, retrievalPayload?.citations ?? fallbackCitations);
 
       const send = async () => {
         if (imageBase64) {
-          // 截图识别仍使用千问专用接口
           return sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk, requestId);
         }
-        // 使用新的统一流式接口，传递上下文历史
         return sendStream(requestText, config, onChunk, requestId, contextHistory, {
           retrievalContext: retrievalPayload?.promptContext,
         });
@@ -599,14 +690,13 @@ function App() {
           return;
         }
 
-        // 分类错误并显示友好提示
         const friendlyError = errorClassifier.classify(
           error instanceof Error ? error.message : String(error)
         );
         networkResilience.setError(assistantId, friendlyError);
 
         if (imageBase64 && !hasReceivedContent) {
-          updateAssistantMessage(assistantId, "");
+          updateAssistantMessage(assistantId, assistantPrefixContent);
           fullAssistantContent = '';
           hasReceivedContent = false;
           try {
@@ -624,20 +714,29 @@ function App() {
               retryError instanceof Error ? retryError.message : String(retryError)
             );
             networkResilience.setError(assistantId, retryFriendlyError);
-            updateAssistantMessage(
-              assistantId,
-              "❌ 图片识别失败: " + (retryError instanceof Error ? retryError.message : String(retryError)),
-            );
+            if (assistantPrefixContent || fullAssistantContent) {
+              preserveAssistantContentOnFailure();
+            } else {
+              updateAssistantMessage(
+                assistantId,
+                "❌ 图片识别失败: " + (retryError instanceof Error ? retryError.message : String(retryError)),
+              );
+            }
+            updateAssistantCitations(assistantId, fallbackCitations);
             return;
           }
         }
 
-        updateAssistantMessage(
-          assistantId,
-          (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
-            friendlyError.message,
-        );
-        updateAssistantCitations(assistantId, undefined);
+        if (assistantPrefixContent || fullAssistantContent) {
+          preserveAssistantContentOnFailure();
+        } else {
+          updateAssistantMessage(
+            assistantId,
+            (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
+              friendlyError.message,
+          );
+        }
+        updateAssistantCitations(assistantId, fallbackCitations);
       }
     } catch (error) {
       if (locallyCancelledRequestIdsRef.current.has(requestId)) {
@@ -648,12 +747,18 @@ function App() {
         error instanceof Error ? error.message : String(error)
       );
       networkResilience.setError(assistantId, friendlyError);
-      updateAssistantMessage(
-        assistantId,
-        (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
-          friendlyError.message,
-      );
-      updateAssistantCitations(assistantId, undefined);
+      if (assistantPrefixContent || fullAssistantContent) {
+        if (!fullAssistantContent) {
+          updateAssistantMessage(assistantId, assistantPrefixContent);
+        }
+      } else {
+        updateAssistantMessage(
+          assistantId,
+          (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
+            friendlyError.message,
+        );
+      }
+      updateAssistantCitations(assistantId, fallbackCitations);
     } finally {
       locallyCancelledRequestIdsRef.current.delete(requestId);
       if (activeStreamRequestRef.current?.requestId === requestId) {
@@ -1416,75 +1521,28 @@ function App() {
 
     const messageIndex = messages.findIndex(m => m.id === messageId);
     const historyMessages = messages.slice(0, messageIndex);
-    const requestId = generateRequestId();
+    const sourceUser = findSourceUserMessage(messages, messageIndex, targetMessage.sourceUserMessageId);
 
-    activeStreamRequestRef.current = {
-      requestId,
-      assistantId: messageId,
-    };
+    // 续写仍使用“继续完成回答”的 prompt，但 RAG 检索应回到原用户问题。
+    const continuePrompt = buildContinuePrompt(targetMessage.content, historyMessages, 5);
 
-    setIsGenerating(true);
-    networkResilience.setWaiting(messageId);
-
-    try {
-      const config = await loadConfig();
-      const isLocallyCancelled = () =>
-        locallyCancelledRequestIdsRef.current.has(requestId);
-
-      // 构建续接 prompt
-      const continuePrompt = buildContinuePrompt(targetMessage.content, historyMessages, 5);
-
-      let continuedContent = '';
-
-      await sendStream(continuePrompt, config, (content, done, isComplete, finishReason) => {
-        if (isLocallyCancelled() && !done) {
-          return;
-        }
-
-        if (!done && content) {
-          continuedContent += content;
-          setMessages(prev => prev.map(m =>
-            m.id === messageId
-              ? { ...m, content: m.content + content }
-              : m
-          ));
-        }
-        if (done) {
-          setMessages(prev => prev.map(m =>
-            m.id === messageId
-              ? {
-                  ...m,
-                  isComplete: isComplete ?? true,
-                  interruptReason: isComplete ? undefined : getInterruptReason(finishReason),
-                }
-              : m
-          ));
-          // 保存续接内容到数据库
-          if (currentSessionId && continuedContent) {
-            const finalContent = targetMessage.content + continuedContent;
-            saveMessage(currentSessionId, 'assistant', finalContent).catch(console.error);
-          }
-        }
-      }, requestId, buildContextHistory(historyMessages, config.contextWindowSize ?? 5));
-
-    } catch (error) {
-      if (locallyCancelledRequestIdsRef.current.has(requestId)) {
-        return;
-      }
-      console.error('Continue generation failed:', error);
-      const friendlyError = errorClassifier.classify(
-        error instanceof Error ? error.message : String(error)
-      );
-      networkResilience.setError(messageId, friendlyError);
-    } finally {
-      locallyCancelledRequestIdsRef.current.delete(requestId);
-      if (activeStreamRequestRef.current?.requestId === requestId) {
-        activeStreamRequestRef.current = null;
-        setIsGenerating(false);
-        networkResilience.setWaiting(null);
-      }
-    }
-  }, [messages, currentSessionId, networkResilience]);
+    await requestAssistantReply(
+      sourceUser?.message.content ?? continuePrompt,
+      continuePrompt,
+      targetMessage.requestImageBase64,
+      undefined,
+      {
+        assistantId: messageId,
+        userMessageId: sourceUser?.message.id,
+        baseMessages: historyMessages,
+        persistUserMessage: false,
+        sessionId: currentSessionId,
+        retrievalQuery: targetMessage.retrievalQuery ?? sourceUser?.message.content ?? continuePrompt,
+        fallbackCitations: targetMessage.citations,
+        existingAssistantContentPrefix: targetMessage.content,
+      },
+    );
+  }, [messages, currentSessionId, requestAssistantReply]);
 
   // 构建续接 prompt
   const buildContinuePrompt = (
@@ -1501,39 +1559,47 @@ function App() {
 
   // 重试消息功能
   const handleRetryMessage = useCallback(async (messageId: string) => {
-    // 找到对应的用户消息（在当前 assistant 消息之前）
     const messageIndex = messages.findIndex(m => m.id === messageId);
     if (messageIndex <= 0) return;
+    const targetMessage = messages[messageIndex];
+    if (!targetMessage || targetMessage.role !== 'assistant') return;
 
-    // 向前查找用户消息
-    let userMessageIndex = -1;
-    for (let i = messageIndex - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        userMessageIndex = i;
-        break;
-      }
-    }
-    if (userMessageIndex === -1) return;
+    const sourceUser = findSourceUserMessage(messages, messageIndex, targetMessage.sourceUserMessageId);
+    if (!sourceUser) return;
+    const historyMessages = messages.slice(0, messageIndex);
+    const fallbackRequestText = targetMessage.requestImageBase64
+      ? SCREENSHOT_ANALYSIS_PROMPT
+      : buildRequestTextByMode(sourceUser.message.content, messages.slice(0, sourceUser.index));
+    const requestImageBase64 = targetMessage.requestImageBase64
+      ?? (sourceUser.message.content === '📷 [已发送截图]' ? latestScreenshotContext?.imageBase64 : undefined);
+    const assistantPrefixContent = targetMessage.requestContentPrefix ?? '';
+    const fallbackCitations = assistantPrefixContent.trim() ? targetMessage.citations : undefined;
 
-    const userMessage = messages[userMessageIndex];
-
-    // 清除错误状态
     networkResilience.clearError(messageId);
-
-    // 更新 assistant 消息为初始状态
-    setMessages(prev => prev.map(m =>
-      m.id === messageId
-        ? { ...m, content: '', isComplete: false, interruptReason: undefined, citations: undefined }
-        : m
-    ));
-
-    // 重新发送请求
     await requestAssistantReply(
-      userMessage.content,
-      userMessage.content,
-      undefined
+      sourceUser.message.content,
+      targetMessage.requestText ?? fallbackRequestText,
+      requestImageBase64,
+      undefined,
+      {
+        assistantId: messageId,
+        userMessageId: sourceUser.message.id,
+        baseMessages: historyMessages,
+        persistUserMessage: false,
+        sessionId: currentSessionId,
+        retrievalQuery: targetMessage.retrievalQuery ?? sourceUser.message.content,
+        fallbackCitations,
+        existingAssistantContentPrefix: assistantPrefixContent,
+      },
     );
-  }, [messages, networkResilience, requestAssistantReply]);
+  }, [
+    messages,
+    networkResilience,
+    requestAssistantReply,
+    buildRequestTextByMode,
+    latestScreenshotContext,
+    currentSessionId,
+  ]);
 
   // 搜索功能：Ctrl+F 快捷键
   useEffect(() => {
