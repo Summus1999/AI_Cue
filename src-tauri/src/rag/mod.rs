@@ -24,7 +24,8 @@ pub use self::embedder::{
 };
 pub use self::knowledge_base::{
     CompletedKnowledgeBaseImport, KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest,
-    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, SourceDocumentSnapshot,
+    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding,
+    ReindexKnowledgeDocumentRequest, SourceDocumentSnapshot,
 };
 pub use self::ocr::{
     OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult, OcrTextLine,
@@ -42,8 +43,8 @@ use std::sync::{Arc, RwLock};
 
 /// Main RAG engine.
 pub struct RagEngine {
-    /// Current implementation only indexes message history vectors.
-    /// Knowledge-base document vectors will live in a dedicated store later.
+    /// Message history vectors live in `MessageVectorStore`.
+    /// Knowledge-base document vectors are queried from the database-backed KB tables.
     db: Arc<Database>,
     message_store: vector_store::MessageVectorStore,
     embedder: RwLock<Option<Arc<dyn embedder::EmbeddingProvider>>>,
@@ -144,6 +145,28 @@ impl RagEngine {
         }
 
         Ok(())
+    }
+
+    pub async fn import_knowledge_document(
+        &self,
+        request: &knowledge_base::KnowledgeBaseImportRequest,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
+        let embedder = self.configured_embedder()?;
+        let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
+        orchestrator
+            .import_document_with_embeddings(request, embedder)
+            .await
+    }
+
+    pub async fn reindex_knowledge_document(
+        &self,
+        request: &knowledge_base::ReindexKnowledgeDocumentRequest,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
+        let embedder = self.configured_embedder()?;
+        let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
+        orchestrator
+            .reindex_document_with_embeddings(request, embedder)
+            .await
     }
 
     pub async fn search(
@@ -268,6 +291,27 @@ mod tests {
             .and_then(|value| value.as_str())
             .unwrap()
             .to_string()
+    }
+
+    fn create_test_knowledge_base(db: &Arc<Database>, name: &str) -> String {
+        crate::database::create_knowledge_base(
+            db,
+            crate::database::CreateKnowledgeBaseInput {
+                name: name.to_string(),
+                description: Some("rag-engine-test".to_string()),
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn create_temp_document(file_name: &str, content: &str) -> String {
+        let temp_dir =
+            std::env::temp_dir().join(format!("rag_engine_import_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join(file_name);
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().to_string()
     }
 
     #[test]
@@ -428,5 +472,124 @@ mod tests {
             format!("message:{message_id}:0")
         );
         assert_eq!(bundle.citations[0].title, "历史消息");
+    }
+
+    #[tokio::test]
+    async fn test_import_knowledge_document_uses_configured_embedder() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let knowledge_base_id = create_test_knowledge_base(&db, "Engine Import");
+        let document_path = create_temp_document(
+            "engine-import.md",
+            "# Rust\n\nOwnership and borrowing should be indexed through the engine wrapper.\n",
+        );
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+
+        let imported = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: document_path,
+                parse_options: None,
+                chunk_config: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(imported.document.knowledge_base_id, knowledge_base_id);
+        assert_eq!(
+            imported.document.index_state,
+            crate::database::KnowledgeDocumentIndexState::Ready
+        );
+        assert!(!imported.persisted_chunks.is_empty());
+        assert_eq!(
+            imported.document.embedding_count,
+            imported.persisted_embeddings.len()
+        );
+        assert!(imported
+            .persisted_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "mock-kb-model"));
+    }
+
+    #[tokio::test]
+    async fn test_reindex_knowledge_document_reuses_document_id_and_configured_embedder() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let knowledge_base_id = create_test_knowledge_base(&db, "Engine Reindex");
+        let document_path = create_temp_document(
+            "engine-reindex.md",
+            "# Rust\n\nInitial index content.\n",
+        );
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v1",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+
+        let imported = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: document_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+            })
+            .await
+            .unwrap();
+
+        std::fs::write(
+            &document_path,
+            "# Rust\n\nInitial index content.\n\n## Reindexed\n\nUpdated content through engine reindex.\n",
+        )
+        .unwrap();
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v2",
+                vec![0.0, 1.0, 0.0],
+            )))
+            .unwrap();
+
+        let reindexed = engine
+            .reindex_knowledge_document(&ReindexKnowledgeDocumentRequest {
+                document_id: imported.document.id.clone(),
+                parse_options: None,
+                chunk_config: Some(ChunkConfig {
+                    max_chunk_size: 70,
+                    overlap_size: 0,
+                    min_chunk_size: 18,
+                    prefer_structure_boundary: true,
+                }),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(reindexed.document.id, imported.document.id);
+        assert_eq!(reindexed.document.knowledge_base_id, knowledge_base_id);
+        assert_eq!(
+            reindexed.document.index_state,
+            crate::database::KnowledgeDocumentIndexState::Ready
+        );
+        assert!(!reindexed.persisted_chunks.is_empty());
+        assert_eq!(
+            reindexed.document.embedding_count,
+            reindexed.persisted_embeddings.len()
+        );
+        assert!(reindexed
+            .persisted_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "mock-kb-model-v2"));
+
+        let stored_documents = crate::database::list_knowledge_documents(&db, &knowledge_base_id)
+            .unwrap();
+        assert_eq!(stored_documents.len(), 1);
+        assert_eq!(stored_documents[0].id, imported.document.id);
     }
 }

@@ -1087,8 +1087,10 @@ pub fn log_from_frontend(level: String, module: String, message: String, data: O
 // ==================== RAG 命令 ====================
 
 use crate::rag::{
-    chunk_document, parse_document_with_ocr, ChunkConfig, ContextConfig, DocumentChunk,
-    EmbeddingProviderConfig, ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
+    chunk_document, parse_document_with_ocr, ChunkConfig, CompletedKnowledgeBaseImport,
+    ContextConfig, DocumentChunk, EmbeddingProviderConfig, KnowledgeBaseImportRequest,
+    ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
+    ReindexKnowledgeDocumentRequest,
 };
 
 /// 向量检索
@@ -1235,6 +1237,24 @@ pub fn rag_delete_vectors(
     message_id: String,
 ) -> Result<(), String> {
     engine.delete_vectors(&message_id)
+}
+
+/// 导入知识库文档并执行 embedding 入库
+#[tauri::command]
+pub async fn rag_import_knowledge_document(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    request: KnowledgeBaseImportRequest,
+) -> Result<CompletedKnowledgeBaseImport, String> {
+    engine.import_knowledge_document(&request).await
+}
+
+/// 重建单个知识库文档索引
+#[tauri::command]
+pub async fn rag_reindex_knowledge_document(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    request: ReindexKnowledgeDocumentRequest,
+) -> Result<CompletedKnowledgeBaseImport, String> {
+    engine.reindex_knowledge_document(&request).await
 }
 
 /// 创建知识库

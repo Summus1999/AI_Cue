@@ -1,6 +1,6 @@
 use super::{
     ChunkConfig, EmbedError, EmbeddingProvider, KnowledgeBaseImportOrchestrator,
-    KnowledgeBaseImportRequest,
+    KnowledgeBaseImportRequest, ReindexKnowledgeDocumentRequest,
 };
 use crate::database::{
     create_knowledge_base, delete_knowledge_document, get_knowledge_document,
@@ -322,6 +322,99 @@ async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow(
     let documents = list_knowledge_documents(&db, &knowledge_base_id).unwrap();
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, second_import.document.id);
+    assert_eq!(count_rows(&db, "kb_documents"), 1);
+    assert_eq!(count_rows(&db, "kb_chunks"), second_import.persisted_chunks.len());
+    assert_eq!(
+        count_rows(&db, "kb_embeddings"),
+        second_import.persisted_embeddings.len()
+    );
+}
+
+#[tokio::test]
+async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows() {
+    let db = create_test_db();
+    let knowledge_base_id = create_test_knowledge_base(&db);
+    let path = create_test_file(
+        "real-reindex-flow.md",
+        "# Original\n\nFirst import content.\n",
+    );
+    let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+
+    let first_import = orchestrator
+        .import_document_with_embeddings(
+            &KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: path.clone(),
+                parse_options: None,
+                chunk_config: None,
+            },
+            Arc::new(StaticEmbeddingProvider::new(
+                "reindex-model-v1",
+                vec![0.4, 0.5, 0.6],
+            )),
+        )
+        .await
+        .unwrap();
+
+    let first_document_id = first_import.document.id.clone();
+    let first_content_hash = first_import.document.content_hash.clone();
+    let first_source_path = first_import.document.source_path.clone();
+
+    std::fs::write(
+        &path,
+        "# Original\n\nFirst import content.\n\n## Reindexed\n\nSecond import content should replace old chunks and embeddings in place.\n",
+    )
+    .unwrap();
+
+    let second_import = orchestrator
+        .reindex_document_with_embeddings(
+            &ReindexKnowledgeDocumentRequest {
+                document_id: first_document_id.clone(),
+                parse_options: None,
+                chunk_config: Some(ChunkConfig {
+                    max_chunk_size: 70,
+                    overlap_size: 0,
+                    min_chunk_size: 18,
+                    prefer_structure_boundary: true,
+                }),
+            },
+            Arc::new(StaticEmbeddingProvider::new(
+                "reindex-model-v2",
+                vec![0.9, 0.1, 0.2, 0.3],
+            )),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second_import.document.id, first_document_id);
+    assert_eq!(second_import.document.knowledge_base_id, knowledge_base_id);
+    assert_eq!(second_import.document.source_path, first_source_path);
+    assert_ne!(second_import.document.content_hash, first_content_hash);
+    assert_eq!(second_import.document.index_state, KnowledgeDocumentIndexState::Ready);
+    assert_eq!(
+        second_import.document.embedding_count,
+        second_import.persisted_embeddings.len()
+    );
+    assert!(second_import.document.indexed_at.is_some());
+    assert!(second_import
+        .persisted_embeddings
+        .iter()
+        .all(|embedding| embedding.model_id == "reindex-model-v2"));
+
+    let stored = get_knowledge_document(&db, &first_document_id).unwrap().unwrap();
+    assert_eq!(stored.id, first_document_id);
+    assert_eq!(
+        count_rows_for_document(&db, "kb_chunks", &first_document_id),
+        second_import.persisted_chunks.len()
+    );
+    assert_eq!(
+        count_rows_for_document(&db, "kb_embeddings", &first_document_id),
+        second_import.persisted_embeddings.len()
+    );
+
+    let documents = list_knowledge_documents(&db, &knowledge_base_id).unwrap();
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, stored.id);
     assert_eq!(count_rows(&db, "kb_documents"), 1);
     assert_eq!(count_rows(&db, "kb_chunks"), second_import.persisted_chunks.len());
     assert_eq!(

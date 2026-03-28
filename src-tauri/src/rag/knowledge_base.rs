@@ -4,9 +4,10 @@ use super::{
 };
 use crate::database::{
     create_knowledge_document, get_knowledge_document, insert_knowledge_chunks,
-    insert_knowledge_embeddings, update_knowledge_document_index_state, CreateKnowledgeChunkInput,
-    CreateKnowledgeDocumentInput, CreateKnowledgeEmbeddingInput, Database, KnowledgeChunkRecord,
-    KnowledgeDocumentIndexState, KnowledgeDocumentRecord, KnowledgeEmbeddingRecord,
+    insert_knowledge_embeddings, reset_knowledge_document_for_reindex,
+    update_knowledge_document_index_state, CreateKnowledgeChunkInput, CreateKnowledgeDocumentInput,
+    CreateKnowledgeEmbeddingInput, Database, KnowledgeChunkRecord, KnowledgeDocumentIndexState,
+    KnowledgeDocumentRecord, KnowledgeEmbeddingRecord,
 };
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -20,6 +21,16 @@ use std::time::UNIX_EPOCH;
 pub struct KnowledgeBaseImportRequest {
     pub knowledge_base_id: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_options: Option<ParseOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_config: Option<ChunkConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReindexKnowledgeDocumentRequest {
+    pub document_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_options: Option<ParseOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,6 +195,30 @@ impl KnowledgeBaseImportOrchestrator {
         })
     }
 
+    pub async fn reindex_document_with_embeddings(
+        &self,
+        request: &ReindexKnowledgeDocumentRequest,
+        embedder: Arc<dyn EmbeddingProvider>,
+    ) -> Result<CompletedKnowledgeBaseImport, String> {
+        let prepared = self.prepare_reindex(request)?;
+        let prepared_embeddings = self
+            .embed_prepared_document_or_mark_failed(&prepared, embedder)
+            .await?;
+        let persisted_embeddings = self.persist_prepared_embeddings_or_mark_failed(
+            &prepared.document.id,
+            &prepared_embeddings,
+        )?;
+        let document = self.load_document(&prepared.document.id)?;
+
+        Ok(CompletedKnowledgeBaseImport {
+            document,
+            parsed_document: prepared.parsed_document,
+            chunks: prepared.chunks,
+            persisted_chunks: prepared.persisted_chunks,
+            persisted_embeddings,
+        })
+    }
+
     pub fn prepare_import(
         &self,
         request: &KnowledgeBaseImportRequest,
@@ -210,6 +245,53 @@ impl KnowledgeBaseImportOrchestrator {
                     .clone()
                     .unwrap_or_else(ChunkConfig::document_default);
                 let chunks = chunk_document(&parsed_document, &chunk_config);
+                let persisted_chunks = self.persist_chunks(&document.id, &chunks)?;
+                let document = self.load_document(&document.id)?;
+
+                Ok(PreparedKnowledgeBaseImport {
+                    document,
+                    parsed_document,
+                    chunks,
+                    persisted_chunks,
+                })
+            })();
+
+        match preparation {
+            Ok(prepared) => Ok(prepared),
+            Err(error) => {
+                let _ = self.mark_document_failed(&document.id, &error);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn prepare_reindex(
+        &self,
+        request: &ReindexKnowledgeDocumentRequest,
+    ) -> Result<PreparedKnowledgeBaseImport, String> {
+        if request.document_id.trim().is_empty() {
+            return Err("documentId 不能为空".to_string());
+        }
+
+        let existing_document = self.load_document(&request.document_id)?;
+        let snapshot = SourceDocumentSnapshot::from_path(&existing_document.source_path)?;
+        let parsed_document = parse_document(&snapshot.source_path, request.parse_options.clone())?;
+        let chunk_config = request
+            .chunk_config
+            .clone()
+            .unwrap_or_else(ChunkConfig::document_default);
+        let chunks = chunk_document(&parsed_document, &chunk_config);
+        let document = reset_knowledge_document_for_reindex(
+            &self.db,
+            &existing_document.id,
+            snapshot.to_create_document_input(
+                &existing_document.knowledge_base_id,
+                KnowledgeDocumentIndexState::Indexing,
+            ),
+        )?;
+
+        let preparation: Result<PreparedKnowledgeBaseImport, String> =
+            (|| -> Result<PreparedKnowledgeBaseImport, String> {
                 let persisted_chunks = self.persist_chunks(&document.id, &chunks)?;
                 let document = self.load_document(&document.id)?;
 

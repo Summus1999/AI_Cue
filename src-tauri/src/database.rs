@@ -1229,6 +1229,122 @@ pub fn create_knowledge_document(
     get_knowledge_document(db, &id)?.ok_or_else(|| format!("知识库文档创建后读取失败: {id}"))
 }
 
+/// 重建索引前重置知识库文档的快照元数据与索引内容
+pub fn reset_knowledge_document_for_reindex(
+    db: &Database,
+    document_id: &str,
+    input: CreateKnowledgeDocumentInput,
+) -> Result<KnowledgeDocumentRecord, String> {
+    let CreateKnowledgeDocumentInput {
+        knowledge_base_id,
+        title,
+        file_name,
+        file_extension,
+        document_type,
+        source_path,
+        source_byte_size,
+        source_modified_at,
+        content_hash,
+        fingerprint,
+        index_state,
+        last_error,
+    } = input;
+
+    if document_id.trim().is_empty() {
+        return Err("documentId 不能为空".to_string());
+    }
+    if knowledge_base_id.trim().is_empty() {
+        return Err("knowledgeBaseId 不能为空".to_string());
+    }
+    if source_path.trim().is_empty() {
+        return Err("sourcePath 不能为空".to_string());
+    }
+    if file_name.trim().is_empty() {
+        return Err("fileName 不能为空".to_string());
+    }
+    if document_type.trim().is_empty() {
+        return Err("documentType 不能为空".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
+    let index_state = index_state.unwrap_or_default();
+
+    let stored_knowledge_base_id: Option<String> = tx
+        .query_row(
+            "SELECT knowledge_base_id FROM kb_documents WHERE id = ?1",
+            params![document_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let Some(stored_knowledge_base_id) = stored_knowledge_base_id else {
+        return Err(format!("知识库文档不存在: {document_id}"));
+    };
+
+    if stored_knowledge_base_id != knowledge_base_id {
+        return Err(format!(
+            "知识库文档 {document_id} 不属于知识库 {knowledge_base_id}"
+        ));
+    }
+
+    tx.execute(
+        "DELETE FROM kb_embeddings WHERE document_id = ?1",
+        params![document_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM kb_chunks WHERE document_id = ?1",
+        params![document_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE kb_documents
+         SET title = ?1,
+             file_name = ?2,
+             file_extension = ?3,
+             document_type = ?4,
+             source_path = ?5,
+             source_byte_size = ?6,
+             source_modified_at = ?7,
+             content_hash = ?8,
+             fingerprint = ?9,
+             index_state = ?10,
+             last_error = ?11,
+             chunk_count = 0,
+             embedding_count = 0,
+             indexed_at = NULL,
+             updated_at = ?12
+         WHERE id = ?13",
+        params![
+            &title,
+            &file_name,
+            file_extension,
+            &document_type,
+            &source_path,
+            source_byte_size as i64,
+            source_modified_at,
+            &content_hash,
+            &fingerprint,
+            index_state.as_str(),
+            last_error,
+            now,
+            document_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    touch_knowledge_base(&tx, &knowledge_base_id, now)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    drop(conn);
+
+    get_knowledge_document(db, document_id)?
+        .ok_or_else(|| format!("知识库文档重建索引后读取失败: {document_id}"))
+}
+
 /// 列出知识库中的文档
 pub fn list_knowledge_documents(
     db: &Database,
@@ -1924,6 +2040,91 @@ mod tests {
             docs[0].fingerprint,
             "fp:C:\\docs\\rust.md:1024:1710000000000:test-hash"
         );
+    }
+
+    #[test]
+    fn test_reset_knowledge_document_for_reindex_reuses_document_and_clears_rows() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "Reindex".to_string(),
+                description: Some("reindex document".to_string()),
+            },
+        )
+        .unwrap();
+
+        let document =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\rust.md"))
+                .unwrap();
+
+        let chunks = insert_knowledge_chunks(
+            &db,
+            &document.id,
+            &[CreateKnowledgeChunkInput {
+                chunk_index: 0,
+                text: "old chunk".to_string(),
+                chunk_type: "text".to_string(),
+                heading_path: vec!["Old".to_string()],
+                page_number: Some(1),
+                language: None,
+                start_offset: 0,
+                end_offset: 9,
+                block_count: 1,
+            }],
+        )
+        .unwrap();
+
+        insert_knowledge_embeddings(
+            &db,
+            &[CreateKnowledgeEmbeddingInput {
+                knowledge_base_id: kb.id.clone(),
+                document_id: document.id.clone(),
+                chunk_id: chunks[0].id.clone(),
+                embedding: vec![0.1, 0.2, 0.3],
+                embedding_dim: 3,
+                model_id: "old-model".to_string(),
+            }],
+        )
+        .unwrap();
+
+        let reindexed = reset_knowledge_document_for_reindex(
+            &db,
+            &document.id,
+            CreateKnowledgeDocumentInput {
+                knowledge_base_id: kb.id.clone(),
+                title: "rust-updated".to_string(),
+                file_name: "rust-updated.md".to_string(),
+                file_extension: Some("md".to_string()),
+                document_type: "markdown".to_string(),
+                source_path: "C:\\docs\\rust-updated.md".to_string(),
+                source_byte_size: 2048,
+                source_modified_at: 1720000000000,
+                content_hash: "sha1:new-hash".to_string(),
+                fingerprint: "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash"
+                    .to_string(),
+                index_state: Some(KnowledgeDocumentIndexState::Indexing),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(reindexed.id, document.id);
+        assert_eq!(reindexed.knowledge_base_id, kb.id);
+        assert_eq!(reindexed.title, "rust-updated");
+        assert_eq!(reindexed.file_name, "rust-updated.md");
+        assert_eq!(reindexed.source_path, "C:\\docs\\rust-updated.md");
+        assert_eq!(reindexed.source_byte_size, 2048);
+        assert_eq!(reindexed.content_hash, "sha1:new-hash");
+        assert_eq!(reindexed.fingerprint, "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash");
+        assert_eq!(reindexed.index_state, KnowledgeDocumentIndexState::Indexing);
+        assert_eq!(reindexed.chunk_count, 0);
+        assert_eq!(reindexed.embedding_count, 0);
+        assert_eq!(reindexed.indexed_at, None);
+
+        assert_eq!(count_rows(&db, "kb_documents"), 1);
+        assert_eq!(count_rows(&db, "kb_chunks"), 0);
+        assert_eq!(count_rows(&db, "kb_embeddings"), 0);
     }
 
     #[test]

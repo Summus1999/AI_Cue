@@ -1,5 +1,5 @@
 ---
-description: Agent must read Agent.md at session start (harness engineering)
+description: Agent must read Agent.md and the merged RAG task list at session start
 alwaysApply: true
 ---
 
@@ -8,18 +8,23 @@ alwaysApply: true
 This project follows harness engineering. At the start of every session, before responding to any user request, you MUST:
 
 1. Read `Agent.md` in the project root
-2. Read `TODO.md` to check current project progress
+2. Read `tasks/tasks-rag-merged-real-status.md` as the single source of truth for task progress
 
 `Agent.md` contains:
 - Project context and tech stack reference
-- Mandatory workflow (e.g. propose solution before coding)
+- Mandatory workflow for task execution
 - Code style and communication rules
 - Document conventions
 
 Follow its instructions throughout the session. When human engineers update `Agent.md` after agent errors, subsequent sessions will inherit the improved constraints.
 
-You must NEVER modify `TODO.md`. Only human engineers may edit it.
+After every completed sub-task, you MUST run the full project verification gate and submission workflow before moving on:
 
-`TODO.md` progress markers (set by human engineers only):
-- ✅ = task completed
-- ❌ = task not completed
+1. Run `npm run build` from the project root
+2. Run `cargo test` from `src-tauri`
+3. Only when both commands pass may you start the git submission flow
+4. Stage only the changes for the current sub-task
+5. Create a clear git commit for that sub-task
+6. Push the current local branch to the corresponding remote branch on `origin`
+7. Only when verification passes and the push succeeds may the sub-task be considered complete
+8. Only when the sub-task is complete may you start the next sub-task
