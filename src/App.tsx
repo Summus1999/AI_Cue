@@ -34,7 +34,7 @@ import {
   sendStream,
   buildContextHistory,
 } from "./services/aiChat";
-import { loadConfig, saveConfig, AppConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
+import { loadConfig, saveConfig, AppConfig, PromptMode, RagRetrievalScope, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
 import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isCompactMode, isPassthroughEnabled, setPassthrough, minimizeToRightDock } from './services/windowManager';
@@ -157,6 +157,42 @@ function getChatRetrievalSourceKinds(promptMode: PromptMode): RagSourceKind[] {
   return ['Message', 'KnowledgeBaseDocument'];
 }
 
+interface ChatRetrievalStrategy {
+  sourceKinds: RagSourceKind[];
+  sessionId?: string;
+}
+
+function getRetrievalScopeSourceKinds(
+  retrievalScope: RagRetrievalScope,
+  promptMode: PromptMode,
+): RagSourceKind[] {
+  if (retrievalScope === 'knowledge_base') {
+    return ['KnowledgeBaseDocument'];
+  }
+
+  if (retrievalScope === 'current_session') {
+    return ['Message'];
+  }
+
+  return getChatRetrievalSourceKinds(promptMode);
+}
+
+function resolveChatRetrievalStrategy(
+  config: AppConfig,
+  promptMode: PromptMode,
+  sessionId?: string,
+): ChatRetrievalStrategy {
+  const requestedSourceKinds = getRetrievalScopeSourceKinds(config.rag.retrievalScope, promptMode);
+  const sourceKinds = requestedSourceKinds.filter((sourceKind) =>
+    sourceKind !== 'Message' || Boolean(sessionId),
+  );
+
+  return {
+    sourceKinds,
+    sessionId: sourceKinds.includes('Message') ? sessionId : undefined,
+  };
+}
+
 // 检索链路只能增强回答，不能阻塞主聊天链路。
 async function resolveChatRetrievalContext(
   config: AppConfig,
@@ -176,18 +212,32 @@ async function resolveChatRetrievalContext(
   }
 
   try {
-    const sourceKinds = getChatRetrievalSourceKinds(promptMode);
+    const strategy = resolveChatRetrievalStrategy(config, promptMode, sessionId);
+    if (strategy.sourceKinds.length === 0) {
+      console.info(
+        `[RAG] 聊天降级到普通模式: retrievalScope=${config.rag.retrievalScope} 需要会话消息检索，但当前没有可用 sessionId`,
+      );
+      return undefined;
+    }
+
     const retrievalBundle = await ragService.retrieveWithCitations(query, 2000, 5, {
-      sessionId: promptMode === 'assistant' ? sessionId : undefined,
-      sourceKinds,
+      sessionId: strategy.sessionId,
+      sourceKinds: strategy.sourceKinds,
     });
     if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
       return retrievalBundle.promptContext;
     }
 
-    const knowledgeReadyState = await getKnowledgeReadyState();
-    if (knowledgeReadyState === false) {
-      console.info('[RAG] 聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
+    if (strategy.sourceKinds.includes('KnowledgeBaseDocument')) {
+      const knowledgeReadyState = await getKnowledgeReadyState();
+      if (knowledgeReadyState === false) {
+        console.info('[RAG] 聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
+        return undefined;
+      }
+    }
+
+    if (strategy.sourceKinds.length === 1 && strategy.sourceKinds[0] === 'Message') {
+      console.info('[RAG] 聊天降级到普通模式: 当前会话检索未返回可用上下文');
     } else {
       console.info('[RAG] 聊天降级到普通模式: retrieval 未返回可用上下文');
     }

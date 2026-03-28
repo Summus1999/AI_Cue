@@ -561,6 +561,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retrieve_context_bundle_can_filter_to_message_results() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let message_id = create_message(&db, "Borrow checker from current session.");
+        let knowledge_base_id = create_test_knowledge_base(&db, "Assistant KB");
+        let document_path = create_temp_document(
+            "assistant-kb.md",
+            "# Rust\n\nBorrow checker from knowledge base.\n",
+        );
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-model",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+        engine
+            .embed_message(&message_id, "Borrow checker from current session.")
+            .await
+            .unwrap();
+        engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id,
+                path: document_path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+
+        let bundle = engine
+            .retrieve_context_bundle(
+                "Borrow checker",
+                &ContextConfig {
+                    max_tokens: 200,
+                    max_results: 5,
+                    include_source: true,
+                },
+                None,
+                Some(&[SearchSourceKind::Message]),
+            )
+            .await
+            .unwrap();
+
+        assert!(!bundle.citations.is_empty());
+        assert!(bundle
+            .citations
+            .iter()
+            .all(|citation| citation.source_kind == SearchSourceKind::Message));
+    }
+
+    #[tokio::test]
     async fn test_import_knowledge_document_uses_configured_embedder() {
         let db = create_test_db();
         let engine = RagEngine::new(db.clone());
