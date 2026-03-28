@@ -196,6 +196,7 @@ impl RagEngine {
         query: &str,
         limit: usize,
         session_filter: Option<&str>,
+        source_kind_filter: Option<&[SearchSourceKind]>,
     ) -> Result<Vec<retriever::SearchResult>, String> {
         let embedder = self.configured_embedder()?;
         let model_id = embedder.model_id().to_string();
@@ -209,9 +210,15 @@ impl RagEngine {
             0.7,
             session_filter,
             Some(model_id.as_str()),
+            source_kind_filter,
         )?;
 
-        let keyword_results = retriever::keyword_search(&self.message_store, query, limit)?;
+        let keyword_results =
+            if retriever::source_kind_allowed(source_kind_filter, &SearchSourceKind::Message) {
+                retriever::keyword_search(&self.message_store, query, limit)?
+            } else {
+                Vec::new()
+            };
         let fused = retriever::reciprocal_rank_fusion(vector_results, keyword_results, 60);
 
         Ok(self
@@ -227,7 +234,7 @@ impl RagEngine {
         config: &context_builder::ContextConfig,
     ) -> Result<String, String> {
         Ok(self
-            .retrieve_context_bundle(query, config, None)
+            .retrieve_context_bundle(query, config, None, None)
             .await?
             .prompt_context)
     }
@@ -237,9 +244,10 @@ impl RagEngine {
         query: &str,
         config: &context_builder::ContextConfig,
         session_filter: Option<&str>,
+        source_kind_filter: Option<&[SearchSourceKind]>,
     ) -> Result<context_builder::RagContextBundle, String> {
         let results = self
-            .search(query, config.max_results, session_filter)
+            .search(query, config.max_results, session_filter, source_kind_filter)
             .await?;
         Ok(context_builder::build_rag_context_bundle(&results, config))
     }
@@ -370,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_without_provider_fails() {
         let engine = RagEngine::new(create_test_db());
-        let err = engine.search("测试", 10, None).await.unwrap_err();
+        let err = engine.search("测试", 10, None, None).await.unwrap_err();
         assert!(err.contains("Embedding provider 未配置"));
     }
 
@@ -403,7 +411,7 @@ mod tests {
             .await
             .unwrap();
 
-        let results = engine.search("Tauri commands", 10, None).await.unwrap();
+        let results = engine.search("Tauri commands", 10, None, None).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].message_id.as_deref(),
@@ -485,6 +493,7 @@ mod tests {
                     include_source: true,
                 },
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -496,6 +505,59 @@ mod tests {
             format!("message:{message_id}:0")
         );
         assert_eq!(bundle.citations[0].title, "历史消息");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_context_bundle_can_filter_to_knowledge_base_results() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let message_id = create_message(&db, "Rust ownership from message history.");
+        let knowledge_base_id = create_test_knowledge_base(&db, "Interviewer KB");
+        let document_path = create_temp_document(
+            "interviewer-kb.md",
+            "# Rust\n\nOwnership and borrowing from knowledge base.\n",
+        );
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-model",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+        engine
+            .embed_message(&message_id, "Rust ownership from message history.")
+            .await
+            .unwrap();
+        engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id,
+                path: document_path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+
+        let bundle = engine
+            .retrieve_context_bundle(
+                "Rust ownership",
+                &ContextConfig {
+                    max_tokens: 200,
+                    max_results: 5,
+                    include_source: true,
+                },
+                None,
+                Some(&[SearchSourceKind::KnowledgeBaseDocument]),
+            )
+            .await
+            .unwrap();
+
+        assert!(!bundle.citations.is_empty());
+        assert!(bundle
+            .citations
+            .iter()
+            .all(|citation| citation.source_kind == SearchSourceKind::KnowledgeBaseDocument));
     }
 
     #[tokio::test]

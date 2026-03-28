@@ -95,7 +95,7 @@
   - ✅️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
   - ✅️ 6.2 `App.tsx` 普通文本发送前已调用 retrieval，当前主发送链会先获取 retrieval context 再进入聊天请求
   - ✅️ 6.3 当 RAG 关闭、无 ready 知识库文档或 retrieval 失败时，主聊天流程已显式降级到普通聊天分支
-  - ❌️ 6.4 assistant 模式与 interviewer 模式尚未实现不同的 retrieval 策略
+  - ✅️ 6.4 assistant 模式与 interviewer 模式已实现不同的 retrieval 策略
   - ❌️ 6.5 `rag.retrievalScope` 当前仅保存在配置里，尚未真正影响后端或主流程检索来源
   - ❌️ 6.6 回答消息下方尚未渲染 citation 列表，当前仓库也没有 `MessageCitations` 组件
   - ❌️ 6.7 继续生成、重试消息等路径尚未纳入 retrieval / citation 逻辑

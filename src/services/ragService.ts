@@ -36,9 +36,16 @@ export interface CitationMetadata {
   sourceKind: 'Message' | 'KnowledgeBaseDocument';
 }
 
+export type RagSourceKind = CitationMetadata['sourceKind'];
+
 export interface RagContextBundle {
   promptContext: string;
   citations: CitationMetadata[];
+}
+
+export interface RetrieveWithCitationsOptions {
+  sessionId?: string;
+  sourceKinds?: RagSourceKind[];
 }
 
 export interface RagStats {
@@ -333,20 +340,21 @@ export const ragService = {
    * @param query 搜索查询
    * @param maxTokens 最大 token 数量
    * @param maxResults 最大引用条数
-   * @param sessionId 可选，按会话过滤
+   * @param options 检索选项
    */
   async retrieveWithCitations(
     query: string,
     maxTokens = 2000,
     maxResults = 5,
-    sessionId?: string,
+    options: RetrieveWithCitationsOptions = {},
   ): Promise<RagContextBundle> {
     await ensureRagRuntimeConfigured(undefined, 'rag-retrieve-with-citations');
     return invoke<RagContextBundle>('rag_retrieve_with_citations', {
       query,
       maxTokens,
       maxResults,
-      sessionId,
+      sessionId: options.sessionId,
+      sourceKinds: options.sourceKinds,
     });
   },
   

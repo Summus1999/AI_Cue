@@ -47,6 +47,16 @@ pub enum SearchSourceKind {
     KnowledgeBaseDocument,
 }
 
+pub fn source_kind_allowed(
+    filter: Option<&[SearchSourceKind]>,
+    kind: &SearchSourceKind,
+) -> bool {
+    match filter {
+        Some(allowed) if !allowed.is_empty() => allowed.iter().any(|candidate| candidate == kind),
+        _ => true,
+    }
+}
+
 impl SearchResult {
     pub fn fusion_key(&self) -> String {
         if let Some(message_id) = &self.message_id {
@@ -133,22 +143,31 @@ pub fn combined_vector_search_for_model(
     threshold: f32,
     session_filter: Option<&str>,
     model_filter: Option<&str>,
+    source_kind_filter: Option<&[SearchSourceKind]>,
 ) -> Result<Vec<SearchResult>, String> {
-    let mut results = vector_search_for_model(
-        store,
-        query_embedding,
-        limit,
-        threshold,
-        session_filter,
-        model_filter,
-    )?;
-    results.extend(knowledge_vector_search_with_db(
-        db,
-        query_embedding,
-        limit,
-        threshold,
-        model_filter,
-    )?);
+    let mut results = Vec::new();
+
+    if source_kind_allowed(source_kind_filter, &SearchSourceKind::Message) {
+        results.extend(vector_search_for_model(
+            store,
+            query_embedding,
+            limit,
+            threshold,
+            session_filter,
+            model_filter,
+        )?);
+    }
+
+    if source_kind_allowed(source_kind_filter, &SearchSourceKind::KnowledgeBaseDocument) {
+        results.extend(knowledge_vector_search_with_db(
+            db,
+            query_embedding,
+            limit,
+            threshold,
+            model_filter,
+        )?);
+    }
+
     results.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -664,6 +683,7 @@ mod tests {
             0.5,
             None,
             Some("shared-model"),
+            None,
         )
         .unwrap();
 
@@ -713,6 +733,7 @@ mod tests {
             0.7,
             None,
             Some("shared-model"),
+            None,
         )
         .unwrap();
 

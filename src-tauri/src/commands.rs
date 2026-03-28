@@ -1131,7 +1131,7 @@ pub async fn rag_search(
     session_id: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let limit = limit.unwrap_or(10);
-    let results = engine.search(&query, limit, session_id.as_deref()).await?;
+    let results = engine.search(&query, limit, session_id.as_deref(), None).await?;
 
     Ok(results
         .into_iter()
@@ -1210,6 +1210,7 @@ pub async fn rag_retrieve_with_citations(
     max_tokens: Option<usize>,
     max_results: Option<usize>,
     session_id: Option<String>,
+    source_kinds: Option<Vec<crate::rag::SearchSourceKind>>,
 ) -> Result<RagContextBundle, String> {
     let config = ContextConfig {
         max_tokens: max_tokens.unwrap_or(2000),
@@ -1218,7 +1219,7 @@ pub async fn rag_retrieve_with_citations(
     };
 
     engine
-        .retrieve_context_bundle(&query, &config, session_id.as_deref())
+        .retrieve_context_bundle(&query, &config, session_id.as_deref(), source_kinds.as_deref())
         .await
 }
 

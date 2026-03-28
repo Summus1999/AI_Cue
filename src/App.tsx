@@ -49,7 +49,7 @@ import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
 import { MessageSearchBar } from './components/MessageSearchBar';
 import { useMessageSearch } from './store/messageSearch';
-import { ragService } from './services/ragService';
+import { ragService, type RagSourceKind } from './services/ragService';
 import {
   perfCoreUiReady,
   perfScreenshotStart,
@@ -148,9 +148,19 @@ async function getKnowledgeReadyState(): Promise<boolean | null> {
   }
 }
 
+function getChatRetrievalSourceKinds(promptMode: PromptMode): RagSourceKind[] {
+  if (promptMode === 'interviewer') {
+    // 面试官模式已经直接携带了最近问答历史，RAG 只补知识库材料，避免重复消费消息检索结果。
+    return ['KnowledgeBaseDocument'];
+  }
+
+  return ['Message', 'KnowledgeBaseDocument'];
+}
+
 // 检索链路只能增强回答，不能阻塞主聊天链路。
 async function resolveChatRetrievalContext(
   config: AppConfig,
+  promptMode: PromptMode,
   query: string,
   sessionId?: string,
 ): Promise<string | undefined> {
@@ -166,7 +176,11 @@ async function resolveChatRetrievalContext(
   }
 
   try {
-    const retrievalBundle = await ragService.retrieveWithCitations(query, 2000, 5, sessionId);
+    const sourceKinds = getChatRetrievalSourceKinds(promptMode);
+    const retrievalBundle = await ragService.retrieveWithCitations(query, 2000, 5, {
+      sessionId: promptMode === 'assistant' ? sessionId : undefined,
+      sourceKinds,
+    });
     if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
       return retrievalBundle.promptContext;
     }
@@ -490,7 +504,7 @@ function App() {
         config.contextWindowSize ?? 5,
       );
       const retrievalContext = !imageBase64
-        ? await resolveChatRetrievalContext(config, userContent, sessionId ?? undefined)
+        ? await resolveChatRetrievalContext(config, promptMode, userContent, sessionId ?? undefined)
         : undefined;
 
       const send = async () => {
