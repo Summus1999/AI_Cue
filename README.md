@@ -11,14 +11,17 @@
 ### 🎯 核心能力
 
 - **智能对话**：支持流式输出的AI对话界面，可自定义Prompt
+- **继续生成**：AI回答中断后可继续生成
 - **语音输入**：一键语音录入，自动识别并转文字
 - **截图题解**：屏幕截图选取区域，AI即时给出题解
 - **代码增强**：自动识别代码题，内嵌Monaco Editor代码编辑器
+- **上下文控制**：可配置上下文窗口大小（默认 5 轮），也可完全关闭历史上下文
 
 ### 📋 会话管理
 
 - **历史持久化**：SQLite本地存储，消息实时自动保存
 - **多会话管理**：支持新建、切换、搜索、删除会话
+- **消息搜索**：全文搜索，高亮定位匹配消息
 - **自动恢复**：启动时自动恢复上次会话
 
 ### 🎨 界面体验
@@ -35,6 +38,14 @@
 - **Claude**：Anthropic Claude 系列
 - **自定义接入**：支持私有化部署模型
 
+### 📚 RAG 知识库
+
+- 支持导入 Markdown、PDF、纯文本、代码文件
+- Windows OCR 自动识别扫描版 PDF
+- 千问、OpenAI 兼容 Embedding 模型向量化
+- 对话时自动检索相关文档片段
+- 回答附带引用来源标注（文档名、页码、相关片段）
+
 ### 📊 面试复盘
 
 - **AI评分维度**：自信度、专业度、技术深度、理论与实践结合、技术敏感度
@@ -49,13 +60,19 @@
 - **选择性导出**：勾选需要的问答对
 - **元数据头**：包含面试时间、模型、Prompt模板
 
+### 🔌 扩展能力
+
+- 插件化 Provider 架构，支持动态加载自定义 AI 模型
+- 结构化日志系统，支持导出用于问题排查
+- 关键路径性能埋点（启动、聊天、截图等）
+
 ---
 
 ## 🛠️ 技术栈
 
 ### 前端
 
-- **框架**：React 18 + TypeScript
+- **框架**：React 19 + TypeScript
 - **构建**：Vite
 - **样式**：Tailwind CSS
 - **状态管理**：Zustand
@@ -132,18 +149,34 @@ npm run build
 ## 📁 项目结构
 
 ```text
-AI_Cue/
-├── src/                    # React 前端源码
-│   ├── components/         # UI 组件
-│   ├── services/           # 业务服务
-│   ├── store/              # 状态管理
-│   └── hooks/              # 自定义 Hooks
-├── src-tauri/              # Rust 后端源码
-│   └── src/
-│       ├── ai/              # AI Provider 实现
-│       ├── audio/           # 音频捕获
-│       └── review/          # 复盘分析
-└── docs/                   # 设计文档
+src/
+├── components/          # UI 组件
+│   ├── export/          # 导出相关
+│   ├── review/          # 复盘报告
+│   └── lazy/            # 懒加载网关
+├── services/            # 业务服务
+│   ├── export/          # 导出服务
+│   ├── screenshot/      # 截图服务
+│   ├── ragService.ts    # RAG 知识库
+│   ├── aiChat.ts        # AI 聊天
+│   ├── reviewService.ts # 复盘服务
+│   └── ...
+├── store/               # Zustand 状态管理
+│   ├── config.ts        # 全局配置
+│   ├── rag.ts           # RAG 状态
+│   └── review.ts        # 复盘状态
+└── hooks/               # 自定义 Hooks
+
+src-tauri/src/
+├── ai/                  # 多模型 Provider（Claude、Qwen、OpenAI 兼容）
+├── audio/               # Windows WASAPI 音频捕获
+├── rag/                 # 知识库：解析、分块、Embedding、向量存储、检索
+├── review/              # 面试复盘分析
+├── logging.rs           # 结构化日志系统
+├── perf.rs              # 性能埋点
+├── database.rs          # SQLite 数据库
+├── export.rs            # 导出功能
+└── commands.rs          # Tauri 命令层
 ```
 
 ---

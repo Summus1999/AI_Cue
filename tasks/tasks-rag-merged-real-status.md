@@ -102,32 +102,32 @@
   - ❌️ 6.7 继续生成、重试消息等路径尚未纳入 retrieval / citation 逻辑
   - ❌️ 6.8 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证尚未补齐
 
-- 未完成 7.0 构建知识库管理 UI
-  - 未完成 7.1 `src/store/rag.ts` 仍只管理 search / embed / stats，尚未保存知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
-  - 未完成 7.2 当前 `App.tsx` 没有知识库视图入口，`currentView` 也没有知识库面板状态
-  - 未完成 7.3 仓库中尚无 `src/components/KnowledgeBasePanel.tsx`
-  - 未完成 7.4 仓库中尚无 `src/components/knowledge/KnowledgeDocumentList.tsx`
-  - 未完成 7.5 仓库中尚无 `src/components/knowledge/KnowledgeDocumentPreview.tsx`
-  - 未完成 7.6 界面里尚未实现文件选择、导入、乐观状态行、阶段进度显示和失败可见性
-  - 未完成 7.7 尚未实现删除文档、重建索引、删除知识库后的即时刷新逻辑
-  - 未完成 7.8 `SettingsPanel.tsx` 尚未增加 RAG 配置区块和知识库入口
+- ❌️ 7.0 构建知识库管理 UI
+  - ❌️ 7.1 `src/store/rag.ts` 仍只管理 search / embed / stats，尚未保存知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
+  - ❌️ 7.2 当前 `App.tsx` 没有知识库视图入口，`currentView` 也没有知识库面板状态
+  - ❌️ 7.3 仓库中尚无 `src/components/KnowledgeBasePanel.tsx`
+  - ❌️ 7.4 仓库中尚无 `src/components/knowledge/KnowledgeDocumentList.tsx`
+  - ❌️ 7.5 仓库中尚无 `src/components/knowledge/KnowledgeDocumentPreview.tsx`
+  - ❌️ 7.6 界面里尚未实现文件选择、导入、乐观状态行、阶段进度显示和失败可见性
+  - ❌️ 7.7 尚未实现删除文档、重建索引、删除知识库后的即时刷新逻辑
+  - ❌️ 7.8 `SettingsPanel.tsx` 尚未增加 RAG 配置区块和知识库入口
 
-- 未完成 8.0 做增量索引、后台重试与运维加固
-  - 未完成 8.1 尚未基于 fingerprint 做 unchanged file 跳过策略
-  - 未完成 8.2 尚未提供单文档或整库级别的真实重建索引逻辑
-  - 未完成 8.3 尚未提供后台扫描 / 重试命令来处理 `pending` 或 `failed` 文档
-  - 未完成 8.4 尚未为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
-  - 未完成 8.5 尚未提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
-  - 未完成 8.6 尚未处理应用重启后 `indexing` 状态卡死恢复
+- ❌️ 8.0 做增量索引、后台重试与运维加固
+  - ❌️ 8.1 尚未基于 fingerprint 做 unchanged file 跳过策略
+  - ❌️ 8.2 尚未提供单文档或整库级别的真实重建索引逻辑
+  - ❌️ 8.3 尚未提供后台扫描 / 重试命令来处理 `pending` 或 `failed` 文档
+  - ❌️ 8.4 尚未为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
+  - ❌️ 8.5 尚未提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
+  - ❌️ 8.6 尚未处理应用重启后 `indexing` 状态卡死恢复
 
-- 未完成 9.0 补齐测试、验收与文档同步
-  - 已完成 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
-  - 已完成 9.2 当前仓库已通过一次 `cargo test` 验证
-  - 已完成 9.3 当前仓库已通过一次 `npm run build` 验证
-  - 未完成 9.4 尚未补齐围绕真实导入命令、真实重建索引命令、fingerprint 跳过、启动恢复的集成测试
-  - 未完成 9.5 仓库里仍缺少知识库 UI 与聊天 RAG 接入的前端测试 / 回归 harness
-  - 未完成 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
-  - 未完成 9.7 `TODO.md` 尚未同步为当前真实进度
+- ❌️ 9.0 补齐测试、验收与文档同步
+  - ✅️ 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
+  - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
+  - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
+  - ❌️ 9.4 尚未补齐围绕真实导入命令、真实重建索引命令、fingerprint 跳过、启动恢复的集成测试
+  - ❌️ 9.5 仓库里仍缺少知识库 UI 与聊天 RAG 接入的前端测试 / 回归 harness
+  - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
+  - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
 
 - ✅️ 10.0 强化 Agent Harness 的 skills 与提交流程约束
   - ✅️ 10.1 `Agent.md` 已加入 skills 检查、`requesting-code-review` 审查闭环、`writing-guide` 文档时机与 `/clear` 规则
