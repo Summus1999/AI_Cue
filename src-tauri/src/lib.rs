@@ -61,6 +61,7 @@ pub fn run() {
             // 初始化 RAG 引擎
             let rag_engine = rag::RagEngine::new(db_arc);
             app.manage(Arc::new(rag_engine));
+            app.manage(Arc::new(rag::KnowledgeBaseImportTaskRegistry::new()));
 
             // 初始化 Provider 注册表（内置 Provider）
             perf::perf_provider_registry_ready();
@@ -222,6 +223,8 @@ pub fn run() {
             commands::rag_delete_vectors,
             commands::rag_import_knowledge_document,
             commands::rag_reindex_knowledge_document,
+            commands::rag_list_knowledge_import_tasks,
+            commands::rag_get_knowledge_import_task,
             commands::rag_create_knowledge_base,
             commands::rag_list_knowledge_bases,
             commands::rag_delete_knowledge_base,

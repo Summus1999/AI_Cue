@@ -1091,14 +1091,33 @@ use crate::rag::{
     chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig,
     CompletedKnowledgeBaseImport, ContextConfig, DocumentChunk, EmbeddingProviderConfig,
     KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback, KnowledgeBaseImportRequest,
-    ParseOptions, ParsedDocument, RagContextBundle, RagEngine, ReindexKnowledgeDocumentRequest,
+    KnowledgeBaseImportTaskRegistry, KnowledgeBaseImportTaskSnapshot, ParseOptions, ParsedDocument,
+    RagContextBundle, RagEngine, ReindexKnowledgeDocumentRequest,
 };
 
 const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT: &str = "rag-import-progress";
 
-fn create_rag_import_progress_callback(app: &AppHandle) -> KnowledgeBaseImportProgressCallback {
+fn normalize_rag_import_request_id(request_id: Option<&str>) -> String {
+    request_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            format!(
+                "kb-import-{}-{}",
+                Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4()
+            )
+        })
+}
+
+fn create_rag_import_progress_callback(
+    app: &AppHandle,
+    task_registry: Arc<KnowledgeBaseImportTaskRegistry>,
+) -> KnowledgeBaseImportProgressCallback {
     let app = app.clone();
     Arc::new(move |progress: KnowledgeBaseImportProgress| {
+        task_registry.upsert(progress.clone());
         let _ = app.emit(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, &progress);
     })
 }
@@ -1255,12 +1274,21 @@ pub fn rag_delete_vectors(
 pub async fn rag_import_knowledge_document(
     app: AppHandle,
     engine: State<'_, std::sync::Arc<RagEngine>>,
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
     request: KnowledgeBaseImportRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
     engine
         .import_knowledge_document_with_progress(
             &request,
-            Some(create_rag_import_progress_callback(&app)),
+            Some(create_rag_import_progress_callback(
+                &app,
+                task_registry.inner().clone(),
+            )),
         )
         .await
 }
@@ -1270,14 +1298,47 @@ pub async fn rag_import_knowledge_document(
 pub async fn rag_reindex_knowledge_document(
     app: AppHandle,
     engine: State<'_, std::sync::Arc<RagEngine>>,
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
     request: ReindexKnowledgeDocumentRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
     engine
         .reindex_knowledge_document_with_progress(
             &request,
-            Some(create_rag_import_progress_callback(&app)),
+            Some(create_rag_import_progress_callback(
+                &app,
+                task_registry.inner().clone(),
+            )),
         )
         .await
+}
+
+/// 列出知识库导入/重建索引任务快照
+#[tauri::command]
+pub fn rag_list_knowledge_import_tasks(
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
+    knowledge_base_id: Option<String>,
+    document_id: Option<String>,
+    include_finished: Option<bool>,
+) -> Result<Vec<KnowledgeBaseImportTaskSnapshot>, String> {
+    Ok(task_registry.list(
+        knowledge_base_id.as_deref(),
+        document_id.as_deref(),
+        include_finished.unwrap_or(true),
+    ))
+}
+
+/// 获取单个知识库导入/重建索引任务快照
+#[tauri::command]
+pub fn rag_get_knowledge_import_task(
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
+    request_id: String,
+) -> Result<Option<KnowledgeBaseImportTaskSnapshot>, String> {
+    Ok(task_registry.get(&request_id))
 }
 
 /// 创建知识库

@@ -224,6 +224,25 @@ export interface KnowledgeBaseImportProgress {
   message: string;
 }
 
+export interface KnowledgeBaseImportTaskSnapshot {
+  requestId: string;
+  operation: KnowledgeBaseImportOperation;
+  stage: KnowledgeBaseImportStage;
+  status: KnowledgeBaseImportProgressStatus;
+  current: number;
+  total: number;
+  knowledgeBaseId: string;
+  documentId?: string | null;
+  fileName?: string | null;
+  sourcePath?: string | null;
+  chunkCount?: number | null;
+  embeddingCount?: number | null;
+  message: string;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+}
+
 export const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT = 'rag-import-progress';
 
 function normalizeProgressEventId(progressEventId?: string | null): string | undefined {
@@ -480,6 +499,36 @@ export const ragService = {
       request,
       onProgress,
     );
+  },
+
+  /**
+   * 列出后台导入/重建索引任务快照
+   * @param knowledgeBaseId 可选，按知识库过滤
+   * @param documentId 可选，按文档过滤
+   * @param includeFinished 是否包含已完成/失败任务
+   */
+  async listKnowledgeImportTasks(
+    knowledgeBaseId?: string,
+    documentId?: string,
+    includeFinished = true,
+  ): Promise<KnowledgeBaseImportTaskSnapshot[]> {
+    return invoke<KnowledgeBaseImportTaskSnapshot[]>('rag_list_knowledge_import_tasks', {
+      knowledgeBaseId,
+      documentId,
+      includeFinished,
+    });
+  },
+
+  /**
+   * 获取单个后台导入/重建索引任务快照
+   * @param requestId 任务请求 ID
+   */
+  async getKnowledgeImportTask(
+    requestId: string,
+  ): Promise<KnowledgeBaseImportTaskSnapshot | null> {
+    return invoke<KnowledgeBaseImportTaskSnapshot | null>('rag_get_knowledge_import_task', {
+      requestId,
+    });
   },
 
   createKnowledgeBaseImportProgressId,

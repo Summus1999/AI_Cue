@@ -9,6 +9,7 @@ mod knowledge_base;
 mod ocr;
 mod parser;
 mod retriever;
+mod task_registry;
 mod vector_store;
 
 pub use self::chunker::{
@@ -38,6 +39,7 @@ pub use self::parser::{
     ParsedDocument, ParsedDocumentMetadata,
 };
 pub use self::retriever::{SearchResult, SearchSource, SearchSourceKind};
+pub use self::task_registry::{KnowledgeBaseImportTaskRegistry, KnowledgeBaseImportTaskSnapshot};
 pub use self::vector_store::{MessageEmbeddingEntry, MessageVectorStore, VectorStore};
 
 use crate::database::Database;

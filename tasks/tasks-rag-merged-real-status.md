@@ -8,10 +8,11 @@
 - `src-tauri/Cargo.toml` - Rust 后端依赖声明，启用 Windows OCR / PDF / Imaging 所需 WinRT feature。
 - `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建编排、OCR 解析接线、分块持久化、embedding 入库、阶段进度事件与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入等 Rust 集成测试。
+- `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、chunk/embedding 写入，以及文档预览所需的 chunk 明细查询。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
 - `src-tauri/src/lib.rs` - Tauri 命令注册。
-- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装、文档 chunk 明细查询与类型定义。
+- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装、后台任务状态查询、文档 chunk 明细查询与类型定义。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
@@ -88,7 +89,7 @@
   - ✅️ 5.4 后端已实现并注册 `rag_reindex_knowledge_document` 命令
   - ✅️ 5.5 前端已在启动、设置保存、聊天发送及 RAG 服务调用前同步 `rag_configure`，embedding provider 配置会真正下发到后端 `RagEngine`
   - ✅️ 5.6 前端已可通过 `rag_list_knowledge_document_chunks` 拿到文档预览所需的 chunk / page / heading path 明细接口
-  - ❌️ 5.7 当前接口层已提供导入 / 重建索引进度事件，但仍缺少后台任务状态同步能力
+  - ✅️ 5.7 当前接口层已补齐后台任务状态同步能力，可通过后端任务注册表和 `rag_list_knowledge_import_tasks` / `rag_get_knowledge_import_task` 查询 import / reindex 的最新快照
 
 - ❌️ 6.0 接入聊天主流程，实现 RAG 增强对话
   - ❌️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
