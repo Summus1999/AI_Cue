@@ -1,20 +1,20 @@
 ## Relevant Files
 
-- `src-tauri/src/rag/mod.rs` - RAG 入口与组件装配；后续需要接入知识库导入、知识库检索和引用数据返回。
+- `src-tauri/src/rag/mod.rs` - RAG 入口与组件装配；当前已导出知识库导入链路、OCR 抽象，并通过 `RagEngine::retrieve_context_bundle()` 打通“prompt context + citations”组合返回；后续继续接聊天主流程。
 - `src-tauri/src/rag/embedder.rs` - EmbeddingProvider 抽象与具体实现；后续需要支撑批量嵌入、模型维度校验和失败语义统一。
-- `src-tauri/src/rag/retriever.rs` - 当前检索逻辑主要面向消息向量；需要扩展到知识库文档 chunk 检索和结构化引用返回。
-- `src-tauri/src/rag/context_builder.rs` - RAG 上下文构建；需要输出 token 受控的 prompt 上下文和前端可渲染的 citation 元信息。
-- `src-tauri/src/rag/parser.rs` - 文档解析入口；需要补充扫描版 PDF 检测和 OCR fallback。
+- `src-tauri/src/rag/retriever.rs` - 当前已支持基于 `kb_embeddings` + `kb_chunks` 的知识库 chunk 向量检索，并能与消息向量检索合并排序；已补稳定检索结果结构，包含标题、页码/标题路径、snippet 等字段，并补齐低相似度过滤与跨来源检索回归测试。
+- `src-tauri/src/rag/context_builder.rs` - RAG 上下文构建；当前已消费扩展后的稳定检索结果结构，输出按分数稳定排序、受 token 预算约束的 prompt 上下文，并同步构建前端可渲染的 citation 元信息；已补空结果、跨来源排序与结构化 citation 回归测试。
+- `src-tauri/src/rag/parser.rs` - 文档解析入口；当前已新增带 OCR 的异步解析入口、PDF 页级 OCR fallback 触发判断，并将 OCR 输出归一化为保留页码等引用元数据的 `ParsedBlock`；已补 `enableOcr` 解析开关，并补齐 text/scanned/mixed PDF 回归测试。
 - `src-tauri/src/rag/chunker.rs` - 文档分块逻辑；需要确保 heading path、页码、offset、语言等元数据完整保留到入库链路。
 - `src-tauri/src/rag/knowledge_base.rs` - 新文件；负责知识库导入编排，当前已完成文档快照落库、解析/分块、`kb_chunks` 持久化、基于 `EmbeddingProvider` 的批量 embedding 准备与 `kb_embeddings` 入库，并补齐 embedding/持久化失败后的恢复语义；后续继续补重建索引和阶段进度上报。
-- `src-tauri/src/rag/ocr.rs` - 新文件；封装 OCR 抽象、实现和错误模型，避免 parser 直接耦合具体 OCR 库。
-- `src-tauri/src/rag/integration_test.rs` - Rust 端集成测试；当前已覆盖知识库首次导入成功、重复导入同一路径拒绝、删除后的级联清理，以及基于“删除后重导入”的当前重建索引路径；后续继续补 OCR fallback、检索和失败回退。
+- `src-tauri/src/rag/ocr.rs` - 新文件；已定义 OCR trait、页级输入输出结构、统一错误模型和默认不可用实现，避免 parser 直接耦合具体 OCR 库。
+- `src-tauri/src/rag/integration_test.rs` - Rust 端集成测试；当前已覆盖知识库首次导入成功、重复导入同一路径拒绝、删除后的级联清理，以及基于“删除后重导入”的当前重建索引路径；后续继续补知识库导入链路上的 OCR fallback、检索和失败回退。
 - `src-tauri/src/database.rs` - 知识库 Schema、基础 CRUD 与 chunk/embedding 基础写入接口已就绪；后续需要补充 fingerprint 跳过、统计查询和更完整的导入/重建辅助接口。
-- `src-tauri/src/commands.rs` - Tauri 命令入口；需要新增导入、重建索引、检索增强和后台扫描/重试命令。
-- `src-tauri/src/lib.rs` - 应用启动入口；需要注册新增命令并初始化可能新增的 RAG 运行时组件。
-- `src/services/ragService.ts` - 前端 RAG 服务层；目前只有基础搜索/解析接口，需要扩展知识库 CRUD、导入进度、文档详情、检索引用等接口。
-- `src/services/aiChat.ts` - AI 对话服务；需要在聊天前注入检索上下文，并在检索失败时优雅回退到普通对话。
-- `src/store/config.ts` - 应用配置持久化；需要新增 RAG 开关、检索策略、OCR 开关、自动重建索引策略等配置。
+- `src-tauri/src/commands.rs` - Tauri 命令入口；当前 `rag_parse_document` / `rag_chunk_document` 已切到支持 OCR 开关的异步解析入口，并新增返回 `prompt context + citations` 的 retrieval 命令；后续需要继续补导入、重建索引和后台扫描/重试命令。
+- `src-tauri/src/lib.rs` - 应用启动入口；当前已注册 retrieval with citations 命令，后续继续初始化可能新增的 RAG 运行时组件。
+- `src/services/ragService.ts` - 前端 RAG 服务层；当前解析参数已支持 `enableOcr`，并已同步扩展检索结果类型、`retrieveWithCitations()` 调用，以及知识库 CRUD / 文档详情 / 导入 / 重建索引接口签名，供后续主流程与知识库 UI 复用。
+- `src/services/aiChat.ts` - AI 对话服务；当前已为 `sendStream()` / `sendChat()` 增加可选 retrieval context 注入能力，并保持 system prompt 拼接格式稳定；后续需要在聊天主流程里实际触发 retrieval，并在失败时优雅回退到普通对话。
+- `src/store/config.ts` - 应用配置持久化；当前已新增 `rag` 配置块，持久化 RAG 总开关、检索作用范围、OCR 开关、Embedding Provider/Model 和自动重建索引策略，并补齐默认值、迁移与校验逻辑。
 - `src/store/rag.ts` - 现有 RAG store 未接入主流程；需要扩展知识库列表、导入任务、检索结果、错误和统计状态。
 - `src/App.tsx` - 主聊天编排；需要在发送消息前触发检索、在消息下方渲染引用，并增加知识库入口。
 - `src/components/SettingsPanel.tsx` - 设置面板；需要新增 RAG 配置区块和知识库管理入口。
@@ -54,26 +54,26 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.6 为单批次 embedding 失败实现可恢复语义，至少保证文档状态进入 `failed`，并写入 `last_error`，避免半成功半失败的脏状态
   - [x] 1.7 增加导入、重建索引、删除后的集成测试，覆盖首次导入成功、重复导入同一文件、删除后级联清理和重建索引成功
 
-- [ ] 2.0 补齐 OCR fallback，覆盖扫描版 PDF
-  - [ ] 2.1 新建 `src-tauri/src/rag/ocr.rs`，定义 OCR trait、统一错误模型和首个可替换实现
-  - [ ] 2.2 在 `parser.rs` 中增加页级检测逻辑，只在文本提取不足时才触发 OCR，而不是对所有 PDF 页统一走 OCR
-  - [ ] 2.3 将 OCR 输出归一化为现有 `ParsedBlock` 结构，避免后续 chunker 和导入流水线需要分支处理
-  - [ ] 2.4 确保扫描页经 OCR 后仍保留 page number、source path、heading path 或其他可用于引用渲染的元数据
-  - [ ] 2.5 为 OCR 提供 feature flag 或配置开关，使没有 OCR 运行时依赖的环境仍可正常处理文本型 PDF
-  - [ ] 2.6 增加 text PDF、scanned PDF、mixed PDF 的测试或夹具，验证不会回归已有文本型 PDF 路径
+- [x] 2.0 补齐 OCR fallback，覆盖扫描版 PDF
+  - [x] 2.1 新建 `src-tauri/src/rag/ocr.rs`，定义 OCR trait、统一错误模型和首个可替换实现
+  - [x] 2.2 在 `parser.rs` 中增加页级检测逻辑，只在文本提取不足时才触发 OCR，而不是对所有 PDF 页统一走 OCR
+  - [x] 2.3 将 OCR 输出归一化为现有 `ParsedBlock` 结构，避免后续 chunker 和导入流水线需要分支处理
+  - [x] 2.4 确保扫描页经 OCR 后仍保留 page number、source path、heading path 或其他可用于引用渲染的元数据
+  - [x] 2.5 为 OCR 提供 feature flag 或配置开关，使没有 OCR 运行时依赖的环境仍可正常处理文本型 PDF
+  - [x] 2.6 增加 text PDF、scanned PDF、mixed PDF 的测试或夹具，验证不会回归已有文本型 PDF 路径
 
-- [ ] 3.0 打通知识库检索与引用数据返回
-  - [ ] 3.1 扩展 `retriever.rs`，支持基于 `kb_embeddings` 和 `kb_chunks` 的知识库 chunk 检索，而不是只检索消息向量
-  - [ ] 3.2 为知识库检索结果定义稳定的数据结构，至少包含 `knowledge_base_id`、`document_id`、`chunk_id`、标题、页码或 heading path、snippet 和 score
-  - [ ] 3.3 在 `context_builder.rs` 中将检索结果转换为 token 受控的 prompt 上下文，保证模型可消费且顺序稳定
-  - [ ] 3.4 同时返回前端渲染所需的 citation 元信息，避免前端再用 `chunk_id` 二次查库拼装
-  - [ ] 3.5 补一个后端 retrieval 命令，返回“prompt context + citations”组合结果，而不是只返回纯文本 context
-  - [ ] 3.6 为空结果、低相似度过滤、不同来源排序和结构化引用返回增加测试
+- [x] 3.0 打通知识库检索与引用数据返回
+  - [x] 3.1 扩展 `retriever.rs`，支持基于 `kb_embeddings` 和 `kb_chunks` 的知识库 chunk 检索，而不是只检索消息向量
+  - [x] 3.2 为知识库检索结果定义稳定的数据结构，至少包含 `knowledge_base_id`、`document_id`、`chunk_id`、标题、页码或 heading path、snippet 和 score
+  - [x] 3.3 在 `context_builder.rs` 中将检索结果转换为 token 受控的 prompt 上下文，保证模型可消费且顺序稳定
+  - [x] 3.4 同时返回前端渲染所需的 citation 元信息，避免前端再用 `chunk_id` 二次查库拼装
+  - [x] 3.5 补一个后端 retrieval 命令，返回“prompt context + citations”组合结果，而不是只返回纯文本 context
+  - [x] 3.6 为空结果、低相似度过滤、不同来源排序和结构化引用返回增加测试
 
 - [ ] 4.0 接入聊天主流程，实现 RAG 增强对话
-  - [ ] 4.1 在 `store/config.ts` 中增加 RAG 配置项：总开关、检索作用范围、OCR 开关、Embedding Provider/Model、自动重建索引策略
-  - [ ] 4.2 在 `ragService.ts` 中新增知识库相关接口：创建/列出/删除知识库、列出/查看/删除文档、导入、重建索引、retrieval with citations
-  - [ ] 4.3 在 `aiChat.ts` 中为 `sendStream()` 和 `sendChat()` 增加可选 retrieval context 注入能力，保持 system prompt 注入格式确定且可控
+  - [x] 4.1 在 `store/config.ts` 中增加 RAG 配置项：总开关、检索作用范围、OCR 开关、Embedding Provider/Model、自动重建索引策略
+  - [x] 4.2 在 `ragService.ts` 中新增知识库相关接口：创建/列出/删除知识库、列出/查看/删除文档、导入、重建索引、retrieval with citations
+  - [x] 4.3 在 `aiChat.ts` 中为 `sendStream()` 和 `sendChat()` 增加可选 retrieval context 注入能力，保持 system prompt 注入格式确定且可控
   - [ ] 4.4 在 `App.tsx` 中发送消息前触发 retrieval，当 RAG 关闭、无已索引文档或检索失败时，明确走非阻塞 fallback
   - [ ] 4.5 为 assistant 模式和 interviewer 模式分别定义默认 retrieval 策略，避免面试官模式在未明确开启时被知识库内容污染
   - [ ] 4.6 在回答消息下方渲染 citation 列表，展示文档标题、页码或 heading path、片段摘要和必要的来源标识

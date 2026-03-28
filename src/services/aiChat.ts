@@ -52,6 +52,10 @@ interface StreamRequestOptions {
   eventPrefix?: 'ai-stream' | 'qwen-stream';
 }
 
+export interface ChatRequestOptions {
+  retrievalContext?: string;
+}
+
 export const SCREENSHOT_ANALYSIS_PROMPT =
   '请识别截图中的算法题，并直接给出最终可提交的 C++ 解法。如果题面不完整，请做合理假设。';
 
@@ -93,7 +97,22 @@ function buildInterviewBackgroundPrompt(bg: InterviewBackground): string {
   return parts.join('\n');
 }
 
-function getSystemPrompt(config: AppConfig): string {
+function appendRetrievalContext(systemPrompt: string, retrievalContext?: string): string {
+  const normalizedContext = retrievalContext?.trim();
+  if (!normalizedContext) {
+    return systemPrompt;
+  }
+
+  return [
+    systemPrompt,
+    '---',
+    '【检索增强上下文】',
+    '以下内容来自系统预先检索到的聊天历史或知识库片段。仅在这些上下文能够直接支撑结论时引用；如果上下文不足，请明确说明，不要编造。',
+    normalizedContext,
+  ].join('\n\n');
+}
+
+function getSystemPrompt(config: AppConfig, retrievalContext?: string): string {
   // 1. 获取基础 Prompt（现有逻辑不变）
   let basePrompt: string;
   if (config.promptTemplateId === 'custom') {
@@ -112,10 +131,10 @@ function getSystemPrompt(config: AppConfig): string {
   if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
     console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
     const bgSection = buildInterviewBackgroundPrompt(bg);
-    return `${basePrompt}\n\n${bgSection}`;
+    return appendRetrievalContext(`${basePrompt}\n\n${bgSection}`, retrievalContext);
   }
 
-  return basePrompt;
+  return appendRetrievalContext(basePrompt, retrievalContext);
 }
 
 /** 流结果 */
@@ -289,6 +308,7 @@ export async function sendStream(
   onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
   requestId: string,
   history: ChatMessage[] = [],
+  options: ChatRequestOptions = {},
 ): Promise<StreamResult> {
   const provider = config.activeProvider;
   const providerConfig = config.providerConfigs[provider];
@@ -297,7 +317,7 @@ export async function sendStream(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config);
+  const systemPrompt = getSystemPrompt(config, options.retrievalContext);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -331,6 +351,7 @@ export async function sendChat(
   question: string,
   config: AppConfig,
   history: ChatMessage[] = [],
+  options: ChatRequestOptions = {},
 ): Promise<string> {
   const provider = config.activeProvider;
   const providerConfig = config.providerConfigs[provider];
@@ -339,7 +360,7 @@ export async function sendChat(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config);
+  const systemPrompt = getSystemPrompt(config, options.retrievalContext);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,

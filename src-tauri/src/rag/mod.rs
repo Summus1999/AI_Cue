@@ -4,6 +4,7 @@ mod chunker;
 mod context_builder;
 mod embedder;
 mod knowledge_base;
+mod ocr;
 mod parser;
 mod retriever;
 mod vector_store;
@@ -14,7 +15,9 @@ pub use self::chunker::{
     chunk_document, chunk_message, merge_qa_pairs, Chunk, ChunkConfig, ChunkType, DocumentChunk,
     SimpleMessage,
 };
-pub use self::context_builder::{build_rag_context, ContextConfig};
+pub use self::context_builder::{
+    build_rag_context, build_rag_context_bundle, CitationMetadata, ContextConfig, RagContextBundle,
+};
 pub use self::embedder::{
     create_embedding_provider, EmbedError, EmbeddingProvider, EmbeddingProviderConfig,
     EmbeddingProviderKind, OpenAiEmbedding, QwenEmbedding,
@@ -23,9 +26,13 @@ pub use self::knowledge_base::{
     CompletedKnowledgeBaseImport, KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest,
     PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, SourceDocumentSnapshot,
 };
+pub use self::ocr::{
+    OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult, OcrTextLine,
+    UnavailableOcrEngine,
+};
 pub use self::parser::{
-    parse_document, BlockKind, DocumentType, ParseOptions, ParsedBlock, ParsedDocument,
-    ParsedDocumentMetadata,
+    parse_document, parse_document_with_ocr, BlockKind, DocumentType, ParseOptions, ParsedBlock,
+    ParsedDocument, ParsedDocumentMetadata,
 };
 pub use self::retriever::{SearchResult, SearchSource, SearchSourceKind};
 pub use self::vector_store::{MessageEmbeddingEntry, MessageVectorStore, VectorStore};
@@ -37,6 +44,7 @@ use std::sync::{Arc, RwLock};
 pub struct RagEngine {
     /// Current implementation only indexes message history vectors.
     /// Knowledge-base document vectors will live in a dedicated store later.
+    db: Arc<Database>,
     message_store: vector_store::MessageVectorStore,
     embedder: RwLock<Option<Arc<dyn embedder::EmbeddingProvider>>>,
 }
@@ -44,6 +52,7 @@ pub struct RagEngine {
 impl RagEngine {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
+            db: db.clone(),
             message_store: vector_store::MessageVectorStore::new(db),
             embedder: RwLock::new(None),
         }
@@ -98,6 +107,7 @@ impl RagEngine {
                 if result.chunk_text.is_empty() {
                     if let Some(embedding_id) = result.embedding_id.as_deref() {
                         if let Ok(Some(text)) = self.message_store.get_chunk_text(embedding_id) {
+                            result.snippet = retriever::build_search_snippet(&text);
                             result.chunk_text = text;
                         }
                     }
@@ -146,8 +156,9 @@ impl RagEngine {
         let model_id = embedder.model_id().to_string();
         let query_embedding = embedder.embed(query).await.map_err(|e| e.to_string())?;
 
-        let vector_results = retriever::vector_search_for_model(
+        let vector_results = retriever::combined_vector_search_for_model(
             &self.message_store,
+            self.db.as_ref(),
             &query_embedding,
             limit,
             0.7,
@@ -170,8 +181,20 @@ impl RagEngine {
         query: &str,
         config: &context_builder::ContextConfig,
     ) -> Result<String, String> {
-        let results = self.search(query, config.max_results, None).await?;
-        Ok(context_builder::build_rag_context(&results, config))
+        Ok(self
+            .retrieve_context_bundle(query, config, None)
+            .await?
+            .prompt_context)
+    }
+
+    pub async fn retrieve_context_bundle(
+        &self,
+        query: &str,
+        config: &context_builder::ContextConfig,
+        session_filter: Option<&str>,
+    ) -> Result<context_builder::RagContextBundle, String> {
+        let results = self.search(query, config.max_results, session_filter).await?;
+        Ok(context_builder::build_rag_context_bundle(&results, config))
     }
 
     pub fn get_stats(&self) -> Result<RagStats, String> {
@@ -350,16 +373,60 @@ mod tests {
             .unwrap();
 
         let hydrated = engine.hydrate_results(vec![SearchResult {
+            knowledge_base_id: None,
             chunk_id: format!("message:{message_id}:0"),
             embedding_id: Some(embedding_id),
             message_id: Some(message_id),
             document_id: None,
+            title: "历史消息".to_string(),
             chunk_text: String::new(),
+            snippet: String::new(),
+            page_number: None,
+            heading_path: Vec::new(),
             score: 1.0,
             source: SearchSource::Vector,
             source_kind: SearchSourceKind::Message,
         }]);
 
         assert_eq!(hydrated[0].chunk_text, "Hydrated chunk");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_context_bundle_returns_prompt_and_citations() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let message_id = create_message(&db, "Rust ownership prevents double free.");
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-model",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+        engine
+            .embed_message(&message_id, "Rust ownership prevents double free.")
+            .await
+            .unwrap();
+
+        let bundle = engine
+            .retrieve_context_bundle(
+                "Rust ownership",
+                &ContextConfig {
+                    max_tokens: 200,
+                    max_results: 5,
+                    include_source: true,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(bundle.prompt_context.contains("【检索上下文】"));
+        assert_eq!(bundle.citations.len(), 1);
+        assert_eq!(
+            bundle.citations[0].chunk_id,
+            format!("message:{message_id}:0")
+        );
+        assert_eq!(bundle.citations[0].title, "历史消息");
     }
 }

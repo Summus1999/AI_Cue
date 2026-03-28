@@ -1087,8 +1087,8 @@ pub fn log_from_frontend(level: String, module: String, message: String, data: O
 // ==================== RAG 命令 ====================
 
 use crate::rag::{
-    chunk_document, parse_document, ChunkConfig, ContextConfig, DocumentChunk,
-    EmbeddingProviderConfig, ParseOptions, ParsedDocument, RagEngine,
+    chunk_document, parse_document_with_ocr, ChunkConfig, ContextConfig, DocumentChunk,
+    EmbeddingProviderConfig, ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
 };
 
 /// 向量检索
@@ -1106,11 +1106,16 @@ pub async fn rag_search(
         .into_iter()
         .map(|r| {
             serde_json::json!({
+                "knowledge_base_id": r.knowledge_base_id,
                 "chunk_id": r.chunk_id,
                 "embedding_id": r.embedding_id,
                 "message_id": r.message_id,
                 "document_id": r.document_id,
+                "title": r.title,
                 "chunk_text": r.chunk_text,
+                "snippet": r.snippet,
+                "page_number": r.page_number,
+                "heading_path": r.heading_path,
                 "score": r.score,
                 "source": format!("{:?}", r.source),
                 "source_kind": format!("{:?}", r.source_kind),
@@ -1132,21 +1137,21 @@ pub async fn rag_embed_message(
 
 /// 解析文档为结构化块
 #[tauri::command]
-pub fn rag_parse_document(
+pub async fn rag_parse_document(
     path: String,
     options: Option<ParseOptions>,
 ) -> Result<ParsedDocument, String> {
-    parse_document(&path, options)
+    parse_document_with_ocr(&path, options, None).await
 }
 
 /// 解析并分块文档
 #[tauri::command]
-pub fn rag_chunk_document(
+pub async fn rag_chunk_document(
     path: String,
     options: Option<ParseOptions>,
     config: Option<ChunkConfig>,
 ) -> Result<Vec<DocumentChunk>, String> {
-    let document = parse_document(&path, options)?;
+    let document = parse_document_with_ocr(&path, options, None).await?;
     let chunk_config = config.unwrap_or_else(ChunkConfig::document_default);
     Ok(chunk_document(&document, &chunk_config))
 }
@@ -1163,6 +1168,26 @@ pub async fn rag_get_context(
         ..Default::default()
     };
     engine.build_context(&query, &config).await
+}
+
+/// 获取“prompt context + citations”组合结果
+#[tauri::command]
+pub async fn rag_retrieve_with_citations(
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    query: String,
+    max_tokens: Option<usize>,
+    max_results: Option<usize>,
+    session_id: Option<String>,
+) -> Result<RagContextBundle, String> {
+    let config = ContextConfig {
+        max_tokens: max_tokens.unwrap_or(2000),
+        max_results: max_results.unwrap_or(5),
+        include_source: true,
+    };
+
+    engine
+        .retrieve_context_bundle(&query, &config, session_id.as_deref())
+        .await
 }
 
 /// 获取向量化统计

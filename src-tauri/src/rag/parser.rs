@@ -1,5 +1,7 @@
+use super::{OcrContentFormat, OcrEngine, OcrPageInput, OcrPageResult};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -29,12 +31,15 @@ pub enum BlockKind {
 #[serde(rename_all = "camelCase")]
 pub struct ParseOptions {
     pub max_file_size_bytes: u64,
+    #[serde(default)]
+    pub enable_ocr: bool,
 }
 
 impl Default for ParseOptions {
     fn default() -> Self {
         Self {
             max_file_size_bytes: 10 * 1024 * 1024,
+            enable_ocr: false,
         }
     }
 }
@@ -97,6 +102,19 @@ struct PendingCodeBlock {
     line_end: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PdfPageTextSource {
+    ExtractedText,
+    OcrFallback,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedPdfPageContent {
+    text_source: PdfPageTextSource,
+    normalized_text: String,
+    blocks: Vec<ParsedBlock>,
+}
+
 static CODE_SYMBOL_PATTERNS: Lazy<Vec<(Regex, usize)>> = Lazy::new(|| {
     vec![
         (Regex::new(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(), 1),
@@ -143,6 +161,52 @@ pub fn parse_document(path: &str, options: Option<ParseOptions>) -> Result<Parse
     match document_type {
         DocumentType::Markdown => parse_markdown_document(source_path, metadata.len(), extension),
         DocumentType::Pdf => parse_pdf_document(source_path, metadata.len(), extension),
+        DocumentType::PlainText => {
+            parse_plain_text_document(source_path, metadata.len(), extension)
+        }
+        DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
+    }
+}
+
+pub async fn parse_document_with_ocr(
+    path: &str,
+    options: Option<ParseOptions>,
+    ocr_engine: Option<Arc<dyn OcrEngine>>,
+) -> Result<ParsedDocument, String> {
+    let options = options.unwrap_or_default();
+    if !options.enable_ocr {
+        return parse_document(path, Some(options));
+    }
+    let source_path = Path::new(path);
+
+    if !source_path.exists() {
+        return Err(format!("文件不存在: {}", path));
+    }
+
+    if !source_path.is_file() {
+        return Err(format!("不是文件: {}", path));
+    }
+
+    let metadata = fs::metadata(source_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
+    if metadata.len() > options.max_file_size_bytes {
+        return Err(format!(
+            "文件过大: {} bytes，超过限制 {} bytes",
+            metadata.len(),
+            options.max_file_size_bytes
+        ));
+    }
+
+    let extension = source_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    let document_type = detect_document_type(source_path, extension.as_deref())?;
+    match document_type {
+        DocumentType::Markdown => parse_markdown_document(source_path, metadata.len(), extension),
+        DocumentType::Pdf => {
+            parse_pdf_document_with_ocr(source_path, metadata.len(), extension, ocr_engine).await
+        }
         DocumentType::PlainText => {
             parse_plain_text_document(source_path, metadata.len(), extension)
         }
@@ -460,10 +524,7 @@ fn parse_pdf_document(
     let mut total_chars = 0usize;
 
     for page_number in pages.keys() {
-        let page_text = document
-            .extract_text(&[*page_number])
-            .map_err(|e| format!("提取 PDF 第 {} 页文本失败: {}", page_number, e))?;
-        let normalized = normalize_pdf_text(&page_text);
+        let normalized = extract_pdf_page_text(&document, *page_number)?;
         total_chars += normalized.chars().count();
 
         let page_blocks = split_text_into_blocks(
@@ -508,6 +569,234 @@ fn parse_pdf_document(
         total_pages: Some(total_pages),
         blocks,
     })
+}
+
+async fn parse_pdf_document_with_ocr(
+    path: &Path,
+    byte_size: u64,
+    extension: Option<String>,
+    ocr_engine: Option<Arc<dyn OcrEngine>>,
+) -> Result<ParsedDocument, String> {
+    let document = lopdf::Document::load(path).map_err(|e| format!("打开 PDF 失败: {}", e))?;
+    let pages = document.get_pages();
+    let total_pages = pages.len() as u32;
+    let mut blocks = Vec::new();
+    let mut total_chars = 0usize;
+
+    let ocr_source_bytes = if ocr_engine
+        .as_ref()
+        .map(|engine| engine.is_available())
+        .unwrap_or(false)
+    {
+        Some(fs::read(path).map_err(|e| format!("读取 PDF 文件失败: {}", e))?)
+    } else {
+        None
+    };
+
+    for page_number in pages.keys() {
+        let extracted_text = extract_pdf_page_text(&document, *page_number)?;
+        let resolved_page = resolve_pdf_page_content_with_ocr(
+            path,
+            *page_number,
+            &extracted_text,
+            ocr_engine.as_ref().map(|engine| engine.as_ref()),
+            ocr_source_bytes.as_deref(),
+        )
+        .await?;
+        let _ = resolved_page.text_source;
+        total_chars += resolved_page.normalized_text.chars().count();
+
+        for mut block in resolved_page.blocks {
+            block.index = blocks.len();
+            blocks.push(block);
+        }
+    }
+
+    Ok(ParsedDocument {
+        metadata: ParsedDocumentMetadata {
+            source_path: path.to_string_lossy().to_string(),
+            file_name: file_name(path),
+            extension,
+            title: file_stem(path),
+            document_type: DocumentType::Pdf,
+            byte_size,
+            language: None,
+        },
+        total_chars,
+        total_pages: Some(total_pages),
+        blocks,
+    })
+}
+
+async fn resolve_pdf_page_text_with_ocr(
+    path: &Path,
+    page_number: u32,
+    extracted_text: &str,
+    ocr_engine: Option<&dyn OcrEngine>,
+    source_bytes: Option<&[u8]>,
+) -> Result<String, String> {
+    Ok(resolve_pdf_page_content_with_ocr(
+        path,
+        page_number,
+        extracted_text,
+        ocr_engine,
+        source_bytes,
+    )
+    .await?
+    .normalized_text)
+}
+
+async fn resolve_pdf_page_content_with_ocr(
+    path: &Path,
+    page_number: u32,
+    extracted_text: &str,
+    ocr_engine: Option<&dyn OcrEngine>,
+    source_bytes: Option<&[u8]>,
+) -> Result<ResolvedPdfPageContent, String> {
+    if detect_pdf_page_text_source(extracted_text) == PdfPageTextSource::ExtractedText {
+        return Ok(text_to_pdf_page_content(
+            PdfPageTextSource::ExtractedText,
+            extracted_text,
+            page_number,
+        ));
+    }
+
+    let Some(engine) = ocr_engine else {
+        return Ok(text_to_pdf_page_content(
+            PdfPageTextSource::ExtractedText,
+            extracted_text,
+            page_number,
+        ));
+    };
+
+    if !engine.is_available() {
+        return Ok(text_to_pdf_page_content(
+            PdfPageTextSource::ExtractedText,
+            extracted_text,
+            page_number,
+        ));
+    }
+
+    let Some(content_bytes) = source_bytes else {
+        return Ok(text_to_pdf_page_content(
+            PdfPageTextSource::ExtractedText,
+            extracted_text,
+            page_number,
+        ));
+    };
+
+    let ocr_result = engine
+        .recognize_page(OcrPageInput {
+            source_path: path.to_string_lossy().to_string(),
+            page_number,
+            content_bytes: content_bytes.to_vec(),
+            content_format: Some(OcrContentFormat::Pdf),
+            language_hints: Vec::new(),
+        })
+        .await
+        .map_err(|e| format!("OCR 处理 PDF 第 {} 页失败: {}", page_number, e))?;
+
+    Ok(ocr_page_result_to_page_content(&ocr_result))
+}
+
+fn extract_pdf_page_text(document: &lopdf::Document, page_number: u32) -> Result<String, String> {
+    let page_text = document
+        .extract_text(&[page_number])
+        .map_err(|e| format!("提取 PDF 第 {} 页文本失败: {}", page_number, e))?;
+
+    Ok(normalize_pdf_text(&page_text))
+}
+
+fn detect_pdf_page_text_source(extracted_text: &str) -> PdfPageTextSource {
+    let trimmed = extracted_text.trim();
+    if trimmed.is_empty() {
+        return PdfPageTextSource::OcrFallback;
+    }
+
+    let meaningful_chars = trimmed
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .count();
+    let non_whitespace_chars = trimmed.chars().filter(|ch| !ch.is_whitespace()).count();
+
+    if meaningful_chars < 20 {
+        return PdfPageTextSource::OcrFallback;
+    }
+
+    if non_whitespace_chars > 0 && meaningful_chars * 100 / non_whitespace_chars < 35 {
+        return PdfPageTextSource::OcrFallback;
+    }
+
+    PdfPageTextSource::ExtractedText
+}
+
+fn text_to_pdf_page_content(
+    text_source: PdfPageTextSource,
+    text: &str,
+    page_number: u32,
+) -> ResolvedPdfPageContent {
+    let normalized_text = normalize_pdf_text(text);
+    let blocks = text_to_pdf_page_blocks(&normalized_text, page_number);
+
+    ResolvedPdfPageContent {
+        text_source,
+        normalized_text,
+        blocks,
+    }
+}
+
+fn text_to_pdf_page_blocks(text: &str, page_number: u32) -> Vec<ParsedBlock> {
+    let blocks = split_text_into_blocks(text, BlockKind::Paragraph, Vec::new(), Some(page_number));
+    if blocks.is_empty() && !text.trim().is_empty() {
+        return vec![ParsedBlock {
+            index: 0,
+            block_kind: BlockKind::Paragraph,
+            text: text.trim().to_string(),
+            heading_path: Vec::new(),
+            page_number: Some(page_number),
+            language: None,
+            symbol: None,
+            start_offset: 0,
+            end_offset: text.len(),
+            line_start: None,
+            line_end: None,
+        }];
+    }
+
+    blocks
+}
+
+fn normalize_ocr_page_text(result: &OcrPageResult) -> String {
+    if !result.lines.is_empty() {
+        let text_from_lines = result
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let normalized = normalize_pdf_text(&text_from_lines);
+        if !normalized.trim().is_empty() {
+            return normalized;
+        }
+    }
+
+    normalize_pdf_text(&result.full_text)
+}
+
+fn ocr_page_result_to_blocks(result: &OcrPageResult) -> Vec<ParsedBlock> {
+    let normalized_text = normalize_ocr_page_text(result);
+    text_to_pdf_page_blocks(&normalized_text, result.page_number)
+}
+
+fn ocr_page_result_to_page_content(result: &OcrPageResult) -> ResolvedPdfPageContent {
+    let normalized_text = normalize_ocr_page_text(result);
+    let blocks = text_to_pdf_page_blocks(&normalized_text, result.page_number);
+
+    ResolvedPdfPageContent {
+        text_source: PdfPageTextSource::OcrFallback,
+        normalized_text,
+        blocks,
+    }
 }
 
 fn split_text_into_blocks(
@@ -821,6 +1110,133 @@ fn count_char(line: &str, target: char) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rag::{chunk_document, ChunkConfig};
+    use crate::rag::{OcrError, OcrPageResult, OcrTextLine};
+    use async_trait::async_trait;
+    use lopdf::{
+        content::{Content, Operation},
+        dictionary, Object, Stream,
+    };
+    use std::sync::{Arc, Mutex};
+
+    struct RecordingOcrEngine {
+        calls: Mutex<Vec<OcrPageInput>>,
+        response_text: String,
+        available: bool,
+    }
+
+    impl RecordingOcrEngine {
+        fn available(response_text: &str) -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                response_text: response_text.to_string(),
+                available: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl OcrEngine for RecordingOcrEngine {
+        async fn recognize_page(&self, input: OcrPageInput) -> Result<OcrPageResult, OcrError> {
+            self.calls.lock().unwrap().push(input.clone());
+            Ok(OcrPageResult::from_lines(
+                input.source_path,
+                input.page_number,
+                vec![OcrTextLine {
+                    text: self.response_text.clone(),
+                    confidence: Some(0.95),
+                }],
+                self.engine_id(),
+            ))
+        }
+
+        fn engine_id(&self) -> &str {
+            "recording-ocr"
+        }
+
+        fn is_available(&self) -> bool {
+            self.available
+        }
+    }
+
+    fn create_test_pdf(text: Option<&str>) -> std::path::PathBuf {
+        create_test_pdf_pages(&[text])
+    }
+
+    fn create_test_pdf_pages(pages: &[Option<&str>]) -> std::path::PathBuf {
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages_id = document.new_object_id();
+        let mut page_ids = Vec::new();
+
+        for page_text in pages {
+            let page_id = document.new_object_id();
+            let (content_id, resources_id) = if let Some(text) = page_text {
+                let font_id = document.add_object(dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                });
+                let resources_id = document.add_object(dictionary! {
+                    "Font" => dictionary! {
+                        "F1" => font_id,
+                    }
+                });
+                let content = Content {
+                    operations: vec![
+                        Operation::new("BT", vec![]),
+                        Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 12.into()]),
+                        Operation::new("Td", vec![50.into(), 750.into()]),
+                        Operation::new("Tj", vec![Object::string_literal(*text)]),
+                        Operation::new("ET", vec![]),
+                    ],
+                };
+                let content_stream = Stream::new(dictionary! {}, content.encode().unwrap());
+                let content_id = document.add_object(content_stream);
+                (content_id, resources_id)
+            } else {
+                let content_stream = Stream::new(dictionary! {}, Vec::new());
+                let content_id = document.add_object(content_stream);
+                let resources_id = document.add_object(dictionary! {});
+                (content_id, resources_id)
+            };
+
+            document.objects.insert(
+                page_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+                    "Contents" => content_id,
+                    "Resources" => resources_id,
+                }),
+            );
+            page_ids.push(page_id);
+        }
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids
+                    .iter()
+                    .copied()
+                    .map(Object::Reference)
+                    .collect::<Vec<_>>(),
+                "Count" => page_ids.len() as i64,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+
+        let path = std::env::temp_dir().join(format!(
+            "rag_parser_test_{}.pdf",
+            uuid::Uuid::new_v4()
+        ));
+        document.save(&path).unwrap();
+        path
+    }
 
     #[test]
     fn test_markdown_heading_parse() {
@@ -845,5 +1261,285 @@ mod tests {
             Some("Parser".to_string())
         );
         assert_eq!(detect_code_symbol("plain text"), None);
+    }
+
+    #[test]
+    fn test_detect_pdf_page_text_source_prefers_extracted_text_when_text_is_sufficient() {
+        assert_eq!(
+            detect_pdf_page_text_source(
+                "This page already contains enough extracted text to skip OCR fallback."
+            ),
+            PdfPageTextSource::ExtractedText
+        );
+        assert_eq!(
+            detect_pdf_page_text_source(" \n\t "),
+            PdfPageTextSource::OcrFallback
+        );
+        assert_eq!(
+            detect_pdf_page_text_source(".. -- ??"),
+            PdfPageTextSource::OcrFallback
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_pdf_page_text_with_ocr_skips_ocr_for_sufficient_pages() {
+        let engine = RecordingOcrEngine::available("OCR text should not be used");
+        let extracted_text = "This page already has enough extracted text to skip OCR fallback.";
+
+        let resolved = resolve_pdf_page_text_with_ocr(
+            Path::new("C:\\docs\\native-text.pdf"),
+            1,
+            extracted_text,
+            Some(&engine),
+            Some(&[1, 2, 3]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, extracted_text);
+        assert!(engine.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_pdf_page_text_with_ocr_uses_ocr_for_insufficient_pages_only() {
+        let engine = RecordingOcrEngine::available("Recovered from OCR");
+
+        let resolved = resolve_pdf_page_text_with_ocr(
+            Path::new("C:\\docs\\scan.pdf"),
+            2,
+            "",
+            Some(&engine),
+            Some(&[9, 8, 7, 6]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, "Recovered from OCR");
+
+        let calls = engine.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].page_number, 2);
+        assert_eq!(calls[0].source_path, "C:\\docs\\scan.pdf");
+        assert_eq!(calls[0].content_format, Some(OcrContentFormat::Pdf));
+        assert_eq!(calls[0].content_bytes, vec![9, 8, 7, 6]);
+    }
+
+    #[tokio::test]
+    async fn test_parse_document_with_ocr_respects_enable_ocr_flag() {
+        let pdf_path = create_test_pdf(None);
+        let engine = Arc::new(RecordingOcrEngine::available("Recovered from OCR"));
+
+        let disabled = parse_document_with_ocr(
+            pdf_path.to_string_lossy().as_ref(),
+            Some(ParseOptions {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                enable_ocr: false,
+            }),
+            Some(engine.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert!(disabled.blocks.is_empty());
+        assert!(engine.calls.lock().unwrap().is_empty());
+
+        let enabled = parse_document_with_ocr(
+            pdf_path.to_string_lossy().as_ref(),
+            Some(ParseOptions {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                enable_ocr: true,
+            }),
+            Some(engine.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(enabled.blocks.len(), 1);
+        assert_eq!(enabled.blocks[0].text, "Recovered from OCR");
+        assert_eq!(engine.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_parse_document_with_ocr_preserves_native_text_pdf_path() {
+        let pdf_path = create_test_pdf(Some(
+            "This PDF page contains enough native extracted text to skip OCR fallback entirely.",
+        ));
+        let engine = Arc::new(RecordingOcrEngine::available("Recovered from OCR"));
+
+        let document = parse_document_with_ocr(
+            pdf_path.to_string_lossy().as_ref(),
+            Some(ParseOptions {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                enable_ocr: true,
+            }),
+            Some(engine.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert!(!document.blocks.is_empty());
+        assert!(document
+            .blocks
+            .iter()
+            .any(|block| block.text.contains("native extracted text")));
+        assert!(engine.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parse_document_with_ocr_recovers_scanned_pdf_pages() {
+        let pdf_path = create_test_pdf(None);
+        let engine = Arc::new(RecordingOcrEngine::available("Recovered from OCR"));
+
+        let document = parse_document_with_ocr(
+            pdf_path.to_string_lossy().as_ref(),
+            Some(ParseOptions {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                enable_ocr: true,
+            }),
+            Some(engine.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(document.total_pages, Some(1));
+        assert_eq!(document.blocks.len(), 1);
+        assert_eq!(document.blocks[0].page_number, Some(1));
+        assert_eq!(document.blocks[0].text, "Recovered from OCR");
+        assert_eq!(engine.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_parse_document_with_ocr_handles_mixed_pdf_without_regressing_native_pages() {
+        let pdf_path = create_test_pdf_pages(&[
+            Some("This PDF page contains enough native extracted text to skip OCR fallback entirely."),
+            None,
+        ]);
+        let engine = Arc::new(RecordingOcrEngine::available("Recovered from OCR"));
+
+        let document = parse_document_with_ocr(
+            pdf_path.to_string_lossy().as_ref(),
+            Some(ParseOptions {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                enable_ocr: true,
+            }),
+            Some(engine.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(document.total_pages, Some(2));
+        assert!(document
+            .blocks
+            .iter()
+            .any(|block| block.page_number == Some(1)
+                && block.text.contains("native extracted text")));
+        assert!(document
+            .blocks
+            .iter()
+            .any(|block| block.page_number == Some(2) && block.text == "Recovered from OCR"));
+
+        let calls = engine.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].page_number, 2);
+    }
+
+    #[test]
+    fn test_ocr_page_result_to_blocks_normalizes_ocr_lines_into_parsed_blocks() {
+        let result = OcrPageResult::from_lines(
+            "C:\\docs\\scan.pdf",
+            3,
+            vec![
+                OcrTextLine {
+                    text: "第一段第一行".to_string(),
+                    confidence: Some(0.98),
+                },
+                OcrTextLine {
+                    text: "第一段第二行".to_string(),
+                    confidence: Some(0.97),
+                },
+                OcrTextLine {
+                    text: String::new(),
+                    confidence: None,
+                },
+                OcrTextLine {
+                    text: "第二段".to_string(),
+                    confidence: Some(0.96),
+                },
+            ],
+            "recording-ocr",
+        );
+
+        let blocks = ocr_page_result_to_blocks(&result);
+
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].block_kind, BlockKind::Paragraph);
+        assert_eq!(blocks[0].text, "第一段第一行\n第一段第二行");
+        assert_eq!(blocks[0].page_number, Some(3));
+        assert_eq!(blocks[0].line_start, Some(1));
+        assert_eq!(blocks[0].line_end, Some(2));
+        assert_eq!(blocks[1].text, "第二段");
+        assert_eq!(blocks[1].page_number, Some(3));
+        assert_eq!(blocks[1].line_start, Some(4));
+        assert_eq!(blocks[1].line_end, Some(4));
+    }
+
+    #[test]
+    fn test_ocr_derived_blocks_preserve_citation_metadata_through_chunking() {
+        let source_path = "C:\\docs\\scan.pdf".to_string();
+        let page_result = OcrPageResult::from_lines(
+            source_path.clone(),
+            7,
+            vec![
+                OcrTextLine {
+                    text: "扫描页标题".to_string(),
+                    confidence: Some(0.99),
+                },
+                OcrTextLine {
+                    text: String::new(),
+                    confidence: None,
+                },
+                OcrTextLine {
+                    text: "这是用于引用渲染的正文内容。".to_string(),
+                    confidence: Some(0.96),
+                },
+            ],
+            "recording-ocr",
+        );
+
+        let resolved_page = ocr_page_result_to_page_content(&page_result);
+        assert_eq!(resolved_page.text_source, PdfPageTextSource::OcrFallback);
+        assert!(
+            resolved_page
+                .blocks
+                .iter()
+                .all(|block| block.page_number == Some(7))
+        );
+        assert!(
+            resolved_page
+                .blocks
+                .iter()
+                .all(|block| block.heading_path.is_empty())
+        );
+
+        let document = ParsedDocument {
+            metadata: ParsedDocumentMetadata {
+                source_path: source_path.clone(),
+                file_name: "scan.pdf".to_string(),
+                extension: Some("pdf".to_string()),
+                title: "scan".to_string(),
+                document_type: DocumentType::Pdf,
+                byte_size: 512,
+                language: None,
+            },
+            blocks: resolved_page.blocks,
+            total_chars: resolved_page.normalized_text.chars().count(),
+            total_pages: Some(1),
+        };
+
+        let chunks = chunk_document(&document, &ChunkConfig::document_default());
+        assert!(!chunks.is_empty());
+        assert!(chunks.iter().all(|chunk| chunk.source_path == source_path));
+        assert!(chunks.iter().all(|chunk| chunk.page_number == Some(7)));
+        assert!(chunks.iter().all(|chunk| chunk.heading_path.is_empty()));
     }
 }

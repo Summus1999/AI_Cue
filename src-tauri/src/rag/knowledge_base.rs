@@ -1111,6 +1111,7 @@ mod tests {
                 path,
                 parse_options: Some(ParseOptions {
                     max_file_size_bytes: 8,
+                    enable_ocr: false,
                 }),
                 chunk_config: None,
             })

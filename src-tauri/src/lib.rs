@@ -216,6 +216,7 @@ pub fn run() {
             commands::rag_parse_document,
             commands::rag_chunk_document,
             commands::rag_get_context,
+            commands::rag_retrieve_with_citations,
             commands::rag_stats,
             commands::rag_configure,
             commands::rag_delete_vectors,

@@ -3,14 +3,37 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface SearchResult {
+  knowledge_base_id: string | null;
   chunk_id: string;
   embedding_id: string | null;
   message_id: string | null;
   document_id: string | null;
+  title: string;
   chunk_text: string;
+  snippet: string;
+  page_number: number | null;
+  heading_path: string[];
   score: number;
   source: 'Vector' | 'Keyword' | 'Hybrid';
   source_kind: 'Message' | 'KnowledgeBaseDocument';
+}
+
+export interface CitationMetadata {
+  index: number;
+  knowledgeBaseId: string | null;
+  documentId: string | null;
+  chunkId: string;
+  title: string;
+  snippet: string;
+  pageNumber: number | null;
+  headingPath: string[];
+  score: number;
+  sourceKind: 'Message' | 'KnowledgeBaseDocument';
+}
+
+export interface RagContextBundle {
+  promptContext: string;
+  citations: CitationMetadata[];
 }
 
 export interface RagStats {
@@ -29,12 +52,74 @@ export interface EmbeddingProviderConfig {
   model?: string | null;
 }
 
+export type KnowledgeDocumentIndexState = 'pending' | 'indexing' | 'ready' | 'failed';
 export type DocumentType = 'markdown' | 'pdf' | 'plain_text' | 'code';
 export type BlockKind = 'heading' | 'paragraph' | 'list' | 'quote' | 'code' | 'code_symbol';
 export type ChunkType = 'text' | 'qa_pair' | { code: { language?: string | null } };
 
+export interface CreateKnowledgeBaseInput {
+  name: string;
+  description?: string | null;
+}
+
+export interface KnowledgeBaseRecord {
+  id: string;
+  name: string;
+  description: string;
+  documentCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface KnowledgeDocumentRecord {
+  id: string;
+  knowledgeBaseId: string;
+  title: string;
+  fileName: string;
+  fileExtension: string | null;
+  documentType: string;
+  sourcePath: string;
+  sourceByteSize: number;
+  sourceModifiedAt: number;
+  contentHash: string;
+  fingerprint: string;
+  indexState: KnowledgeDocumentIndexState;
+  lastError: string | null;
+  chunkCount: number;
+  embeddingCount: number;
+  createdAt: number;
+  updatedAt: number;
+  indexedAt: number | null;
+}
+
+export interface KnowledgeChunkRecord {
+  id: string;
+  documentId: string;
+  chunkIndex: number;
+  text: string;
+  chunkType: string;
+  headingPath: string[];
+  pageNumber: number | null;
+  language: string | null;
+  startOffset: number;
+  endOffset: number;
+  blockCount: number;
+  createdAt: number;
+}
+
+export interface KnowledgeEmbeddingRecord {
+  id: string;
+  knowledgeBaseId: string;
+  documentId: string;
+  chunkId: string;
+  embeddingDim: number;
+  modelId: string;
+  createdAt: number;
+}
+
 export interface ParseOptions {
   maxFileSizeBytes?: number;
+  enableOcr?: boolean;
 }
 
 export interface ParsedBlock {
@@ -91,6 +176,27 @@ export interface DocumentChunk {
   blockCount: number;
 }
 
+export interface KnowledgeBaseImportRequest {
+  knowledgeBaseId: string;
+  path: string;
+  parseOptions?: ParseOptions;
+  chunkConfig?: ChunkConfig;
+}
+
+export interface ReindexKnowledgeDocumentRequest {
+  documentId: string;
+  parseOptions?: ParseOptions;
+  chunkConfig?: ChunkConfig;
+}
+
+export interface CompletedKnowledgeBaseImport {
+  document: KnowledgeDocumentRecord;
+  parsedDocument: ParsedDocument;
+  chunks: DocumentChunk[];
+  persistedChunks: KnowledgeChunkRecord[];
+  persistedEmbeddings: KnowledgeEmbeddingRecord[];
+}
+
 export const ragService = {
   /**
    * 语义检索
@@ -115,6 +221,27 @@ export const ragService = {
     return invoke<string>('rag_get_context', { 
       query, 
       maxTokens 
+    });
+  },
+
+  /**
+   * 获取“prompt context + citations”组合结果
+   * @param query 搜索查询
+   * @param maxTokens 最大 token 数量
+   * @param maxResults 最大引用条数
+   * @param sessionId 可选，按会话过滤
+   */
+  async retrieveWithCitations(
+    query: string,
+    maxTokens = 2000,
+    maxResults = 5,
+    sessionId?: string,
+  ): Promise<RagContextBundle> {
+    return invoke<RagContextBundle>('rag_retrieve_with_citations', {
+      query,
+      maxTokens,
+      maxResults,
+      sessionId,
     });
   },
   
@@ -183,7 +310,74 @@ export const ragService = {
    */
   async deleteVectors(messageId: string): Promise<void> {
     return invoke<void>('rag_delete_vectors', { messageId });
-  }
+  },
+
+  /**
+   * 创建知识库
+   * @param input 知识库创建参数
+   */
+  async createKnowledgeBase(input: CreateKnowledgeBaseInput): Promise<KnowledgeBaseRecord> {
+    return invoke<KnowledgeBaseRecord>('rag_create_knowledge_base', { input });
+  },
+
+  /**
+   * 列出知识库
+   */
+  async listKnowledgeBases(): Promise<KnowledgeBaseRecord[]> {
+    return invoke<KnowledgeBaseRecord[]>('rag_list_knowledge_bases');
+  },
+
+  /**
+   * 删除知识库
+   * @param knowledgeBaseId 知识库 ID
+   */
+  async deleteKnowledgeBase(knowledgeBaseId: string): Promise<void> {
+    return invoke<void>('rag_delete_knowledge_base', { knowledgeBaseId });
+  },
+
+  /**
+   * 列出知识库文档
+   * @param knowledgeBaseId 知识库 ID
+   */
+  async listKnowledgeDocuments(knowledgeBaseId: string): Promise<KnowledgeDocumentRecord[]> {
+    return invoke<KnowledgeDocumentRecord[]>('rag_list_knowledge_documents', { knowledgeBaseId });
+  },
+
+  /**
+   * 获取单个知识库文档详情
+   * @param documentId 文档 ID
+   */
+  async getKnowledgeDocument(documentId: string): Promise<KnowledgeDocumentRecord | null> {
+    return invoke<KnowledgeDocumentRecord | null>('rag_get_knowledge_document', { documentId });
+  },
+
+  /**
+   * 删除知识库文档
+   * @param documentId 文档 ID
+   */
+  async deleteKnowledgeDocument(documentId: string): Promise<void> {
+    return invoke<void>('rag_delete_knowledge_document', { documentId });
+  },
+
+  /**
+   * 导入知识库文档
+   * @param request 导入请求
+   */
+  async importKnowledgeDocument(
+    request: KnowledgeBaseImportRequest,
+  ): Promise<CompletedKnowledgeBaseImport> {
+    return invoke<CompletedKnowledgeBaseImport>('rag_import_knowledge_document', { request });
+  },
+
+  /**
+   * 重建单个知识库文档索引
+   * @param request 重建索引请求
+   */
+  async reindexKnowledgeDocument(
+    request: ReindexKnowledgeDocumentRequest,
+  ): Promise<CompletedKnowledgeBaseImport> {
+    return invoke<CompletedKnowledgeBaseImport>('rag_reindex_knowledge_document', { request });
+  },
 };
 
 export default ragService;

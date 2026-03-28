@@ -20,6 +20,21 @@ export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
 
 export type PromptMode = 'assistant' | 'interviewer';
 
+export type RagRetrievalScope = 'hybrid' | 'knowledge_base' | 'current_session';
+
+export type RagEmbeddingProviderType = 'qwen' | 'openai_compat';
+
+export type RagAutoReindexPolicy = 'manual' | 'changed_files' | 'on_startup';
+
+export interface RagConfig {
+  enabled: boolean;
+  retrievalScope: RagRetrievalScope;
+  enableOcr: boolean;
+  embeddingProvider: RagEmbeddingProviderType;
+  embeddingModel: string;
+  autoReindexPolicy: RagAutoReindexPolicy;
+}
+
 export interface ProviderConfig {
   apiKey: string;
   baseUrl?: string;             // 自定义 Base URL
@@ -82,6 +97,69 @@ export const PROVIDER_MODELS: Record<ProviderType, { id: string; name: string; d
     { id: 'claude-haiku-3-5-20241022', name: 'Claude 3.5 Haiku', description: '快速响应' },
   ],
 };
+
+export const RAG_RETRIEVAL_SCOPE_OPTIONS: { id: RagRetrievalScope; name: string; description: string }[] = [
+  {
+    id: 'hybrid',
+    name: '混合检索',
+    description: '同时检索当前会话语义与知识库文档，适合通用问答。',
+  },
+  {
+    id: 'knowledge_base',
+    name: '仅知识库',
+    description: '只引用已导入并完成索引的知识库文档。',
+  },
+  {
+    id: 'current_session',
+    name: '仅当前会话',
+    description: '只使用当前聊天会话中已向量化的消息内容。',
+  },
+];
+
+export const RAG_EMBEDDING_PROVIDERS: { id: RagEmbeddingProviderType; name: string; description: string }[] = [
+  {
+    id: 'qwen',
+    name: 'Qwen Embedding',
+    description: '使用千问兼容 embedding 接口，默认模型为 text-embedding-v2。',
+  },
+  {
+    id: 'openai_compat',
+    name: 'OpenAI Compatible Embedding',
+    description: '使用 OpenAI 兼容 embedding 接口，默认模型为 text-embedding-3-small。',
+  },
+];
+
+export const RAG_EMBEDDING_MODELS: Record<RagEmbeddingProviderType, { id: string; name: string; description: string }[]> = {
+  qwen: [
+    { id: 'text-embedding-v2', name: 'text-embedding-v2', description: '千问默认 embedding 模型。' },
+  ],
+  openai_compat: [
+    { id: 'text-embedding-3-small', name: 'text-embedding-3-small', description: 'OpenAI 默认轻量 embedding 模型。' },
+    { id: 'text-embedding-3-large', name: 'text-embedding-3-large', description: '更高质量的 OpenAI 兼容 embedding 模型。' },
+  ],
+};
+
+export const RAG_AUTO_REINDEX_POLICY_OPTIONS: { id: RagAutoReindexPolicy; name: string; description: string }[] = [
+  {
+    id: 'manual',
+    name: '仅手动',
+    description: '只在用户显式触发时重建索引。',
+  },
+  {
+    id: 'changed_files',
+    name: '仅变更文件',
+    description: '后续发现文件 fingerprint 变化时自动重建对应索引。',
+  },
+  {
+    id: 'on_startup',
+    name: '启动时扫描',
+    description: '应用启动后尝试扫描并处理待重建或失败文档。',
+  },
+];
+
+export function getDefaultRagEmbeddingModel(provider: RagEmbeddingProviderType): string {
+  return RAG_EMBEDDING_MODELS[provider][0]?.id || 'text-embedding-v2';
+}
 
 // 快捷键配置接口
 export interface ShortcutConfig {
@@ -291,7 +369,18 @@ export interface AppConfig {
   interviewBackground: InterviewBackground;
   // 填充词过滤配置
   fillerWordFilter: FillerWordFilterConfig;
+  // RAG 配置
+  rag: RagConfig;
 }
+
+export const DEFAULT_RAG_CONFIG: RagConfig = {
+  enabled: true,
+  retrievalScope: 'hybrid',
+  enableOcr: false,
+  embeddingProvider: 'qwen',
+  embeddingModel: getDefaultRagEmbeddingModel('qwen'),
+  autoReindexPolicy: 'manual',
+};
 
 // 默认配置
 export const DEFAULT_CONFIG: AppConfig = {
@@ -347,6 +436,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     enabled: true,
     customWords: [],
   },
+  rag: DEFAULT_RAG_CONFIG,
 };
 
 // Store 实例（延迟初始化）
@@ -385,6 +475,46 @@ function migrateInterviewBackground(bg: any): InterviewBackground {
   };
 }
 
+function normalizeOptionalConfigString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function isRagRetrievalScope(value: unknown): value is RagRetrievalScope {
+  return RAG_RETRIEVAL_SCOPE_OPTIONS.some(option => option.id === value);
+}
+
+function isRagEmbeddingProviderType(value: unknown): value is RagEmbeddingProviderType {
+  return RAG_EMBEDDING_PROVIDERS.some(option => option.id === value);
+}
+
+function isRagAutoReindexPolicy(value: unknown): value is RagAutoReindexPolicy {
+  return RAG_AUTO_REINDEX_POLICY_OPTIONS.some(option => option.id === value);
+}
+
+function migrateRagConfig(rag: any): RagConfig {
+  const embeddingProvider = isRagEmbeddingProviderType(rag?.embeddingProvider)
+    ? rag.embeddingProvider
+    : DEFAULT_RAG_CONFIG.embeddingProvider;
+
+  return {
+    enabled: typeof rag?.enabled === 'boolean' ? rag.enabled : DEFAULT_RAG_CONFIG.enabled,
+    retrievalScope: isRagRetrievalScope(rag?.retrievalScope)
+      ? rag.retrievalScope
+      : DEFAULT_RAG_CONFIG.retrievalScope,
+    enableOcr: typeof rag?.enableOcr === 'boolean' ? rag.enableOcr : DEFAULT_RAG_CONFIG.enableOcr,
+    embeddingProvider,
+    embeddingModel: normalizeOptionalConfigString(rag?.embeddingModel)
+      || getDefaultRagEmbeddingModel(embeddingProvider),
+    autoReindexPolicy: isRagAutoReindexPolicy(rag?.autoReindexPolicy)
+      ? rag.autoReindexPolicy
+      : DEFAULT_RAG_CONFIG.autoReindexPolicy,
+  };
+}
+
 // 配置迁移：从旧配置格式迁移到新格式
 function migrateConfig(parsed: any): AppConfig {
   // 如果是旧配置格式（存在顶层 apiKey 且没有 providerConfigs），自动迁移
@@ -414,6 +544,7 @@ function migrateConfig(parsed: any): AppConfig {
         ...(parsed.shortcutConfig || {}),
       },
       window: parsed.window || DEFAULT_CONFIG.window,
+      rag: migrateRagConfig(parsed.rag),
     };
   }
   
@@ -431,6 +562,7 @@ function migrateConfig(parsed: any): AppConfig {
     },
     contextWindowSize: parsed.contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
     interviewBackground: migrateInterviewBackground(parsed.interviewBackground),
+    rag: migrateRagConfig(parsed.rag),
   };
 }
 
@@ -496,6 +628,7 @@ export async function loadConfig(): Promise<AppConfig> {
     const localDocPath = await store.get<string>('localDocPath');
     const shortcutConfig = await store.get<ShortcutConfig>('shortcutConfig');
     const windowConfig = await store.get<WindowConfig>('window');
+    const rag = await store.get<RagConfig>('rag');
 
     // 检测是否需要迁移（有旧字段但没有新字段）
     if (oldApiKey !== undefined && oldApiKey !== null && !providerConfigs) {
@@ -513,6 +646,7 @@ export async function loadConfig(): Promise<AppConfig> {
         localDocPath,
         shortcutConfig,
         window: windowConfig,
+        rag,
       });
     }
 
@@ -544,6 +678,7 @@ export async function loadConfig(): Promise<AppConfig> {
       contextWindowSize: contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
       interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
       fillerWordFilter: fillerWordFilter || DEFAULT_CONFIG.fillerWordFilter,
+      rag: migrateRagConfig(rag),
     };
 
     // 补充 customPromptMode 默认值
@@ -598,6 +733,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('contextWindowSize', config.contextWindowSize);
     await store.set('interviewBackground', config.interviewBackground);
     await store.set('fillerWordFilter', config.fillerWordFilter);
+    await store.set('rag', config.rag);
     await store.save();
   } catch (error) {
     console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);
@@ -660,6 +796,8 @@ function validateAndFixConfig(config: AppConfig): AppConfig {
       validatedConfig.interviewBackground.resume = '';
     }
   }
+
+  validatedConfig.rag = migrateRagConfig(validatedConfig.rag);
   
   return validatedConfig;
 }
