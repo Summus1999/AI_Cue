@@ -1,16 +1,17 @@
 ## Relevant Files
 
-- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口。
+- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及知识库导入/重建进度透传。
 - `src-tauri/src/rag/retriever.rs` - 消息向量检索、知识库向量检索、结果融合与结构化返回。
 - `src-tauri/src/rag/context_builder.rs` - Prompt context 构建与 citation 元信息生成。
 - `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断。
-- `src-tauri/src/rag/ocr.rs` - OCR 抽象、错误模型与默认不可用实现。
-- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入编排、分块持久化、embedding 入库与失败收口。
+- `src-tauri/src/rag/ocr.rs` - OCR 抽象、错误模型、Windows OCR 运行时实现与默认引擎工厂。
+- `src-tauri/Cargo.toml` - Rust 后端依赖声明，启用 Windows OCR / PDF / Imaging 所需 WinRT feature。
+- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建编排、OCR 解析接线、分块持久化、embedding 入库、阶段进度事件与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入等 Rust 集成测试。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、chunk/embedding 写入。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射，以及 parse/chunk 路径 OCR 引擎接线。
 - `src-tauri/src/lib.rs` - Tauri 命令注册。
-- `src/services/ragService.ts` - 前端 RAG 服务层与类型定义。
+- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装与类型定义。
 - `src/services/aiChat.ts` - 聊天请求构建与可选 retrieval context 注入。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
 - `src/store/rag.ts` - 当前前端 RAG store。
@@ -58,7 +59,7 @@
   - ✅️ 2.7 Rust 集成测试已覆盖首次导入成功、重复导入同一路径拒绝、删除后级联清理、删除后重导入路径
   - ✅️ 2.8 通过 Tauri 命令把导入链路正式暴露给前端调用
   - ✅️ 2.9 提供真正的“重建索引”命令，而不是仅依赖“删除后再导入”的测试路径
-  - ❌️ 2.10 为 parse / chunk / embed / finalize 阶段提供可供前端消费的进度事件
+  - ✅️ 2.10 为 parse / chunk / embed / finalize 阶段提供可供前端消费的进度事件
 
 - ✅️ 3.0 在 parser 层补齐 OCR fallback 与引用元数据保留
   - ✅️ 3.1 新建 `ocr.rs`，定义 OCR trait、输入输出结构与统一错误模型
@@ -67,8 +68,8 @@
   - ✅️ 3.4 OCR 结果会保留 page number、source path、heading path 等可用于引用渲染的元数据
   - ✅️ 3.5 `ParseOptions.enableOcr` 已接入解析入口，未开启时仍走原始文本型 PDF 路径
   - ✅️ 3.6 已有 text PDF / scanned PDF / mixed PDF 的 parser 层回归测试
-  - ❌️ 3.7 接入真正可用的 OCR 运行时实现；当前仓库只有 `UnavailableOcrEngine` 和测试 mock，没有可在应用里实际工作的 OCR 引擎
-  - ❌️ 3.8 让知识库导入主链路实际调用 `parse_document_with_ocr()`，使 OCR fallback 覆盖真实导入流程
+  - ✅️ 3.7 接入真正可用的 OCR 运行时实现；当前仓库已提供基于 `Windows.Media.Ocr` / `Windows.Data.Pdf` 的 Windows OCR 引擎，并接入命令层 parse/chunk 路径
+  - ✅️ 3.8 让知识库导入主链路实际调用 `parse_document_with_ocr()`，使 OCR fallback 覆盖真实导入流程
 
 - ✅️ 4.0 打通知识库检索与结构化 citation 返回
   - ✅️ 4.1 `retriever.rs` 已支持基于 `kb_embeddings` 和 `kb_chunks` 的知识库 chunk 检索
@@ -85,7 +86,7 @@
   - ✅️ 5.4 后端已实现并注册 `rag_reindex_knowledge_document` 命令
   - ❌️ 5.5 前端尚未在启动、设置保存或聊天发送前调用 `rag_configure`，当前 embedding provider 配置没有真正下发到后端 `RagEngine`
   - ❌️ 5.6 前端尚未拿到文档预览所需的 chunk / page / heading path 明细接口
-  - ❌️ 5.7 当前接口层仍缺少导入进度事件与后台任务状态同步能力
+  - ❌️ 5.7 当前接口层已提供导入 / 重建索引进度事件，但仍缺少后台任务状态同步能力
 
 - ❌️ 6.0 接入聊天主流程，实现 RAG 增强对话
   - ❌️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力

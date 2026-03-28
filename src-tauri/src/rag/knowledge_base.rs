@@ -1,6 +1,6 @@
 use super::{
-    chunk_document, parse_document, ChunkConfig, ChunkType, DocumentChunk, EmbeddingProvider,
-    ParseOptions, ParsedDocument,
+    chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig, ChunkType,
+    DocumentChunk, EmbeddingProvider, OcrEngine, ParseOptions, ParsedDocument,
 };
 use crate::database::{
     create_knowledge_document, get_knowledge_document, insert_knowledge_chunks,
@@ -25,6 +25,8 @@ pub struct KnowledgeBaseImportRequest {
     pub parse_options: Option<ParseOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_config: Option<ChunkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +37,8 @@ pub struct ReindexKnowledgeDocumentRequest {
     pub parse_options: Option<ParseOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_config: Option<ChunkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +71,68 @@ pub struct CompletedKnowledgeBaseImport {
     pub chunks: Vec<DocumentChunk>,
     pub persisted_chunks: Vec<KnowledgeChunkRecord>,
     pub persisted_embeddings: Vec<KnowledgeEmbeddingRecord>,
+}
+
+pub type KnowledgeBaseImportProgressCallback =
+    Arc<dyn Fn(KnowledgeBaseImportProgress) + Send + Sync>;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KnowledgeBaseImportOperation {
+    Import,
+    Reindex,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KnowledgeBaseImportStage {
+    Parse,
+    Chunk,
+    Embed,
+    Finalize,
+}
+
+impl KnowledgeBaseImportStage {
+    fn current(self) -> usize {
+        match self {
+            Self::Parse => 1,
+            Self::Chunk => 2,
+            Self::Embed => 3,
+            Self::Finalize => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KnowledgeBaseImportProgressStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeBaseImportProgress {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    pub operation: KnowledgeBaseImportOperation,
+    pub stage: KnowledgeBaseImportStage,
+    pub status: KnowledgeBaseImportProgressStatus,
+    pub current: usize,
+    pub total: usize,
+    pub knowledge_base_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_count: Option<usize>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,13 +228,73 @@ impl SourceDocumentSnapshot {
     }
 }
 
+#[derive(Debug, Clone)]
+struct KnowledgeBaseImportProgressContext {
+    request_id: Option<String>,
+    operation: KnowledgeBaseImportOperation,
+    knowledge_base_id: String,
+    document_id: Option<String>,
+    file_name: Option<String>,
+    source_path: Option<String>,
+}
+
+impl KnowledgeBaseImportProgressContext {
+    fn new(
+        request_id: Option<String>,
+        operation: KnowledgeBaseImportOperation,
+        knowledge_base_id: String,
+        document_id: Option<String>,
+        file_name: Option<String>,
+        source_path: Option<String>,
+    ) -> Self {
+        Self {
+            request_id,
+            operation,
+            knowledge_base_id,
+            document_id,
+            file_name,
+            source_path,
+        }
+    }
+
+    fn event(
+        &self,
+        stage: KnowledgeBaseImportStage,
+        status: KnowledgeBaseImportProgressStatus,
+        message: impl Into<String>,
+        chunk_count: Option<usize>,
+        embedding_count: Option<usize>,
+    ) -> KnowledgeBaseImportProgress {
+        KnowledgeBaseImportProgress {
+            request_id: self.request_id.clone(),
+            operation: self.operation,
+            stage,
+            status,
+            current: stage.current(),
+            total: 4,
+            knowledge_base_id: self.knowledge_base_id.clone(),
+            document_id: self.document_id.clone(),
+            file_name: self.file_name.clone(),
+            source_path: self.source_path.clone(),
+            chunk_count,
+            embedding_count,
+            message: message.into(),
+        }
+    }
+}
+
 pub struct KnowledgeBaseImportOrchestrator {
     db: Arc<Database>,
+    ocr_engine: Arc<dyn OcrEngine>,
 }
 
 impl KnowledgeBaseImportOrchestrator {
     pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+        Self::with_ocr_engine(db, create_default_ocr_engine())
+    }
+
+    pub fn with_ocr_engine(db: Arc<Database>, ocr_engine: Arc<dyn OcrEngine>) -> Self {
+        Self { db, ocr_engine }
     }
 
     pub async fn import_document_with_embeddings(
@@ -176,15 +302,130 @@ impl KnowledgeBaseImportOrchestrator {
         request: &KnowledgeBaseImportRequest,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Result<CompletedKnowledgeBaseImport, String> {
-        let prepared = self.prepare_import(request)?;
-        let prepared_embeddings = self
-            .embed_prepared_document_or_mark_failed(&prepared, embedder)
+        self.import_document_with_embeddings_and_progress(request, embedder, None)
+            .await
+    }
+
+    pub async fn import_document_with_embeddings_and_progress(
+        &self,
+        request: &KnowledgeBaseImportRequest,
+        embedder: Arc<dyn EmbeddingProvider>,
+        progress_callback: Option<KnowledgeBaseImportProgressCallback>,
+    ) -> Result<CompletedKnowledgeBaseImport, String> {
+        let prepared = self
+            .prepare_import_with_progress(request, progress_callback.as_ref())
             .await?;
-        let persisted_embeddings = self.persist_prepared_embeddings_or_mark_failed(
-            &prepared.document.id,
-            &prepared_embeddings,
-        )?;
-        let document = self.load_document(&prepared.document.id)?;
+        let progress_context = KnowledgeBaseImportProgressContext::new(
+            request.progress_event_id.clone(),
+            KnowledgeBaseImportOperation::Import,
+            prepared.document.knowledge_base_id.clone(),
+            Some(prepared.document.id.clone()),
+            Some(prepared.document.file_name.clone()),
+            Some(prepared.document.source_path.clone()),
+        );
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Embed,
+                KnowledgeBaseImportProgressStatus::Running,
+                format!("正在生成 {} 个分块的 embedding", prepared.chunks.len()),
+                Some(prepared.chunks.len()),
+                None,
+            ),
+        );
+
+        let prepared_embeddings = match self
+            .embed_prepared_document_or_mark_failed(&prepared, embedder)
+            .await
+        {
+            Ok(embeddings) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Embed,
+                        KnowledgeBaseImportProgressStatus::Completed,
+                        format!("embedding 生成完成，共 {} 条向量", embeddings.len()),
+                        Some(prepared.chunks.len()),
+                        Some(embeddings.len()),
+                    ),
+                );
+                embeddings
+            }
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Embed,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("embedding 生成失败: {error}"),
+                        Some(prepared.chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Finalize,
+                KnowledgeBaseImportProgressStatus::Running,
+                "正在写入向量并完成索引".to_string(),
+                Some(prepared.persisted_chunks.len()),
+                Some(prepared_embeddings.len()),
+            ),
+        );
+
+        let persisted_embeddings = match self
+            .persist_prepared_embeddings_or_mark_failed(&prepared.document.id, &prepared_embeddings)
+        {
+            Ok(embeddings) => embeddings,
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Finalize,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("索引收尾失败: {error}"),
+                        Some(prepared.persisted_chunks.len()),
+                        Some(prepared_embeddings.len()),
+                    ),
+                );
+                return Err(error);
+            }
+        };
+        let document = match self.load_document(&prepared.document.id) {
+            Ok(document) => document,
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Finalize,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("读取最终文档状态失败: {error}"),
+                        Some(prepared.persisted_chunks.len()),
+                        Some(prepared_embeddings.len()),
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Finalize,
+                KnowledgeBaseImportProgressStatus::Completed,
+                format!(
+                    "知识库文档索引完成，共 {} 个分块、{} 条向量",
+                    document.chunk_count, document.embedding_count
+                ),
+                Some(document.chunk_count),
+                Some(document.embedding_count),
+            ),
+        );
 
         Ok(CompletedKnowledgeBaseImport {
             document,
@@ -200,15 +441,130 @@ impl KnowledgeBaseImportOrchestrator {
         request: &ReindexKnowledgeDocumentRequest,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Result<CompletedKnowledgeBaseImport, String> {
-        let prepared = self.prepare_reindex(request)?;
-        let prepared_embeddings = self
-            .embed_prepared_document_or_mark_failed(&prepared, embedder)
+        self.reindex_document_with_embeddings_and_progress(request, embedder, None)
+            .await
+    }
+
+    pub async fn reindex_document_with_embeddings_and_progress(
+        &self,
+        request: &ReindexKnowledgeDocumentRequest,
+        embedder: Arc<dyn EmbeddingProvider>,
+        progress_callback: Option<KnowledgeBaseImportProgressCallback>,
+    ) -> Result<CompletedKnowledgeBaseImport, String> {
+        let prepared = self
+            .prepare_reindex_with_progress(request, progress_callback.as_ref())
             .await?;
-        let persisted_embeddings = self.persist_prepared_embeddings_or_mark_failed(
-            &prepared.document.id,
-            &prepared_embeddings,
-        )?;
-        let document = self.load_document(&prepared.document.id)?;
+        let progress_context = KnowledgeBaseImportProgressContext::new(
+            request.progress_event_id.clone(),
+            KnowledgeBaseImportOperation::Reindex,
+            prepared.document.knowledge_base_id.clone(),
+            Some(prepared.document.id.clone()),
+            Some(prepared.document.file_name.clone()),
+            Some(prepared.document.source_path.clone()),
+        );
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Embed,
+                KnowledgeBaseImportProgressStatus::Running,
+                format!("正在生成 {} 个分块的 embedding", prepared.chunks.len()),
+                Some(prepared.chunks.len()),
+                None,
+            ),
+        );
+
+        let prepared_embeddings = match self
+            .embed_prepared_document_or_mark_failed(&prepared, embedder)
+            .await
+        {
+            Ok(embeddings) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Embed,
+                        KnowledgeBaseImportProgressStatus::Completed,
+                        format!("embedding 生成完成，共 {} 条向量", embeddings.len()),
+                        Some(prepared.chunks.len()),
+                        Some(embeddings.len()),
+                    ),
+                );
+                embeddings
+            }
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Embed,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("embedding 生成失败: {error}"),
+                        Some(prepared.chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Finalize,
+                KnowledgeBaseImportProgressStatus::Running,
+                "正在写入向量并完成索引".to_string(),
+                Some(prepared.persisted_chunks.len()),
+                Some(prepared_embeddings.len()),
+            ),
+        );
+
+        let persisted_embeddings = match self
+            .persist_prepared_embeddings_or_mark_failed(&prepared.document.id, &prepared_embeddings)
+        {
+            Ok(embeddings) => embeddings,
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Finalize,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("索引收尾失败: {error}"),
+                        Some(prepared.persisted_chunks.len()),
+                        Some(prepared_embeddings.len()),
+                    ),
+                );
+                return Err(error);
+            }
+        };
+        let document = match self.load_document(&prepared.document.id) {
+            Ok(document) => document,
+            Err(error) => {
+                self.report_progress(
+                    progress_callback.as_ref(),
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Finalize,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("读取最终文档状态失败: {error}"),
+                        Some(prepared.persisted_chunks.len()),
+                        Some(prepared_embeddings.len()),
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback.as_ref(),
+            progress_context.event(
+                KnowledgeBaseImportStage::Finalize,
+                KnowledgeBaseImportProgressStatus::Completed,
+                format!(
+                    "知识库文档索引完成，共 {} 个分块、{} 条向量",
+                    document.chunk_count, document.embedding_count
+                ),
+                Some(document.chunk_count),
+                Some(document.embedding_count),
+            ),
+        );
 
         Ok(CompletedKnowledgeBaseImport {
             document,
@@ -219,9 +575,17 @@ impl KnowledgeBaseImportOrchestrator {
         })
     }
 
-    pub fn prepare_import(
+    pub async fn prepare_import(
         &self,
         request: &KnowledgeBaseImportRequest,
+    ) -> Result<PreparedKnowledgeBaseImport, String> {
+        self.prepare_import_with_progress(request, None).await
+    }
+
+    async fn prepare_import_with_progress(
+        &self,
+        request: &KnowledgeBaseImportRequest,
+        progress_callback: Option<&KnowledgeBaseImportProgressCallback>,
     ) -> Result<PreparedKnowledgeBaseImport, String> {
         if request.knowledge_base_id.trim().is_empty() {
             return Err("knowledgeBaseId 不能为空".to_string());
@@ -235,81 +599,321 @@ impl KnowledgeBaseImportOrchestrator {
                 KnowledgeDocumentIndexState::Indexing,
             ),
         )?;
+        let progress_context = KnowledgeBaseImportProgressContext::new(
+            request.progress_event_id.clone(),
+            KnowledgeBaseImportOperation::Import,
+            request.knowledge_base_id.clone(),
+            Some(document.id.clone()),
+            Some(snapshot.file_name.clone()),
+            Some(snapshot.source_path.clone()),
+        );
 
-        let preparation: Result<PreparedKnowledgeBaseImport, String> =
-            (|| -> Result<PreparedKnowledgeBaseImport, String> {
-                let parsed_document =
-                    parse_document(&snapshot.source_path, request.parse_options.clone())?;
-                let chunk_config = request
-                    .chunk_config
-                    .clone()
-                    .unwrap_or_else(ChunkConfig::document_default);
-                let chunks = chunk_document(&parsed_document, &chunk_config);
-                let persisted_chunks = self.persist_chunks(&document.id, &chunks)?;
-                let document = self.load_document(&document.id)?;
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Parse,
+                KnowledgeBaseImportProgressStatus::Running,
+                format!("正在解析文档 {}", snapshot.file_name),
+                None,
+                None,
+            ),
+        );
 
-                Ok(PreparedKnowledgeBaseImport {
-                    document,
-                    parsed_document,
-                    chunks,
-                    persisted_chunks,
-                })
-            })();
-
-        match preparation {
-            Ok(prepared) => Ok(prepared),
+        let parsed_document = match parse_document_with_ocr(
+            &snapshot.source_path,
+            request.parse_options.clone(),
+            Some(self.ocr_engine.clone()),
+        )
+        .await
+        {
+            Ok(parsed_document) => {
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Parse,
+                        KnowledgeBaseImportProgressStatus::Completed,
+                        format!(
+                            "文档解析完成，共提取 {} 个结构化块",
+                            parsed_document.blocks.len()
+                        ),
+                        None,
+                        None,
+                    ),
+                );
+                parsed_document
+            }
             Err(error) => {
                 let _ = self.mark_document_failed(&document.id, &error);
-                Err(error)
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Parse,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("文档解析失败: {error}"),
+                        None,
+                        None,
+                    ),
+                );
+                return Err(error);
             }
-        }
+        };
+
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Chunk,
+                KnowledgeBaseImportProgressStatus::Running,
+                "正在生成并持久化文档分块".to_string(),
+                None,
+                None,
+            ),
+        );
+
+        let chunk_config = request
+            .chunk_config
+            .clone()
+            .unwrap_or_else(ChunkConfig::document_default);
+        let chunks = chunk_document(&parsed_document, &chunk_config);
+        let persisted_chunks = match self.persist_chunks(&document.id, &chunks) {
+            Ok(persisted_chunks) => persisted_chunks,
+            Err(error) => {
+                let _ = self.mark_document_failed(&document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Chunk,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("文档分块持久化失败: {error}"),
+                        Some(chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+        let document = match self.load_document(&document.id) {
+            Ok(document) => document,
+            Err(error) => {
+                let _ = self.mark_document_failed(&document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Chunk,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("读取分块后的文档状态失败: {error}"),
+                        Some(chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Chunk,
+                KnowledgeBaseImportProgressStatus::Completed,
+                format!("文档分块完成，共 {} 个分块", persisted_chunks.len()),
+                Some(persisted_chunks.len()),
+                None,
+            ),
+        );
+
+        Ok(PreparedKnowledgeBaseImport {
+            document,
+            parsed_document,
+            chunks,
+            persisted_chunks,
+        })
     }
 
-    pub fn prepare_reindex(
+    pub async fn prepare_reindex(
         &self,
         request: &ReindexKnowledgeDocumentRequest,
+    ) -> Result<PreparedKnowledgeBaseImport, String> {
+        self.prepare_reindex_with_progress(request, None).await
+    }
+
+    async fn prepare_reindex_with_progress(
+        &self,
+        request: &ReindexKnowledgeDocumentRequest,
+        progress_callback: Option<&KnowledgeBaseImportProgressCallback>,
     ) -> Result<PreparedKnowledgeBaseImport, String> {
         if request.document_id.trim().is_empty() {
             return Err("documentId 不能为空".to_string());
         }
 
         let existing_document = self.load_document(&request.document_id)?;
-        let snapshot = SourceDocumentSnapshot::from_path(&existing_document.source_path)?;
-        let parsed_document = parse_document(&snapshot.source_path, request.parse_options.clone())?;
+        let progress_context = KnowledgeBaseImportProgressContext::new(
+            request.progress_event_id.clone(),
+            KnowledgeBaseImportOperation::Reindex,
+            existing_document.knowledge_base_id.clone(),
+            Some(existing_document.id.clone()),
+            Some(existing_document.file_name.clone()),
+            Some(existing_document.source_path.clone()),
+        );
+
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Parse,
+                KnowledgeBaseImportProgressStatus::Running,
+                format!("正在解析文档 {}", existing_document.file_name),
+                None,
+                None,
+            ),
+        );
+
+        let snapshot = match SourceDocumentSnapshot::from_path(&existing_document.source_path) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = self.mark_document_failed(&existing_document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Parse,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("文档解析失败: {error}"),
+                        None,
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        let parsed_document = match parse_document_with_ocr(
+            &snapshot.source_path,
+            request.parse_options.clone(),
+            Some(self.ocr_engine.clone()),
+        )
+        .await
+        {
+            Ok(parsed_document) => {
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Parse,
+                        KnowledgeBaseImportProgressStatus::Completed,
+                        format!(
+                            "文档解析完成，共提取 {} 个结构化块",
+                            parsed_document.blocks.len()
+                        ),
+                        None,
+                        None,
+                    ),
+                );
+                parsed_document
+            }
+            Err(error) => {
+                let _ = self.mark_document_failed(&existing_document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Parse,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("文档解析失败: {error}"),
+                        None,
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Chunk,
+                KnowledgeBaseImportProgressStatus::Running,
+                "正在重新生成并持久化文档分块".to_string(),
+                None,
+                None,
+            ),
+        );
+
         let chunk_config = request
             .chunk_config
             .clone()
             .unwrap_or_else(ChunkConfig::document_default);
         let chunks = chunk_document(&parsed_document, &chunk_config);
-        let document = reset_knowledge_document_for_reindex(
+        let document = match reset_knowledge_document_for_reindex(
             &self.db,
             &existing_document.id,
             snapshot.to_create_document_input(
                 &existing_document.knowledge_base_id,
                 KnowledgeDocumentIndexState::Indexing,
             ),
-        )?;
-
-        let preparation: Result<PreparedKnowledgeBaseImport, String> =
-            (|| -> Result<PreparedKnowledgeBaseImport, String> {
-                let persisted_chunks = self.persist_chunks(&document.id, &chunks)?;
-                let document = self.load_document(&document.id)?;
-
-                Ok(PreparedKnowledgeBaseImport {
-                    document,
-                    parsed_document,
-                    chunks,
-                    persisted_chunks,
-                })
-            })();
-
-        match preparation {
-            Ok(prepared) => Ok(prepared),
+        ) {
+            Ok(document) => document,
+            Err(error) => {
+                let _ = self.mark_document_failed(&existing_document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Chunk,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("重置文档索引状态失败: {error}"),
+                        Some(chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+        let persisted_chunks = match self.persist_chunks(&document.id, &chunks) {
+            Ok(persisted_chunks) => persisted_chunks,
             Err(error) => {
                 let _ = self.mark_document_failed(&document.id, &error);
-                Err(error)
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Chunk,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("文档分块持久化失败: {error}"),
+                        Some(chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
             }
-        }
+        };
+        let document = match self.load_document(&document.id) {
+            Ok(document) => document,
+            Err(error) => {
+                let _ = self.mark_document_failed(&document.id, &error);
+                self.report_progress(
+                    progress_callback,
+                    progress_context.event(
+                        KnowledgeBaseImportStage::Chunk,
+                        KnowledgeBaseImportProgressStatus::Failed,
+                        format!("读取分块后的文档状态失败: {error}"),
+                        Some(chunks.len()),
+                        None,
+                    ),
+                );
+                return Err(error);
+            }
+        };
+
+        self.report_progress(
+            progress_callback,
+            progress_context.event(
+                KnowledgeBaseImportStage::Chunk,
+                KnowledgeBaseImportProgressStatus::Completed,
+                format!("文档分块完成，共 {} 个分块", persisted_chunks.len()),
+                Some(persisted_chunks.len()),
+                None,
+            ),
+        );
+
+        Ok(PreparedKnowledgeBaseImport {
+            document,
+            parsed_document,
+            chunks,
+            persisted_chunks,
+        })
     }
 
     pub fn mark_document_failed(&self, document_id: &str, error: &str) -> Result<(), String> {
@@ -471,6 +1075,16 @@ impl KnowledgeBaseImportOrchestrator {
         get_knowledge_document(&self.db, document_id)?
             .ok_or_else(|| format!("知识库文档不存在: {document_id}"))
     }
+
+    fn report_progress(
+        &self,
+        progress_callback: Option<&KnowledgeBaseImportProgressCallback>,
+        progress: KnowledgeBaseImportProgress,
+    ) {
+        if let Some(callback) = progress_callback {
+            callback(progress);
+        }
+    }
 }
 
 fn document_chunk_to_create_input(chunk: &DocumentChunk) -> CreateKnowledgeChunkInput {
@@ -536,8 +1150,15 @@ mod tests {
     use crate::database::{
         create_knowledge_base, list_knowledge_documents, CreateKnowledgeBaseInput,
     };
-    use crate::rag::{DocumentType, EmbedError};
+    use crate::rag::{
+        DocumentType, EmbedError, OcrContentFormat, OcrError, OcrPageInput, OcrPageResult,
+        OcrTextLine,
+    };
     use async_trait::async_trait;
+    use lopdf::{
+        content::{Content, Operation},
+        dictionary, Object, Stream,
+    };
     use std::sync::Mutex;
 
     #[derive(Debug)]
@@ -638,6 +1259,40 @@ mod tests {
         }
     }
 
+    struct RecordingOcrEngine {
+        calls: Mutex<Vec<OcrPageInput>>,
+        response_text: String,
+    }
+
+    impl RecordingOcrEngine {
+        fn available(response_text: &str) -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                response_text: response_text.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl OcrEngine for RecordingOcrEngine {
+        async fn recognize_page(&self, input: OcrPageInput) -> Result<OcrPageResult, OcrError> {
+            self.calls.lock().unwrap().push(input.clone());
+            Ok(OcrPageResult::from_lines(
+                input.source_path,
+                input.page_number,
+                vec![OcrTextLine {
+                    text: self.response_text.clone(),
+                    confidence: Some(0.96),
+                }],
+                "recording-ocr",
+            ))
+        }
+
+        fn engine_id(&self) -> &str {
+            "recording-ocr"
+        }
+    }
+
     fn create_test_db() -> Arc<Database> {
         let temp_dir = std::env::temp_dir().join(format!(
             "knowledge_base_orchestrator_test_{}",
@@ -658,6 +1313,83 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
+    fn create_test_pdf(name: &str, pages: &[Option<&str>]) -> String {
+        let temp_dir =
+            std::env::temp_dir().join(format!("knowledge_base_pdf_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join(name);
+
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages_id = document.new_object_id();
+        let mut page_ids = Vec::new();
+
+        for page_text in pages {
+            let page_id = document.new_object_id();
+            let (content_id, resources_id) = if let Some(text) = page_text {
+                let font_id = document.add_object(dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                });
+                let resources_id = document.add_object(dictionary! {
+                    "Font" => dictionary! {
+                        "F1" => font_id,
+                    }
+                });
+                let content = Content {
+                    operations: vec![
+                        Operation::new("BT", vec![]),
+                        Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 12.into()]),
+                        Operation::new("Td", vec![50.into(), 750.into()]),
+                        Operation::new("Tj", vec![Object::string_literal(*text)]),
+                        Operation::new("ET", vec![]),
+                    ],
+                };
+                let content_stream = Stream::new(dictionary! {}, content.encode().unwrap());
+                let content_id = document.add_object(content_stream);
+                (content_id, resources_id)
+            } else {
+                let content_stream = Stream::new(dictionary! {}, Vec::new());
+                let content_id = document.add_object(content_stream);
+                let resources_id = document.add_object(dictionary! {});
+                (content_id, resources_id)
+            };
+
+            document.objects.insert(
+                page_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+                    "Contents" => content_id,
+                    "Resources" => resources_id,
+                }),
+            );
+            page_ids.push(page_id);
+        }
+
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids
+                    .iter()
+                    .copied()
+                    .map(Object::Reference)
+                    .collect::<Vec<_>>(),
+                "Count" => page_ids.len() as i64,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&path).unwrap();
+
+        path.to_string_lossy().into_owned()
+    }
+
     fn create_test_knowledge_base(db: &Arc<Database>) -> String {
         create_knowledge_base(
             db,
@@ -668,6 +1400,31 @@ mod tests {
         )
         .unwrap()
         .id
+    }
+
+    fn create_progress_recorder() -> (
+        Arc<Mutex<Vec<KnowledgeBaseImportProgress>>>,
+        KnowledgeBaseImportProgressCallback,
+    ) {
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let callback_events = Arc::clone(&recorded);
+        let callback: KnowledgeBaseImportProgressCallback =
+            Arc::new(move |progress: KnowledgeBaseImportProgress| {
+                callback_events.lock().unwrap().push(progress);
+            });
+
+        (recorded, callback)
+    }
+
+    fn assert_progress_stage_sequence(
+        events: &[KnowledgeBaseImportProgress],
+        expected: &[(KnowledgeBaseImportStage, KnowledgeBaseImportProgressStatus)],
+    ) {
+        let actual = events
+            .iter()
+            .map(|event| (event.stage, event.status))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 
     fn load_stored_chunks(db: &Arc<Database>, document_id: &str) -> Vec<StoredChunkRow> {
@@ -763,8 +1520,8 @@ mod tests {
         assert_eq!(input.block_count, 2);
     }
 
-    #[test]
-    fn prepare_import_creates_indexing_document_and_returns_chunks() {
+    #[tokio::test]
+    async fn prepare_import_creates_indexing_document_and_returns_chunks() {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
         let path = create_test_file(
@@ -779,7 +1536,9 @@ mod tests {
                 path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             })
+            .await
             .unwrap();
 
         assert_eq!(prepared.document.knowledge_base_id, knowledge_base_id);
@@ -799,8 +1558,8 @@ mod tests {
         assert_eq!(persisted.chunk_count, prepared.chunks.len());
     }
 
-    #[test]
-    fn prepare_import_persists_document_snapshot_metadata() {
+    #[tokio::test]
+    async fn prepare_import_persists_document_snapshot_metadata() {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
         let path = create_test_file(
@@ -821,7 +1580,9 @@ mod tests {
                 path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             })
+            .await
             .unwrap();
 
         let persisted = get_knowledge_document(&db, &prepared.document.id)
@@ -840,8 +1601,8 @@ mod tests {
         assert_eq!(persisted.index_state, KnowledgeDocumentIndexState::Indexing);
     }
 
-    #[test]
-    fn prepare_import_persists_chunks_with_stable_order_and_metadata() {
+    #[tokio::test]
+    async fn prepare_import_persists_chunks_with_stable_order_and_metadata() {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
         let path = create_test_file(
@@ -861,7 +1622,9 @@ mod tests {
                     min_chunk_size: 20,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             })
+            .await
             .unwrap();
 
         let stored_chunks = load_stored_chunks(&db, &prepared.document.id);
@@ -912,7 +1675,9 @@ mod tests {
                     min_chunk_size: 20,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             })
+            .await
             .unwrap();
         let provider = Arc::new(RecordingEmbeddingProvider::repeat(
             "kb-embed-model",
@@ -971,7 +1736,9 @@ mod tests {
                 path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             })
+            .await
             .unwrap();
         let provider = Arc::new(RecordingEmbeddingProvider::exact(
             "bad-model",
@@ -1028,7 +1795,9 @@ mod tests {
                     min_chunk_size: 18,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             })
+            .await
             .unwrap();
         let provider = Arc::new(RecordingEmbeddingProvider::repeat(
             "kb-ready-model",
@@ -1094,6 +1863,7 @@ mod tests {
                         min_chunk_size: 20,
                         prefer_structure_boundary: true,
                     }),
+                    progress_event_id: None,
                 },
                 provider,
             )
@@ -1123,6 +1893,368 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn import_document_with_embeddings_emits_stage_progress_events() {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_file(
+            "progress-import.md",
+            "# Rust\n\nOwnership and borrowing should emit stage progress events during import.\n",
+        );
+        let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+        let provider = Arc::new(RecordingEmbeddingProvider::repeat(
+            "progress-model",
+            vec![0.2, 0.4, 0.6],
+        ));
+        let progress_event_id = "progress-import-1".to_string();
+        let (recorded, callback) = create_progress_recorder();
+
+        let completed = orchestrator
+            .import_document_with_embeddings_and_progress(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id: knowledge_base_id.clone(),
+                    path,
+                    parse_options: None,
+                    chunk_config: Some(ChunkConfig {
+                        max_chunk_size: 80,
+                        overlap_size: 0,
+                        min_chunk_size: 20,
+                        prefer_structure_boundary: true,
+                    }),
+                    progress_event_id: Some(progress_event_id.clone()),
+                },
+                provider,
+                Some(callback),
+            )
+            .await
+            .unwrap();
+
+        let events = recorded.lock().unwrap().clone();
+        assert_progress_stage_sequence(
+            &events,
+            &[
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Chunk,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Chunk,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Embed,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Embed,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Finalize,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Finalize,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+            ],
+        );
+        assert!(events
+            .iter()
+            .all(|event| event.request_id.as_deref() == Some(progress_event_id.as_str())));
+        assert!(events
+            .iter()
+            .all(|event| event.knowledge_base_id == knowledge_base_id));
+        assert!(events
+            .iter()
+            .all(|event| event.document_id.as_deref() == Some(completed.document.id.as_str())));
+        assert_eq!(
+            events[3].chunk_count,
+            Some(completed.persisted_chunks.len())
+        );
+        assert_eq!(
+            events.last().and_then(|event| event.embedding_count),
+            Some(completed.persisted_embeddings.len())
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_document_with_embeddings_emits_stage_progress_events() {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_file("progress-reindex.md", "# Rust\n\nFirst import content.\n");
+        let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+
+        let first_import = orchestrator
+            .import_document_with_embeddings(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id: knowledge_base_id.clone(),
+                    path: path.clone(),
+                    parse_options: None,
+                    chunk_config: None,
+                    progress_event_id: None,
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "progress-reindex-v1",
+                    vec![0.1, 0.2, 0.3],
+                )),
+            )
+            .await
+            .unwrap();
+
+        std::fs::write(
+            &path,
+            "# Rust\n\nFirst import content.\n\n## Reindexed\n\nUpdated content should still emit progress events.\n",
+        )
+        .unwrap();
+
+        let progress_event_id = "progress-reindex-1".to_string();
+        let (recorded, callback) = create_progress_recorder();
+
+        let completed = orchestrator
+            .reindex_document_with_embeddings_and_progress(
+                &ReindexKnowledgeDocumentRequest {
+                    document_id: first_import.document.id.clone(),
+                    parse_options: None,
+                    chunk_config: Some(ChunkConfig {
+                        max_chunk_size: 70,
+                        overlap_size: 0,
+                        min_chunk_size: 18,
+                        prefer_structure_boundary: true,
+                    }),
+                    progress_event_id: Some(progress_event_id.clone()),
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "progress-reindex-v2",
+                    vec![0.9, 0.1, 0.2, 0.3],
+                )),
+                Some(callback),
+            )
+            .await
+            .unwrap();
+
+        let events = recorded.lock().unwrap().clone();
+        assert_progress_stage_sequence(
+            &events,
+            &[
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Chunk,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Chunk,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Embed,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Embed,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+                (
+                    KnowledgeBaseImportStage::Finalize,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Finalize,
+                    KnowledgeBaseImportProgressStatus::Completed,
+                ),
+            ],
+        );
+        assert!(events
+            .iter()
+            .all(|event| event.request_id.as_deref() == Some(progress_event_id.as_str())));
+        assert!(events
+            .iter()
+            .all(|event| event.document_id.as_deref() == Some(completed.document.id.as_str())));
+        assert_eq!(completed.document.id, first_import.document.id);
+    }
+
+    #[tokio::test]
+    async fn import_document_with_embeddings_emits_failed_parse_progress_event() {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_file(
+            "progress-parse-failure.txt",
+            "This file is intentionally larger than the configured parser limit.",
+        );
+        let orchestrator = KnowledgeBaseImportOrchestrator::new(db);
+        let (recorded, callback) = create_progress_recorder();
+
+        let error = orchestrator
+            .import_document_with_embeddings_and_progress(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id,
+                    path,
+                    parse_options: Some(ParseOptions {
+                        max_file_size_bytes: 8,
+                        enable_ocr: false,
+                    }),
+                    chunk_config: None,
+                    progress_event_id: Some("progress-parse-failure".to_string()),
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "unused-progress-model",
+                    vec![0.1, 0.2, 0.3],
+                )),
+                Some(callback),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("文件过大"));
+
+        let events = recorded.lock().unwrap().clone();
+        assert_progress_stage_sequence(
+            &events,
+            &[
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Running,
+                ),
+                (
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Failed,
+                ),
+            ],
+        );
+        assert!(events[1].message.contains("文件过大"));
+    }
+
+    #[tokio::test]
+    async fn import_document_with_embeddings_uses_ocr_fallback_when_enabled() {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_pdf("scanned-import.pdf", &[None]);
+        let ocr_engine = Arc::new(RecordingOcrEngine::available("Recovered from OCR"));
+        let orchestrator =
+            KnowledgeBaseImportOrchestrator::with_ocr_engine(db.clone(), ocr_engine.clone());
+
+        let completed = orchestrator
+            .import_document_with_embeddings(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id: knowledge_base_id.clone(),
+                    path,
+                    parse_options: Some(ParseOptions {
+                        max_file_size_bytes: 10 * 1024 * 1024,
+                        enable_ocr: true,
+                    }),
+                    chunk_config: Some(ChunkConfig {
+                        max_chunk_size: 80,
+                        overlap_size: 0,
+                        min_chunk_size: 1,
+                        prefer_structure_boundary: true,
+                    }),
+                    progress_event_id: None,
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "ocr-import-model",
+                    vec![0.4, 0.5, 0.6],
+                )),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(completed.document.knowledge_base_id, knowledge_base_id);
+        assert_eq!(completed.parsed_document.total_pages, Some(1));
+        assert!(completed
+            .parsed_document
+            .blocks
+            .iter()
+            .any(|block| block.page_number == Some(1) && block.text == "Recovered from OCR"));
+        assert!(!completed.persisted_chunks.is_empty());
+        assert!(completed
+            .persisted_chunks
+            .iter()
+            .all(|chunk| chunk.page_number == Some(1)));
+        assert!(completed
+            .persisted_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "ocr-import-model"));
+
+        let calls = ocr_engine.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].page_number, 1);
+        assert_eq!(calls[0].content_format, Some(OcrContentFormat::Pdf));
+    }
+
+    #[tokio::test]
+    async fn reindex_document_with_embeddings_marks_document_failed_when_parse_stage_errors() {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_file(
+            "reindex-parse-failure.md",
+            "# Rust\n\nThis content will fail reindex parsing when the size limit is too small.\n",
+        );
+        let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+
+        let imported = orchestrator
+            .import_document_with_embeddings(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id,
+                    path,
+                    parse_options: None,
+                    chunk_config: None,
+                    progress_event_id: None,
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "reindex-parse-v1",
+                    vec![0.1, 0.2, 0.3],
+                )),
+            )
+            .await
+            .unwrap();
+
+        let error = orchestrator
+            .reindex_document_with_embeddings(
+                &ReindexKnowledgeDocumentRequest {
+                    document_id: imported.document.id.clone(),
+                    parse_options: Some(ParseOptions {
+                        max_file_size_bytes: 8,
+                        enable_ocr: false,
+                    }),
+                    chunk_config: None,
+                    progress_event_id: None,
+                },
+                Arc::new(RecordingEmbeddingProvider::repeat(
+                    "reindex-parse-v2",
+                    vec![0.2, 0.3, 0.4],
+                )),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("文件过大"));
+
+        let document = get_knowledge_document(&db, &imported.document.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(document.index_state, KnowledgeDocumentIndexState::Failed);
+        assert!(document
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("文件过大"));
+    }
+
+    #[tokio::test]
     async fn persist_prepared_embeddings_or_mark_failed_marks_document_failed_when_insert_fails() {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
@@ -1142,7 +2274,9 @@ mod tests {
                     min_chunk_size: 20,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             })
+            .await
             .unwrap();
         let provider = Arc::new(RecordingEmbeddingProvider::repeat(
             "persist-failure-model",
@@ -1155,10 +2289,7 @@ mod tests {
         prepared_embeddings[0].chunk_id = "missing-chunk-id".to_string();
 
         let error = orchestrator
-            .persist_prepared_embeddings_or_mark_failed(
-                &prepared.document.id,
-                &prepared_embeddings,
-            )
+            .persist_prepared_embeddings_or_mark_failed(&prepared.document.id, &prepared_embeddings)
             .unwrap_err();
 
         assert!(error.contains("FOREIGN KEY"));
@@ -1177,8 +2308,8 @@ mod tests {
         assert!(load_stored_embeddings(&db, &prepared.document.id).is_empty());
     }
 
-    #[test]
-    fn prepare_import_marks_document_failed_when_parse_stage_errors() {
+    #[tokio::test]
+    async fn prepare_import_marks_document_failed_when_parse_stage_errors() {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
         let path = create_test_file(
@@ -1196,7 +2327,9 @@ mod tests {
                     enable_ocr: false,
                 }),
                 chunk_config: None,
+                progress_event_id: None,
             })
+            .await
             .unwrap_err();
 
         assert!(error.contains("文件过大"));

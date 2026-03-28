@@ -2101,8 +2101,7 @@ mod tests {
                 source_byte_size: 2048,
                 source_modified_at: 1720000000000,
                 content_hash: "sha1:new-hash".to_string(),
-                fingerprint: "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash"
-                    .to_string(),
+                fingerprint: "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash".to_string(),
                 index_state: Some(KnowledgeDocumentIndexState::Indexing),
                 last_error: None,
             },
@@ -2116,7 +2115,10 @@ mod tests {
         assert_eq!(reindexed.source_path, "C:\\docs\\rust-updated.md");
         assert_eq!(reindexed.source_byte_size, 2048);
         assert_eq!(reindexed.content_hash, "sha1:new-hash");
-        assert_eq!(reindexed.fingerprint, "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash");
+        assert_eq!(
+            reindexed.fingerprint,
+            "fp:C:\\docs\\rust-updated.md:2048:1720000000000:new-hash"
+        );
         assert_eq!(reindexed.index_state, KnowledgeDocumentIndexState::Indexing);
         assert_eq!(reindexed.chunk_count, 0);
         assert_eq!(reindexed.embedding_count, 0);

@@ -713,10 +713,7 @@ fn detect_pdf_page_text_source(extracted_text: &str) -> PdfPageTextSource {
         return PdfPageTextSource::OcrFallback;
     }
 
-    let meaningful_chars = trimmed
-        .chars()
-        .filter(|ch| ch.is_alphanumeric())
-        .count();
+    let meaningful_chars = trimmed.chars().filter(|ch| ch.is_alphanumeric()).count();
     let non_whitespace_chars = trimmed.chars().filter(|ch| !ch.is_whitespace()).count();
 
     if meaningful_chars < 20 {
@@ -1230,10 +1227,8 @@ mod tests {
         });
         document.trailer.set("Root", catalog_id);
 
-        let path = std::env::temp_dir().join(format!(
-            "rag_parser_test_{}.pdf",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("rag_parser_test_{}.pdf", uuid::Uuid::new_v4()));
         document.save(&path).unwrap();
         path
     }
@@ -1508,18 +1503,14 @@ mod tests {
 
         let resolved_page = ocr_page_result_to_page_content(&page_result);
         assert_eq!(resolved_page.text_source, PdfPageTextSource::OcrFallback);
-        assert!(
-            resolved_page
-                .blocks
-                .iter()
-                .all(|block| block.page_number == Some(7))
-        );
-        assert!(
-            resolved_page
-                .blocks
-                .iter()
-                .all(|block| block.heading_path.is_empty())
-        );
+        assert!(resolved_page
+            .blocks
+            .iter()
+            .all(|block| block.page_number == Some(7)));
+        assert!(resolved_page
+            .blocks
+            .iter()
+            .all(|block| block.heading_path.is_empty()));
 
         let document = ParsedDocument {
             metadata: ParsedDocumentMetadata {

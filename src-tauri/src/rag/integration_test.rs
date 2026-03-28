@@ -119,6 +119,7 @@ async fn import_document_with_embeddings_indexes_document_on_first_import() {
                     min_chunk_size: 18,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             },
             provider,
         )
@@ -126,7 +127,10 @@ async fn import_document_with_embeddings_indexes_document_on_first_import() {
         .unwrap();
 
     assert_eq!(completed.document.knowledge_base_id, knowledge_base_id);
-    assert_eq!(completed.document.index_state, KnowledgeDocumentIndexState::Ready);
+    assert_eq!(
+        completed.document.index_state,
+        KnowledgeDocumentIndexState::Ready
+    );
     assert_eq!(completed.document.last_error, None);
     assert!(completed.document.indexed_at.is_some());
     assert!(!completed.chunks.is_empty());
@@ -135,7 +139,10 @@ async fn import_document_with_embeddings_indexes_document_on_first_import() {
         completed.persisted_embeddings.len(),
         completed.persisted_chunks.len()
     );
-    assert_eq!(completed.document.chunk_count, completed.persisted_chunks.len());
+    assert_eq!(
+        completed.document.chunk_count,
+        completed.persisted_chunks.len()
+    );
     assert_eq!(
         completed.document.embedding_count,
         completed.persisted_embeddings.len()
@@ -147,7 +154,10 @@ async fn import_document_with_embeddings_indexes_document_on_first_import() {
     assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
 
     assert_eq!(count_rows(&db, "kb_documents"), 1);
-    assert_eq!(count_rows(&db, "kb_chunks"), completed.persisted_chunks.len());
+    assert_eq!(
+        count_rows(&db, "kb_chunks"),
+        completed.persisted_chunks.len()
+    );
     assert_eq!(
         count_rows(&db, "kb_embeddings"),
         completed.persisted_embeddings.len()
@@ -175,6 +185,7 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
                 path: path.clone(),
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             },
             provider.clone(),
         )
@@ -188,6 +199,7 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
                 path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             },
             provider,
         )
@@ -201,10 +213,16 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, first.document.id);
     assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
-    assert_eq!(documents[0].embedding_count, first.persisted_embeddings.len());
+    assert_eq!(
+        documents[0].embedding_count,
+        first.persisted_embeddings.len()
+    );
     assert_eq!(count_rows(&db, "kb_documents"), 1);
     assert_eq!(count_rows(&db, "kb_chunks"), first.persisted_chunks.len());
-    assert_eq!(count_rows(&db, "kb_embeddings"), first.persisted_embeddings.len());
+    assert_eq!(
+        count_rows(&db, "kb_embeddings"),
+        first.persisted_embeddings.len()
+    );
 }
 
 #[tokio::test]
@@ -228,6 +246,7 @@ async fn delete_knowledge_document_cascades_chunks_and_embeddings_after_import()
                 path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             },
             provider,
         )
@@ -239,7 +258,9 @@ async fn delete_knowledge_document_cascades_chunks_and_embeddings_after_import()
 
     delete_knowledge_document(&db, &completed.document.id).unwrap();
 
-    assert!(get_knowledge_document(&db, &completed.document.id).unwrap().is_none());
+    assert!(get_knowledge_document(&db, &completed.document.id)
+        .unwrap()
+        .is_none());
     assert_eq!(count_rows(&db, "kb_documents"), 0);
     assert_eq!(count_rows(&db, "kb_chunks"), 0);
     assert_eq!(count_rows(&db, "kb_embeddings"), 0);
@@ -252,10 +273,7 @@ async fn delete_knowledge_document_cascades_chunks_and_embeddings_after_import()
 async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow() {
     let db = create_test_db();
     let knowledge_base_id = create_test_knowledge_base(&db);
-    let path = create_test_file(
-        "reindex-flow.md",
-        "# Original\n\nFirst import content.\n",
-    );
+    let path = create_test_file("reindex-flow.md", "# Original\n\nFirst import content.\n");
     let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
 
     let first_import = orchestrator
@@ -265,6 +283,7 @@ async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow(
                 path: path.clone(),
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             },
             Arc::new(StaticEmbeddingProvider::new(
                 "reindex-model-v1",
@@ -297,6 +316,7 @@ async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow(
                     min_chunk_size: 18,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             },
             Arc::new(StaticEmbeddingProvider::new(
                 "reindex-model-v2",
@@ -309,7 +329,10 @@ async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow(
     assert_ne!(second_import.document.id, first_document_id);
     assert_eq!(second_import.document.source_path, first_source_path);
     assert_ne!(second_import.document.content_hash, first_content_hash);
-    assert_eq!(second_import.document.index_state, KnowledgeDocumentIndexState::Ready);
+    assert_eq!(
+        second_import.document.index_state,
+        KnowledgeDocumentIndexState::Ready
+    );
     assert_eq!(
         second_import.document.embedding_count,
         second_import.persisted_embeddings.len()
@@ -323,7 +346,10 @@ async fn delete_then_reimport_same_source_path_succeeds_as_current_reindex_flow(
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, second_import.document.id);
     assert_eq!(count_rows(&db, "kb_documents"), 1);
-    assert_eq!(count_rows(&db, "kb_chunks"), second_import.persisted_chunks.len());
+    assert_eq!(
+        count_rows(&db, "kb_chunks"),
+        second_import.persisted_chunks.len()
+    );
     assert_eq!(
         count_rows(&db, "kb_embeddings"),
         second_import.persisted_embeddings.len()
@@ -347,6 +373,7 @@ async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows()
                 path: path.clone(),
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             },
             Arc::new(StaticEmbeddingProvider::new(
                 "reindex-model-v1",
@@ -377,6 +404,7 @@ async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows()
                     min_chunk_size: 18,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             },
             Arc::new(StaticEmbeddingProvider::new(
                 "reindex-model-v2",
@@ -390,7 +418,10 @@ async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows()
     assert_eq!(second_import.document.knowledge_base_id, knowledge_base_id);
     assert_eq!(second_import.document.source_path, first_source_path);
     assert_ne!(second_import.document.content_hash, first_content_hash);
-    assert_eq!(second_import.document.index_state, KnowledgeDocumentIndexState::Ready);
+    assert_eq!(
+        second_import.document.index_state,
+        KnowledgeDocumentIndexState::Ready
+    );
     assert_eq!(
         second_import.document.embedding_count,
         second_import.persisted_embeddings.len()
@@ -401,7 +432,9 @@ async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows()
         .iter()
         .all(|embedding| embedding.model_id == "reindex-model-v2"));
 
-    let stored = get_knowledge_document(&db, &first_document_id).unwrap().unwrap();
+    let stored = get_knowledge_document(&db, &first_document_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.id, first_document_id);
     assert_eq!(
         count_rows_for_document(&db, "kb_chunks", &first_document_id),
@@ -416,7 +449,10 @@ async fn reindex_document_with_embeddings_reuses_document_id_and_replaces_rows()
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, stored.id);
     assert_eq!(count_rows(&db, "kb_documents"), 1);
-    assert_eq!(count_rows(&db, "kb_chunks"), second_import.persisted_chunks.len());
+    assert_eq!(
+        count_rows(&db, "kb_chunks"),
+        second_import.persisted_chunks.len()
+    );
     assert_eq!(
         count_rows(&db, "kb_embeddings"),
         second_import.persisted_embeddings.len()

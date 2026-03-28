@@ -3,13 +3,13 @@
 mod chunker;
 mod context_builder;
 mod embedder;
+#[cfg(test)]
+mod integration_test;
 mod knowledge_base;
 mod ocr;
 mod parser;
 mod retriever;
 mod vector_store;
-#[cfg(test)]
-mod integration_test;
 
 pub use self::chunker::{
     chunk_document, chunk_message, merge_qa_pairs, Chunk, ChunkConfig, ChunkType, DocumentChunk,
@@ -23,13 +23,15 @@ pub use self::embedder::{
     EmbeddingProviderKind, OpenAiEmbedding, QwenEmbedding,
 };
 pub use self::knowledge_base::{
-    CompletedKnowledgeBaseImport, KnowledgeBaseImportOrchestrator, KnowledgeBaseImportRequest,
-    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding,
-    ReindexKnowledgeDocumentRequest, SourceDocumentSnapshot,
+    CompletedKnowledgeBaseImport, KnowledgeBaseImportOperation, KnowledgeBaseImportOrchestrator,
+    KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback,
+    KnowledgeBaseImportProgressStatus, KnowledgeBaseImportRequest, KnowledgeBaseImportStage,
+    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, ReindexKnowledgeDocumentRequest,
+    SourceDocumentSnapshot,
 };
 pub use self::ocr::{
-    OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult, OcrTextLine,
-    UnavailableOcrEngine,
+    create_default_ocr_engine, OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult,
+    OcrTextLine, UnavailableOcrEngine,
 };
 pub use self::parser::{
     parse_document, parse_document_with_ocr, BlockKind, DocumentType, ParseOptions, ParsedBlock,
@@ -151,10 +153,19 @@ impl RagEngine {
         &self,
         request: &knowledge_base::KnowledgeBaseImportRequest,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
+        self.import_knowledge_document_with_progress(request, None)
+            .await
+    }
+
+    pub async fn import_knowledge_document_with_progress(
+        &self,
+        request: &knowledge_base::KnowledgeBaseImportRequest,
+        progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
         let embedder = self.configured_embedder()?;
         let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
         orchestrator
-            .import_document_with_embeddings(request, embedder)
+            .import_document_with_embeddings_and_progress(request, embedder, progress_callback)
             .await
     }
 
@@ -162,10 +173,19 @@ impl RagEngine {
         &self,
         request: &knowledge_base::ReindexKnowledgeDocumentRequest,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
+        self.reindex_knowledge_document_with_progress(request, None)
+            .await
+    }
+
+    pub async fn reindex_knowledge_document_with_progress(
+        &self,
+        request: &knowledge_base::ReindexKnowledgeDocumentRequest,
+        progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseImport, String> {
         let embedder = self.configured_embedder()?;
         let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
         orchestrator
-            .reindex_document_with_embeddings(request, embedder)
+            .reindex_document_with_embeddings_and_progress(request, embedder, progress_callback)
             .await
     }
 
@@ -216,7 +236,9 @@ impl RagEngine {
         config: &context_builder::ContextConfig,
         session_filter: Option<&str>,
     ) -> Result<context_builder::RagContextBundle, String> {
-        let results = self.search(query, config.max_results, session_filter).await?;
+        let results = self
+            .search(query, config.max_results, session_filter)
+            .await?;
         Ok(context_builder::build_rag_context_bundle(&results, config))
     }
 
@@ -497,6 +519,7 @@ mod tests {
                 path: document_path,
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             })
             .await
             .unwrap();
@@ -522,10 +545,8 @@ mod tests {
         let db = create_test_db();
         let engine = RagEngine::new(db.clone());
         let knowledge_base_id = create_test_knowledge_base(&db, "Engine Reindex");
-        let document_path = create_temp_document(
-            "engine-reindex.md",
-            "# Rust\n\nInitial index content.\n",
-        );
+        let document_path =
+            create_temp_document("engine-reindex.md", "# Rust\n\nInitial index content.\n");
 
         engine
             .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
@@ -540,6 +561,7 @@ mod tests {
                 path: document_path.clone(),
                 parse_options: None,
                 chunk_config: None,
+                progress_event_id: None,
             })
             .await
             .unwrap();
@@ -567,6 +589,7 @@ mod tests {
                     min_chunk_size: 18,
                     prefer_structure_boundary: true,
                 }),
+                progress_event_id: None,
             })
             .await
             .unwrap();
@@ -587,8 +610,8 @@ mod tests {
             .iter()
             .all(|embedding| embedding.model_id == "mock-kb-model-v2"));
 
-        let stored_documents = crate::database::list_knowledge_documents(&db, &knowledge_base_id)
-            .unwrap();
+        let stored_documents =
+            crate::database::list_knowledge_documents(&db, &knowledge_base_id).unwrap();
         assert_eq!(stored_documents.len(), 1);
         assert_eq!(stored_documents[0].id, imported.document.id);
     }

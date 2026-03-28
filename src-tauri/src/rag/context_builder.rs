@@ -56,7 +56,10 @@ pub fn build_rag_context(results: &[SearchResult], config: &ContextConfig) -> St
     build_rag_context_bundle(results, config).prompt_context
 }
 
-pub fn build_rag_context_bundle(results: &[SearchResult], config: &ContextConfig) -> RagContextBundle {
+pub fn build_rag_context_bundle(
+    results: &[SearchResult],
+    config: &ContextConfig,
+) -> RagContextBundle {
     let header = "【检索上下文】\n\n";
     let footer = "\n请优先使用最相关的上下文回答；如果上下文不足以支撑结论，请明确说明。\n";
     let reserved_tokens = estimate_tokens(header) + estimate_tokens(footer);
@@ -107,9 +110,17 @@ fn build_context_entries(
         .take(config.max_results)
         .enumerate()
     {
-        let prefix =
-            render_context_prefix(index + 1, result, config.include_source, include_content_label);
-        let separator = if include_content_label { "\n---\n\n" } else { "\n\n" };
+        let prefix = render_context_prefix(
+            index + 1,
+            result,
+            config.include_source,
+            include_content_label,
+        );
+        let separator = if include_content_label {
+            "\n---\n\n"
+        } else {
+            "\n\n"
+        };
         let prefix_tokens = estimate_tokens(&prefix) + estimate_tokens(separator);
         if used_tokens + prefix_tokens >= max_tokens {
             break;
@@ -139,7 +150,9 @@ fn sort_results_for_context(results: &[SearchResult]) -> Vec<&SearchResult> {
             .score
             .partial_cmp(&left.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| context_source_rank(&left.source_kind).cmp(&context_source_rank(&right.source_kind)))
+            .then_with(|| {
+                context_source_rank(&left.source_kind).cmp(&context_source_rank(&right.source_kind))
+            })
             .then_with(|| left.title.cmp(&right.title))
             .then_with(|| left.chunk_id.cmp(&right.chunk_id))
     });
@@ -172,7 +185,10 @@ fn render_context_prefix(
         if !result.heading_path.is_empty() {
             lines.push(format!("标题路径: {}", result.heading_path.join(" > ")));
         }
-        lines.push(format!("来源类型: {}", render_source_kind(&result.source_kind)));
+        lines.push(format!(
+            "来源类型: {}",
+            render_source_kind(&result.source_kind)
+        ));
     }
 
     if include_content_label {
@@ -391,7 +407,10 @@ mod tests {
 
         assert_eq!(bundle.citations.len(), 1);
         assert_eq!(bundle.citations[0].index, 1);
-        assert_eq!(bundle.citations[0].knowledge_base_id.as_deref(), Some("kb-1"));
+        assert_eq!(
+            bundle.citations[0].knowledge_base_id.as_deref(),
+            Some("kb-1")
+        );
         assert_eq!(bundle.citations[0].document_id.as_deref(), Some("doc-1"));
         assert_eq!(bundle.citations[0].chunk_id, "chunk-1");
         assert_eq!(bundle.citations[0].title, "Rust 手册");
@@ -416,7 +435,9 @@ mod tests {
         );
 
         assert!(bundle.prompt_context.contains("【检索上下文】"));
-        assert!(bundle.prompt_context.contains("请优先使用最相关的上下文回答"));
+        assert!(bundle
+            .prompt_context
+            .contains("请优先使用最相关的上下文回答"));
         assert!(bundle.citations.is_empty());
         assert!(!bundle.prompt_context.contains("[1]"));
     }
@@ -528,7 +549,10 @@ mod tests {
 
         let knowledge_citation = &bundle.citations[0];
         assert_eq!(knowledge_citation.index, 1);
-        assert_eq!(knowledge_citation.knowledge_base_id.as_deref(), Some("kb-1"));
+        assert_eq!(
+            knowledge_citation.knowledge_base_id.as_deref(),
+            Some("kb-1")
+        );
         assert_eq!(knowledge_citation.document_id.as_deref(), Some("doc-1"));
         assert_eq!(knowledge_citation.chunk_id, "chunk-1");
         assert_eq!(knowledge_citation.page_number, Some(8));

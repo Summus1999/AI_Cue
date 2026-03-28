@@ -611,14 +611,8 @@ mod tests {
             create_test_knowledge_embedding(&db, "Rust KB", "kb-model-a", embedding.clone());
         let _ = create_test_knowledge_embedding(&db, "Other KB", "kb-model-b", vec![0.0, 1.0, 0.0]);
 
-        let results = knowledge_vector_search_with_db(
-            &db,
-            &embedding,
-            5,
-            0.5,
-            Some("kb-model-a"),
-        )
-        .unwrap();
+        let results =
+            knowledge_vector_search_with_db(&db, &embedding, 5, 0.5, Some("kb-model-a")).unwrap();
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -689,14 +683,8 @@ mod tests {
         let query_embedding = vec![0.0f32, 1.0, 0.0];
         let session = database::create_session(&db, None).unwrap();
         let session_id = session.get("id").and_then(|value| value.as_str()).unwrap();
-        let message = database::save_message(
-            &db,
-            session_id,
-            "user",
-            "Rust ownership 规则",
-            None,
-        )
-        .unwrap();
+        let message =
+            database::save_message(&db, session_id, "user", "Rust ownership 规则", None).unwrap();
         let message_id = message.get("id").and_then(|value| value.as_str()).unwrap();
 
         store

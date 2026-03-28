@@ -10,8 +10,9 @@ use crate::export::{
 use crate::logging::sanitize_log_value;
 use crate::qwen::ChatMessage;
 use chrono::Utc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::timeout;
 
 // ==================== 音频命令 ====================
@@ -1087,11 +1088,20 @@ pub fn log_from_frontend(level: String, module: String, message: String, data: O
 // ==================== RAG 命令 ====================
 
 use crate::rag::{
-    chunk_document, parse_document_with_ocr, ChunkConfig, CompletedKnowledgeBaseImport,
-    ContextConfig, DocumentChunk, EmbeddingProviderConfig, KnowledgeBaseImportRequest,
-    ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
-    ReindexKnowledgeDocumentRequest,
+    chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig,
+    CompletedKnowledgeBaseImport, ContextConfig, DocumentChunk, EmbeddingProviderConfig,
+    KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback, KnowledgeBaseImportRequest,
+    ParseOptions, ParsedDocument, RagContextBundle, RagEngine, ReindexKnowledgeDocumentRequest,
 };
+
+const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT: &str = "rag-import-progress";
+
+fn create_rag_import_progress_callback(app: &AppHandle) -> KnowledgeBaseImportProgressCallback {
+    let app = app.clone();
+    Arc::new(move |progress: KnowledgeBaseImportProgress| {
+        let _ = app.emit(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, &progress);
+    })
+}
 
 /// 向量检索
 #[tauri::command]
@@ -1143,7 +1153,7 @@ pub async fn rag_parse_document(
     path: String,
     options: Option<ParseOptions>,
 ) -> Result<ParsedDocument, String> {
-    parse_document_with_ocr(&path, options, None).await
+    parse_document_with_ocr(&path, options, Some(create_default_ocr_engine())).await
 }
 
 /// 解析并分块文档
@@ -1153,7 +1163,8 @@ pub async fn rag_chunk_document(
     options: Option<ParseOptions>,
     config: Option<ChunkConfig>,
 ) -> Result<Vec<DocumentChunk>, String> {
-    let document = parse_document_with_ocr(&path, options, None).await?;
+    let document =
+        parse_document_with_ocr(&path, options, Some(create_default_ocr_engine())).await?;
     let chunk_config = config.unwrap_or_else(ChunkConfig::document_default);
     Ok(chunk_document(&document, &chunk_config))
 }
@@ -1242,19 +1253,31 @@ pub fn rag_delete_vectors(
 /// 导入知识库文档并执行 embedding 入库
 #[tauri::command]
 pub async fn rag_import_knowledge_document(
+    app: AppHandle,
     engine: State<'_, std::sync::Arc<RagEngine>>,
     request: KnowledgeBaseImportRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
-    engine.import_knowledge_document(&request).await
+    engine
+        .import_knowledge_document_with_progress(
+            &request,
+            Some(create_rag_import_progress_callback(&app)),
+        )
+        .await
 }
 
 /// 重建单个知识库文档索引
 #[tauri::command]
 pub async fn rag_reindex_knowledge_document(
+    app: AppHandle,
     engine: State<'_, std::sync::Arc<RagEngine>>,
     request: ReindexKnowledgeDocumentRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
-    engine.reindex_knowledge_document(&request).await
+    engine
+        .reindex_knowledge_document_with_progress(
+            &request,
+            Some(create_rag_import_progress_callback(&app)),
+        )
+        .await
 }
 
 /// 创建知识库

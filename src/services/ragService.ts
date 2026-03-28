@@ -1,6 +1,7 @@
 // RAG 服务 - 前端与后端 RAG 功能的桥梁
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export interface SearchResult {
   knowledge_base_id: string | null;
@@ -181,12 +182,14 @@ export interface KnowledgeBaseImportRequest {
   path: string;
   parseOptions?: ParseOptions;
   chunkConfig?: ChunkConfig;
+  progressEventId?: string;
 }
 
 export interface ReindexKnowledgeDocumentRequest {
   documentId: string;
   parseOptions?: ParseOptions;
   chunkConfig?: ChunkConfig;
+  progressEventId?: string;
 }
 
 export interface CompletedKnowledgeBaseImport {
@@ -195,6 +198,80 @@ export interface CompletedKnowledgeBaseImport {
   chunks: DocumentChunk[];
   persistedChunks: KnowledgeChunkRecord[];
   persistedEmbeddings: KnowledgeEmbeddingRecord[];
+}
+
+export type KnowledgeBaseImportOperation = 'import' | 'reindex';
+export type KnowledgeBaseImportStage = 'parse' | 'chunk' | 'embed' | 'finalize';
+export type KnowledgeBaseImportProgressStatus = 'running' | 'completed' | 'failed';
+
+export interface KnowledgeBaseImportProgress {
+  requestId?: string | null;
+  operation: KnowledgeBaseImportOperation;
+  stage: KnowledgeBaseImportStage;
+  status: KnowledgeBaseImportProgressStatus;
+  current: number;
+  total: number;
+  knowledgeBaseId: string;
+  documentId?: string | null;
+  fileName?: string | null;
+  sourcePath?: string | null;
+  chunkCount?: number | null;
+  embeddingCount?: number | null;
+  message: string;
+}
+
+export const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT = 'rag-import-progress';
+
+function normalizeProgressEventId(progressEventId?: string | null): string | undefined {
+  const normalized = progressEventId?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function createKnowledgeBaseImportProgressId(): string {
+  return `kb-import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function onKnowledgeBaseImportProgress(
+  callback: (progress: KnowledgeBaseImportProgress) => void,
+  progressEventId?: string,
+): Promise<() => void> {
+  const expectedRequestId = normalizeProgressEventId(progressEventId);
+
+  return listen<KnowledgeBaseImportProgress>(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, (event) => {
+    if (expectedRequestId && event.payload.requestId !== expectedRequestId) {
+      return;
+    }
+
+    callback(event.payload);
+  });
+}
+
+async function invokeKnowledgeBaseImportWithProgress<
+  TRequest extends { progressEventId?: string },
+>(
+  command: 'rag_import_knowledge_document' | 'rag_reindex_knowledge_document',
+  request: TRequest,
+  onProgress?: (progress: KnowledgeBaseImportProgress) => void,
+): Promise<CompletedKnowledgeBaseImport> {
+  const progressEventId =
+    normalizeProgressEventId(request.progressEventId)
+    || (onProgress ? createKnowledgeBaseImportProgressId() : undefined);
+  const requestWithProgress = progressEventId
+    ? { ...request, progressEventId }
+    : request;
+  let unlisten: (() => void) | null = null;
+
+  if (onProgress) {
+    unlisten = await onKnowledgeBaseImportProgress(onProgress, progressEventId);
+  }
+
+  try {
+    return await invoke<CompletedKnowledgeBaseImport>(command, {
+      request: requestWithProgress,
+    });
+  } finally {
+    unlisten?.();
+  }
 }
 
 export const ragService = {
@@ -365,8 +442,13 @@ export const ragService = {
    */
   async importKnowledgeDocument(
     request: KnowledgeBaseImportRequest,
+    onProgress?: (progress: KnowledgeBaseImportProgress) => void,
   ): Promise<CompletedKnowledgeBaseImport> {
-    return invoke<CompletedKnowledgeBaseImport>('rag_import_knowledge_document', { request });
+    return invokeKnowledgeBaseImportWithProgress(
+      'rag_import_knowledge_document',
+      request,
+      onProgress,
+    );
   },
 
   /**
@@ -375,9 +457,17 @@ export const ragService = {
    */
   async reindexKnowledgeDocument(
     request: ReindexKnowledgeDocumentRequest,
+    onProgress?: (progress: KnowledgeBaseImportProgress) => void,
   ): Promise<CompletedKnowledgeBaseImport> {
-    return invoke<CompletedKnowledgeBaseImport>('rag_reindex_knowledge_document', { request });
+    return invokeKnowledgeBaseImportWithProgress(
+      'rag_reindex_knowledge_document',
+      request,
+      onProgress,
+    );
   },
+
+  createKnowledgeBaseImportProgressId,
+  onKnowledgeBaseImportProgress,
 };
 
 export default ragService;
