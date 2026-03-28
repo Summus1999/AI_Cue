@@ -35,7 +35,7 @@ import {
   sendStream,
   buildContextHistory,
 } from "./services/aiChat";
-import { loadConfig, saveConfig, AppConfig, PromptMode, RagRetrievalScope, getPromptMode, QuestionTiming } from "./store/config";
+import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
 import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isCompactMode, isPassthroughEnabled, setPassthrough, minimizeToRightDock } from './services/windowManager';
@@ -50,7 +50,16 @@ import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
 import { MessageSearchBar } from './components/MessageSearchBar';
 import { useMessageSearch } from './store/messageSearch';
-import { ragService, type CitationMetadata, type RagSourceKind } from './services/ragService';
+import { ragService, type CitationMetadata } from './services/ragService';
+import {
+  resolveChatRetrievalContext,
+} from './services/chatRetrieval';
+import {
+  buildContinueGenerationPlan,
+  buildRetryMessagePlan,
+  findSourceUserMessage,
+  type ChatReplayMessage,
+} from './services/chatReplay';
 import {
   perfCoreUiReady,
   perfScreenshotStart,
@@ -62,7 +71,7 @@ import {
 } from "./services/perf/perfInstrumentation";
 
 // 消息类型定义
-interface Message {
+interface Message extends ChatReplayMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -73,18 +82,6 @@ interface Message {
   interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
   /** 用户回答该问题所用时间 (ms)，仅用于面试官模式 */
   responseTimeMs?: number;
-  /** 当前回答实际使用的 RAG 引用 */
-  citations?: CitationMetadata[];
-  /** 关联的用户消息 ID，用于继续生成/重试时恢复请求上下文 */
-  sourceUserMessageId?: string;
-  /** 最近一次用于生成该 assistant 消息的请求文本 */
-  requestText?: string;
-  /** 最近一次请求对应的图片上下文 */
-  requestImageBase64?: string;
-  /** 最近一次请求用于 RAG 检索的查询文本 */
-  retrievalQuery?: string;
-  /** 最近一次请求开始前该 assistant 已有的内容前缀 */
-  requestContentPrefix?: string;
 }
 
 interface RequestAssistantReplyOptions {
@@ -141,35 +138,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function findSourceUserMessage(
-  messages: Message[],
-  assistantMessageIndex: number,
-  sourceUserMessageId?: string,
-): { message: Message; index: number } | undefined {
-  if (sourceUserMessageId) {
-    const sourceUserIndex = messages.findIndex(
-      (message, index) => index < assistantMessageIndex && message.id === sourceUserMessageId,
-    );
-    if (sourceUserIndex >= 0 && messages[sourceUserIndex].role === 'user') {
-      return {
-        message: messages[sourceUserIndex],
-        index: sourceUserIndex,
-      };
-    }
-  }
-
-  for (let index = assistantMessageIndex - 1; index >= 0; index -= 1) {
-    if (messages[index].role === 'user') {
-      return {
-        message: messages[index],
-        index,
-      };
-    }
-  }
-
-  return undefined;
-}
-
 // 注意：getSpeechErrorMessage 现在从 speechRecognition.ts 导入
 
 // 将 finishReason 转换为 interruptReason
@@ -200,114 +168,6 @@ async function getKnowledgeReadyState(): Promise<boolean | null> {
   } catch (error) {
     console.warn('[RAG] 检查知识库索引状态失败，将按未知状态降级:', error);
     return null;
-  }
-}
-
-function getChatRetrievalSourceKinds(promptMode: PromptMode): RagSourceKind[] {
-  if (promptMode === 'interviewer') {
-    // 面试官模式已经直接携带了最近问答历史，RAG 只补知识库材料，避免重复消费消息检索结果。
-    return ['KnowledgeBaseDocument'];
-  }
-
-  return ['Message', 'KnowledgeBaseDocument'];
-}
-
-interface ChatRetrievalStrategy {
-  sourceKinds: RagSourceKind[];
-  sessionId?: string;
-}
-
-interface ChatRetrievalPayload {
-  promptContext: string;
-  citations: CitationMetadata[];
-}
-
-function getRetrievalScopeSourceKinds(
-  retrievalScope: RagRetrievalScope,
-  promptMode: PromptMode,
-): RagSourceKind[] {
-  if (retrievalScope === 'knowledge_base') {
-    return ['KnowledgeBaseDocument'];
-  }
-
-  if (retrievalScope === 'current_session') {
-    return ['Message'];
-  }
-
-  return getChatRetrievalSourceKinds(promptMode);
-}
-
-function resolveChatRetrievalStrategy(
-  config: AppConfig,
-  promptMode: PromptMode,
-  sessionId?: string,
-): ChatRetrievalStrategy {
-  const requestedSourceKinds = getRetrievalScopeSourceKinds(config.rag.retrievalScope, promptMode);
-  const sourceKinds = requestedSourceKinds.filter((sourceKind) =>
-    sourceKind !== 'Message' || Boolean(sessionId),
-  );
-
-  return {
-    sourceKinds,
-    sessionId: sourceKinds.includes('Message') ? sessionId : undefined,
-  };
-}
-
-// 检索链路只能增强回答，不能阻塞主聊天链路。
-async function resolveChatRetrievalContext(
-  config: AppConfig,
-  promptMode: PromptMode,
-  query: string,
-  sessionId?: string,
-): Promise<ChatRetrievalPayload | undefined> {
-  if (!config.rag.enabled) {
-    console.info('[RAG] 聊天降级到普通模式: RAG 开关关闭');
-    return undefined;
-  }
-
-  const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
-  if (!ragProviderConfig?.apiKey?.trim()) {
-    console.info(`[RAG] 聊天降级到普通模式: ${config.rag.embeddingProvider} 未配置 API Key`);
-    return undefined;
-  }
-
-  try {
-    const strategy = resolveChatRetrievalStrategy(config, promptMode, sessionId);
-    if (strategy.sourceKinds.length === 0) {
-      console.info(
-        `[RAG] 聊天降级到普通模式: retrievalScope=${config.rag.retrievalScope} 需要会话消息检索，但当前没有可用 sessionId`,
-      );
-      return undefined;
-    }
-
-    const retrievalBundle = await ragService.retrieveWithCitations(query, 2000, 5, {
-      sessionId: strategy.sessionId,
-      sourceKinds: strategy.sourceKinds,
-    });
-    if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
-      return {
-        promptContext: retrievalBundle.promptContext,
-        citations: retrievalBundle.citations,
-      };
-    }
-
-    if (strategy.sourceKinds.includes('KnowledgeBaseDocument')) {
-      const knowledgeReadyState = await getKnowledgeReadyState();
-      if (knowledgeReadyState === false) {
-        console.info('[RAG] 聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
-        return undefined;
-      }
-    }
-
-    if (strategy.sourceKinds.length === 1 && strategy.sourceKinds[0] === 'Message') {
-      console.info('[RAG] 聊天降级到普通模式: 当前会话检索未返回可用上下文');
-    } else {
-      console.info('[RAG] 聊天降级到普通模式: retrieval 未返回可用上下文');
-    }
-    return undefined;
-  } catch (error) {
-    console.warn('[RAG] 聊天检索失败，继续走普通聊天链路:', error);
-    return undefined;
   }
 }
 
@@ -670,7 +530,16 @@ function App() {
         config.contextWindowSize ?? 5,
       );
       const retrievalPayload = !imageBase64
-        ? await resolveChatRetrievalContext(config, promptMode, retrievalQuery, sessionId ?? undefined)
+        ? await resolveChatRetrievalContext(
+            config,
+            promptMode,
+            retrievalQuery,
+            sessionId ?? undefined,
+            {
+              retrieveWithCitations: ragService.retrieveWithCitations,
+              getKnowledgeReadyState,
+            },
+          )
         : undefined;
       updateAssistantCitations(assistantId, retrievalPayload?.citations ?? fallbackCitations);
 
@@ -1516,46 +1385,26 @@ function App() {
 
   // 继续生成功能
   const handleContinueGeneration = useCallback(async (messageId: string) => {
-    const targetMessage = messages.find(m => m.id === messageId);
-    if (!targetMessage || targetMessage.role !== 'assistant') return;
-
-    const messageIndex = messages.findIndex(m => m.id === messageId);
-    const historyMessages = messages.slice(0, messageIndex);
-    const sourceUser = findSourceUserMessage(messages, messageIndex, targetMessage.sourceUserMessageId);
-
-    // 续写仍使用“继续完成回答”的 prompt，但 RAG 检索应回到原用户问题。
-    const continuePrompt = buildContinuePrompt(targetMessage.content, historyMessages, 5);
+    const continuePlan = buildContinueGenerationPlan(messages, messageId);
+    if (!continuePlan) return;
 
     await requestAssistantReply(
-      sourceUser?.message.content ?? continuePrompt,
-      continuePrompt,
-      targetMessage.requestImageBase64,
+      continuePlan.userContent,
+      continuePlan.requestText,
+      continuePlan.requestImageBase64,
       undefined,
       {
         assistantId: messageId,
-        userMessageId: sourceUser?.message.id,
-        baseMessages: historyMessages,
+        userMessageId: continuePlan.userMessageId,
+        baseMessages: continuePlan.baseMessages,
         persistUserMessage: false,
         sessionId: currentSessionId,
-        retrievalQuery: targetMessage.retrievalQuery ?? sourceUser?.message.content ?? continuePrompt,
-        fallbackCitations: targetMessage.citations,
-        existingAssistantContentPrefix: targetMessage.content,
+        retrievalQuery: continuePlan.retrievalQuery,
+        fallbackCitations: continuePlan.fallbackCitations,
+        existingAssistantContentPrefix: continuePlan.existingAssistantContentPrefix,
       },
     );
   }, [messages, currentSessionId, requestAssistantReply]);
-
-  // 构建续接 prompt
-  const buildContinuePrompt = (
-    lastContent: string,
-    history: Message[],
-    contextSize: number = 5
-  ): string => {
-    const contextMessages = history.slice(-(contextSize * 2)).map(m =>
-      `${m.role === 'user' ? '用户' : 'AI'}：${m.content.slice(0, 500)}`
-    ).join('\n---\n');
-
-    return `这是之前的对话历史：\n${contextMessages}\n\n你的回答在这里中断了：\n"${lastContent.slice(-500)}"\n\n请继续完成这个回答，不要重复已说内容。`;
-  };
 
   // 重试消息功能
   const handleRetryMessage = useCallback(async (messageId: string) => {
@@ -1563,33 +1412,35 @@ function App() {
     if (messageIndex <= 0) return;
     const targetMessage = messages[messageIndex];
     if (!targetMessage || targetMessage.role !== 'assistant') return;
-
     const sourceUser = findSourceUserMessage(messages, messageIndex, targetMessage.sourceUserMessageId);
     if (!sourceUser) return;
-    const historyMessages = messages.slice(0, messageIndex);
+
     const fallbackRequestText = targetMessage.requestImageBase64
       ? SCREENSHOT_ANALYSIS_PROMPT
       : buildRequestTextByMode(sourceUser.message.content, messages.slice(0, sourceUser.index));
-    const requestImageBase64 = targetMessage.requestImageBase64
-      ?? (sourceUser.message.content === '📷 [已发送截图]' ? latestScreenshotContext?.imageBase64 : undefined);
-    const assistantPrefixContent = targetMessage.requestContentPrefix ?? '';
-    const fallbackCitations = assistantPrefixContent.trim() ? targetMessage.citations : undefined;
+    const retryPlan = buildRetryMessagePlan(
+      messages,
+      messageId,
+      fallbackRequestText,
+      latestScreenshotContext?.imageBase64,
+    );
+    if (!retryPlan) return;
 
     networkResilience.clearError(messageId);
     await requestAssistantReply(
-      sourceUser.message.content,
-      targetMessage.requestText ?? fallbackRequestText,
-      requestImageBase64,
+      retryPlan.userContent,
+      retryPlan.requestText,
+      retryPlan.requestImageBase64,
       undefined,
       {
         assistantId: messageId,
-        userMessageId: sourceUser.message.id,
-        baseMessages: historyMessages,
+        userMessageId: retryPlan.userMessageId,
+        baseMessages: retryPlan.baseMessages,
         persistUserMessage: false,
         sessionId: currentSessionId,
-        retrievalQuery: targetMessage.retrievalQuery ?? sourceUser.message.content,
-        fallbackCitations,
-        existingAssistantContentPrefix: assistantPrefixContent,
+        retrievalQuery: retryPlan.retrievalQuery,
+        fallbackCitations: retryPlan.fallbackCitations,
+        existingAssistantContentPrefix: retryPlan.existingAssistantContentPrefix,
       },
     );
   }, [
