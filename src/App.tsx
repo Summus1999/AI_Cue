@@ -49,6 +49,7 @@ import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
 import { MessageSearchBar } from './components/MessageSearchBar';
 import { useMessageSearch } from './store/messageSearch';
+import { ragService } from './services/ragService';
 import {
   perfCoreUiReady,
   perfScreenshotStart,
@@ -431,6 +432,22 @@ function App() {
         recentMessages,
         config.contextWindowSize ?? 5,
       );
+      const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
+      const canUseRetrieval = !imageBase64
+        && config.rag.enabled
+        && Boolean(ragProviderConfig?.apiKey?.trim());
+      let retrievalContext: string | undefined;
+      if (canUseRetrieval) {
+        const retrievalBundle = await ragService.retrieveWithCitations(
+          userContent,
+          2000,
+          5,
+          sessionId ?? undefined,
+        );
+        if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
+          retrievalContext = retrievalBundle.promptContext;
+        }
+      }
 
       const send = async () => {
         if (imageBase64) {
@@ -438,7 +455,9 @@ function App() {
           return sendToQwenStreamWithImage(requestText, imageBase64, config, onChunk, requestId);
         }
         // 使用新的统一流式接口，传递上下文历史
-        return sendStream(requestText, config, onChunk, requestId, contextHistory);
+        return sendStream(requestText, config, onChunk, requestId, contextHistory, {
+          retrievalContext,
+        });
       };
 
       try {

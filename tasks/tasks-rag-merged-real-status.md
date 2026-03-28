@@ -93,7 +93,7 @@
 
 - ❌️ 6.0 接入聊天主流程，实现 RAG 增强对话
   - ❌️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
-  - ❌️ 6.2 `App.tsx` 发送消息前尚未调用 retrieval，当前主流程仍直接走普通聊天
+  - ✅️ 6.2 `App.tsx` 普通文本发送前已调用 retrieval，当前主发送链会先获取 retrieval context 再进入聊天请求
   - ❌️ 6.3 当 RAG 关闭、无已索引文档或检索失败时，主聊天流程尚未实现显式的非阻塞 fallback 分支
   - ❌️ 6.4 assistant 模式与 interviewer 模式尚未实现不同的 retrieval 策略
   - ❌️ 6.5 `rag.retrievalScope` 当前仅保存在配置里，尚未真正影响后端或主流程检索来源
