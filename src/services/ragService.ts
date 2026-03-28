@@ -2,6 +2,10 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import {
+  configureRagRuntime,
+  ensureRagRuntimeConfigured,
+} from './ragRuntimeConfig';
 
 export interface SearchResult {
   knowledge_base_id: string | null;
@@ -253,6 +257,8 @@ async function invokeKnowledgeBaseImportWithProgress<
   request: TRequest,
   onProgress?: (progress: KnowledgeBaseImportProgress) => void,
 ): Promise<CompletedKnowledgeBaseImport> {
+  await ensureRagRuntimeConfigured(undefined, command);
+
   const progressEventId =
     normalizeProgressEventId(request.progressEventId)
     || (onProgress ? createKnowledgeBaseImportProgressId() : undefined);
@@ -282,6 +288,7 @@ export const ragService = {
    * @param sessionId 可选，按会话过滤
    */
   async search(query: string, limit = 10, sessionId?: string): Promise<SearchResult[]> {
+    await ensureRagRuntimeConfigured(undefined, 'rag-search');
     return invoke<SearchResult[]>('rag_search', { 
       query, 
       limit, 
@@ -295,6 +302,7 @@ export const ragService = {
    * @param maxTokens 最大 token 数量
    */
   async getContext(query: string, maxTokens = 2000): Promise<string> {
+    await ensureRagRuntimeConfigured(undefined, 'rag-get-context');
     return invoke<string>('rag_get_context', { 
       query, 
       maxTokens 
@@ -314,6 +322,7 @@ export const ragService = {
     maxResults = 5,
     sessionId?: string,
   ): Promise<RagContextBundle> {
+    await ensureRagRuntimeConfigured(undefined, 'rag-retrieve-with-citations');
     return invoke<RagContextBundle>('rag_retrieve_with_citations', {
       query,
       maxTokens,
@@ -328,6 +337,7 @@ export const ragService = {
    * @param content 消息内容
    */
   async embedMessage(messageId: string, content: string): Promise<boolean> {
+    await ensureRagRuntimeConfigured(undefined, 'rag-embed-message');
     return invoke<boolean>('rag_embed_message', { 
       messageId, 
       content 
@@ -376,9 +386,7 @@ export const ragService = {
    * @param config Provider 运行时配置
    */
   async configure(config: EmbeddingProviderConfig): Promise<boolean> {
-    return invoke<boolean>('rag_configure', { 
-      config 
-    });
+    return configureRagRuntime(config, 'rag-service-configure');
   },
   
   /**

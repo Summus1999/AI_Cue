@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
+import { ensureRagRuntimeConfigured } from './ragRuntimeConfig';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -310,6 +311,8 @@ export async function sendStream(
   history: ChatMessage[] = [],
   options: ChatRequestOptions = {},
 ): Promise<StreamResult> {
+  await ensureRagRuntimeConfigured(config, 'chat-send');
+
   const provider = config.activeProvider;
   const providerConfig = config.providerConfigs[provider];
 
@@ -353,6 +356,8 @@ export async function sendChat(
   history: ChatMessage[] = [],
   options: ChatRequestOptions = {},
 ): Promise<string> {
+  await ensureRagRuntimeConfigured(config, 'chat-send');
+
   const provider = config.activeProvider;
   const providerConfig = config.providerConfigs[provider];
 
@@ -414,6 +419,8 @@ export async function sendToQwen(
   config: AppConfig,
   history: ChatMessage[] = [],
 ): Promise<string> {
+  await ensureRagRuntimeConfigured(config, 'chat-send');
+
   // 兼容旧配置格式
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
   const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
@@ -441,6 +448,8 @@ export async function sendToQwenStream(
   requestId: string,
   history: ChatMessage[] = [],
 ): Promise<void> {
+  await ensureRagRuntimeConfigured(config, 'chat-send');
+
   // 兼容旧配置格式
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
   const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
@@ -476,6 +485,8 @@ export async function sendToQwenStreamWithImage(
   onChunk: (content: string, done: boolean, isComplete?: boolean, finishReason?: string) => void,
   requestId: string,
 ): Promise<void> {
+  await ensureRagRuntimeConfigured(config, 'chat-send');
+
   // 截图视觉始终使用千问
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
   

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
+import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
 import { ProviderSelector } from './ProviderSelector';
 import { loadConfig, saveConfig, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig, ProviderType, ProviderConfig, PromptMode } from '../store/config';
 
@@ -49,6 +50,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     setErrorMessage('');
     try {
       await saveConfig(config);
+      await ensureRagRuntimeConfigured(config, 'settings-save');
       setSaveStatus('saved');
       setTimeout(() => {
         setSaveStatus('idle');

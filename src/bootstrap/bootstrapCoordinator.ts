@@ -28,6 +28,7 @@ import {
   perfShortcutsReady,
   perfWindowBoundsRestored,
 } from '../services/perf/perfInstrumentation';
+import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
 
 // 启动任务类型
 export type BootstrapTask = 
@@ -204,6 +205,9 @@ export async function bootstrap(
     perfConfigLoaded({ source: 'bootstrap' });
     state.snapshot = snapshot;
     state.completedTasks.add('config_snapshot');
+
+    // 1.5 启动阶段同步 RAG Embedding Provider 到后端运行时
+    await ensureRagRuntimeConfigured(snapshot.config, 'startup');
 
     // 2. 并行执行窗口状态初始化
     await Promise.all([

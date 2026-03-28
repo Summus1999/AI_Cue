@@ -12,11 +12,13 @@
 - `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射，以及 parse/chunk 路径 OCR 引擎接线。
 - `src-tauri/src/lib.rs` - Tauri 命令注册。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装与类型定义。
-- `src/services/aiChat.ts` - 聊天请求构建与可选 retrieval context 注入。
+- `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
+- `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
 - `src/store/rag.ts` - 当前前端 RAG store。
 - `src/App.tsx` - 主聊天编排与消息渲染。
-- `src/components/SettingsPanel.tsx` - 当前设置面板。
+- `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
+- `src/components/SettingsPanel.tsx` - 当前设置面板，当前会在保存配置后同步 RAG runtime 配置。
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
@@ -84,7 +86,7 @@
   - ✅️ 5.2 `ragService.ts` 已声明 retrieval with citations、知识库 CRUD、文档详情、导入、重建索引等前端接口签名
   - ✅️ 5.3 后端已实现并注册 `rag_import_knowledge_document` 命令
   - ✅️ 5.4 后端已实现并注册 `rag_reindex_knowledge_document` 命令
-  - ❌️ 5.5 前端尚未在启动、设置保存或聊天发送前调用 `rag_configure`，当前 embedding provider 配置没有真正下发到后端 `RagEngine`
+  - ✅️ 5.5 前端已在启动、设置保存、聊天发送及 RAG 服务调用前同步 `rag_configure`，embedding provider 配置会真正下发到后端 `RagEngine`
   - ❌️ 5.6 前端尚未拿到文档预览所需的 chunk / page / heading path 明细接口
   - ❌️ 5.7 当前接口层已提供导入 / 重建索引进度事件，但仍缺少后台任务状态同步能力
 
