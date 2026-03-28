@@ -18,6 +18,7 @@
 - `src/store/config.ts` - 前端 RAG 配置持久化。
 - `src/store/rag.ts` - 当前前端 RAG store。
 - `src/App.tsx` - 主聊天编排与消息渲染。
+- `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
 - `src/components/SettingsPanel.tsx` - 当前设置面板，当前会在保存配置后同步 RAG runtime 配置。
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
@@ -97,7 +98,7 @@
   - ✅️ 6.3 当 RAG 关闭、无 ready 知识库文档或 retrieval 失败时，主聊天流程已显式降级到普通聊天分支
   - ✅️ 6.4 assistant 模式与 interviewer 模式已实现不同的 retrieval 策略
   - ✅️ 6.5 `rag.retrievalScope` 已真实影响主聊天链路传给后端的检索来源与会话过滤策略
-  - ❌️ 6.6 回答消息下方尚未渲染 citation 列表，当前仓库也没有 `MessageCitations` 组件
+  - ✅️ 6.6 回答消息下方已渲染 citation 列表，仓库中已新增 `MessageCitations` 组件
   - ❌️ 6.7 继续生成、重试消息等路径尚未纳入 retrieval / citation 逻辑
   - ❌️ 6.8 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证尚未补齐
 

@@ -21,6 +21,7 @@ const CodeEditorPanel = lazy(() =>
 );
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
+import { MessageCitations } from "./components/MessageCitations";
 import { NetworkStatusIndicator } from "./components/NetworkStatusIndicator";
 import { FriendlyErrorCard } from "./components/FriendlyErrorCard";
 import WaveformVisualizer from "./components/WaveformVisualizer";
@@ -49,7 +50,7 @@ import { codeDetector } from './services/codeDetector';
 import { buildInterviewerRequestText } from './services/interviewFlow';
 import { MessageSearchBar } from './components/MessageSearchBar';
 import { useMessageSearch } from './store/messageSearch';
-import { ragService, type RagSourceKind } from './services/ragService';
+import { ragService, type CitationMetadata, type RagSourceKind } from './services/ragService';
 import {
   perfCoreUiReady,
   perfScreenshotStart,
@@ -72,6 +73,8 @@ interface Message {
   interruptReason?: 'user_abort' | 'error' | 'timeout' | 'network';
   /** 用户回答该问题所用时间 (ms)，仅用于面试官模式 */
   responseTimeMs?: number;
+  /** 当前回答实际使用的 RAG 引用 */
+  citations?: CitationMetadata[];
 }
 
 interface ScreenshotContext {
@@ -162,6 +165,11 @@ interface ChatRetrievalStrategy {
   sessionId?: string;
 }
 
+interface ChatRetrievalPayload {
+  promptContext: string;
+  citations: CitationMetadata[];
+}
+
 function getRetrievalScopeSourceKinds(
   retrievalScope: RagRetrievalScope,
   promptMode: PromptMode,
@@ -199,7 +207,7 @@ async function resolveChatRetrievalContext(
   promptMode: PromptMode,
   query: string,
   sessionId?: string,
-): Promise<string | undefined> {
+): Promise<ChatRetrievalPayload | undefined> {
   if (!config.rag.enabled) {
     console.info('[RAG] 聊天降级到普通模式: RAG 开关关闭');
     return undefined;
@@ -225,7 +233,10 @@ async function resolveChatRetrievalContext(
       sourceKinds: strategy.sourceKinds,
     });
     if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
-      return retrievalBundle.promptContext;
+      return {
+        promptContext: retrievalBundle.promptContext,
+        citations: retrievalBundle.citations,
+      };
     }
 
     if (strategy.sourceKinds.includes('KnowledgeBaseDocument')) {
@@ -375,6 +386,17 @@ function App() {
     );
   }, []);
 
+  const updateAssistantCitations = useCallback(
+    (assistantId: string, citations?: CitationMetadata[]) => {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId ? { ...message, citations } : message,
+        ),
+      );
+    },
+    [],
+  );
+
   const appendAssistantChunk = useCallback((assistantId: string, content: string) => {
     setMessages((prev) =>
       prev.map((message) =>
@@ -420,6 +442,7 @@ function App() {
               ...message,
               isComplete: false,
               interruptReason: 'user_abort',
+              citations: message.content.trim() ? message.citations : undefined,
             }
           : message,
       ),
@@ -553,9 +576,10 @@ function App() {
         recentMessages,
         config.contextWindowSize ?? 5,
       );
-      const retrievalContext = !imageBase64
+      const retrievalPayload = !imageBase64
         ? await resolveChatRetrievalContext(config, promptMode, userContent, sessionId ?? undefined)
         : undefined;
+      updateAssistantCitations(assistantId, retrievalPayload?.citations);
 
       const send = async () => {
         if (imageBase64) {
@@ -564,7 +588,7 @@ function App() {
         }
         // 使用新的统一流式接口，传递上下文历史
         return sendStream(requestText, config, onChunk, requestId, contextHistory, {
-          retrievalContext,
+          retrievalContext: retrievalPayload?.promptContext,
         });
       };
 
@@ -613,6 +637,7 @@ function App() {
           (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
             friendlyError.message,
         );
+        updateAssistantCitations(assistantId, undefined);
       }
     } catch (error) {
       if (locallyCancelledRequestIdsRef.current.has(requestId)) {
@@ -628,6 +653,7 @@ function App() {
         (imageBase64 ? "❌ 图片识别失败: " : "❌ AI 回答失败: ") +
           friendlyError.message,
       );
+      updateAssistantCitations(assistantId, undefined);
     } finally {
       locallyCancelledRequestIdsRef.current.delete(requestId);
       if (activeStreamRequestRef.current?.requestId === requestId) {
@@ -638,6 +664,7 @@ function App() {
     }
   }, [
     appendAssistantChunk,
+    updateAssistantCitations,
     updateAssistantMessage,
     currentSessionId,
     networkResilience,
@@ -1496,7 +1523,7 @@ function App() {
     // 更新 assistant 消息为初始状态
     setMessages(prev => prev.map(m =>
       m.id === messageId
-        ? { ...m, content: '', isComplete: false, interruptReason: undefined }
+        ? { ...m, content: '', isComplete: false, interruptReason: undefined, citations: undefined }
         : m
     ));
 
@@ -1844,6 +1871,9 @@ function App() {
                   messageId={message.id}
                   highlightEnabled={messageSearch.isSearchOpen}
                 />
+              {message.role === 'assistant' && message.content.trim() && message.citations && message.citations.length > 0 && (
+                <MessageCitations citations={message.citations} />
+              )}
               {/* 面试官模式：用户消息显示回答用时 */}
               {message.role === 'user' && message.responseTimeMs && promptMode === 'interviewer' && (
                 <div className="mt-1 text-[10px] text-amber-600 flex items-center gap-1">
