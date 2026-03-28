@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Database, RefreshCw } from 'lucide-react';
 import { useRagStore } from '../store/rag';
+import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
 
 interface KnowledgeBasePanelProps {
   onBack: () => void;
@@ -10,10 +11,15 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
   const {
     knowledgeBases,
     currentKnowledgeBaseId,
+    currentDocumentId,
     isLoadingKnowledgeBases,
+    isLoadingKnowledgeDocumentsByKnowledgeBaseId,
+    knowledgeDocumentsByKnowledgeBaseId,
     error,
     refreshKnowledgeBases,
+    refreshKnowledgeDocuments,
     setCurrentKnowledgeBase,
+    setCurrentDocument,
   } = useRagStore();
 
   const currentKnowledgeBase = useMemo(
@@ -21,10 +27,46 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     [knowledgeBases, currentKnowledgeBaseId],
   );
 
-  const handleRefresh = () => {
-    void refreshKnowledgeBases().catch((refreshError) => {
-      console.error('Failed to refresh knowledge bases:', refreshError);
+  const currentDocuments = useMemo(
+    () => (currentKnowledgeBaseId ? knowledgeDocumentsByKnowledgeBaseId[currentKnowledgeBaseId] ?? [] : []),
+    [knowledgeDocumentsByKnowledgeBaseId, currentKnowledgeBaseId],
+  );
+
+  const isLoadingDocuments = currentKnowledgeBaseId
+    ? isLoadingKnowledgeDocumentsByKnowledgeBaseId[currentKnowledgeBaseId] ?? false
+    : false;
+
+  useEffect(() => {
+    if (!currentKnowledgeBaseId) {
+      return;
+    }
+
+    void refreshKnowledgeDocuments(currentKnowledgeBaseId).catch((refreshError) => {
+      console.error('Failed to load knowledge documents:', refreshError);
     });
+  }, [currentKnowledgeBaseId, refreshKnowledgeDocuments]);
+
+  const handleRefresh = () => {
+    void (async () => {
+      try {
+        const refreshedKnowledgeBases = await refreshKnowledgeBases();
+        const nextKnowledgeBaseId = currentKnowledgeBaseId && refreshedKnowledgeBases.some(
+          (knowledgeBase) => knowledgeBase.id === currentKnowledgeBaseId,
+        )
+          ? currentKnowledgeBaseId
+          : refreshedKnowledgeBases[0]?.id ?? null;
+
+        if (nextKnowledgeBaseId) {
+          await refreshKnowledgeDocuments(nextKnowledgeBaseId);
+        }
+      } catch (refreshError) {
+        console.error('Failed to refresh knowledge bases:', refreshError);
+      }
+    })();
+  };
+
+  const handleSelectKnowledgeBase = (knowledgeBaseId: string) => {
+    setCurrentKnowledgeBase(knowledgeBaseId);
   };
 
   return (
@@ -64,7 +106,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   知识库管理面板已拆分
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                  当前步骤把知识库页面从主应用文件中提取为独立组件，后续会继续在这里接入文档列表、预览和导入交互。
+                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表。后续会继续补上文档预览和导入交互。
                 </p>
               </div>
               <div className="min-w-28 rounded-2xl bg-amber-100 px-4 py-3 text-center">
@@ -102,7 +144,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                     <button
                       key={knowledgeBase.id}
                       type="button"
-                      onClick={() => setCurrentKnowledgeBase(knowledgeBase.id)}
+                      onClick={() => handleSelectKnowledgeBase(knowledgeBase.id)}
                       className={`rounded-xl border px-4 py-3 text-left transition-colors ${
                         isActive
                           ? 'border-amber-400 bg-amber-100/80'
@@ -127,6 +169,33 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                 })}
               </div>
             )}
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.9fr)]">
+            <KnowledgeDocumentList
+              documents={currentDocuments}
+              currentDocumentId={currentDocumentId}
+              isLoading={isLoadingDocuments}
+              onSelectDocument={setCurrentDocument}
+            />
+
+            <section className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-amber-900">预览区占位</h3>
+              <p className="mt-2 text-sm leading-6 text-amber-700/80">
+                当前已可以浏览并选择文档。
+                {currentDocumentId
+                  ? ' 下一步会把选中文档的 chunk 预览和元数据明细接到这里。'
+                  : ' 下一步会把文档预览组件接到这里。'}
+              </p>
+              {currentKnowledgeBase && (
+                <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  <p>当前知识库：{currentKnowledgeBase.name}</p>
+                  <p className="mt-1 text-xs text-amber-700/80">
+                    已加载文档数：{currentDocuments.length}
+                  </p>
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </div>
