@@ -36,6 +36,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify frontend build
+        run: npm run build
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
       # Keep CI unsigned for internal builds. When a real Windows certificate is
       # available, import the PFX before this step and remove --no-sign.
       - name: Build unsigned Tauri MSI

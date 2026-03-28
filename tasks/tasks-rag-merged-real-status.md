@@ -16,6 +16,9 @@
 - `src/store/rag.ts` - 当前前端 RAG store。
 - `src/App.tsx` - 主聊天编排与消息渲染。
 - `src/components/SettingsPanel.tsx` - 当前设置面板。
+- `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
+- `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
+- `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
 - `README.md` - 项目说明，当前尚未同步 RAG 真实状态。
 - `TODO.md` - 进度文档，当前与 RAG 真实状态存在偏差。
 
@@ -120,3 +123,8 @@
   - 未完成 9.5 仓库里仍缺少知识库 UI 与聊天 RAG 接入的前端测试 / 回归 harness
   - 未完成 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
   - 未完成 9.7 `TODO.md` 尚未同步为当前真实进度
+
+- ✅️ 10.0 强化 Agent Harness 的 skills 与提交流程约束
+  - ✅️ 10.1 `Agent.md` 已加入 skills 检查、`requesting-code-review` 审查闭环、`writing-guide` 文档时机与 `/clear` 规则
+  - ✅️ 10.2 `.cursor/rules/agent-harness.mdc` 已同步 skills 加载、review 闭环和 `/clear` 重载流程
+  - ✅️ 10.3 `.github/workflows/build-windows.yml` 已加入 `npm run build` 与 `cargo test` 验证门禁

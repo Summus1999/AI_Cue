@@ -9,6 +9,7 @@ This project follows harness engineering. At the start of every session, before 
 
 1. Read `Agent.md` in the project root
 2. Read `tasks/tasks-rag-merged-real-status.md` as the single source of truth for task progress
+3. Check the locally available skills and load every skill that is relevant to the current task before planning, coding, reviewing, or writing docs
 
 `Agent.md` contains:
 - Project context and tech stack reference
@@ -20,11 +21,15 @@ Follow its instructions throughout the session. When human engineers update `Age
 
 After every completed sub-task, you MUST run the full project verification gate and submission workflow before moving on:
 
-1. Run `npm run build` from the project root
-2. Run `cargo test` from `src-tauri`
-3. Only when both commands pass must you update the project-related Markdown documents affected by the current sub-task
-4. Stage only the changes for the current sub-task
-5. Create a clear git commit for that sub-task
-6. Push the current local branch to the corresponding remote branch on `origin`
-7. Only when verification passes, Markdown docs are synchronized, and the push succeeds may the sub-task be considered complete
-8. Only when the sub-task is complete may you start the next sub-task
+1. If the current environment needs permission for verification or git operations, request escalation before running them
+2. Run `npm run build` from the project root
+3. Run `cargo test` from `src-tauri`
+4. If either command fails, fix the problem and repeat from step 1
+5. Only when both commands pass must you use `requesting-code-review` to review the completed implementation
+6. If the review finds any Critical or Important issue, fix it, then repeat from step 1 until no Critical or Important issue remains
+7. Only when the serious review issues are cleared may you use `writing-guide` to update the project-related Markdown documents affected by the current sub-task
+8. Stage only the changes for the current sub-task
+9. Create a clear git commit for that sub-task
+10. Push the current local branch to the corresponding remote branch on `origin`
+11. Only when verification passes, review passes, Markdown docs are synchronized, and the push succeeds may the sub-task be considered complete; the task status file must reflect that final state in the committed changes
+12. After a sub-task is marked complete, run `/clear` if the client supports it, then re-read `Agent.md` and `tasks/tasks-rag-merged-real-status.md` before starting the next sub-task
