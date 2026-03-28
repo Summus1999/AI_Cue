@@ -92,7 +92,7 @@
   - ✅️ 5.7 当前接口层已补齐后台任务状态同步能力，可通过后端任务注册表和 `rag_list_knowledge_import_tasks` / `rag_get_knowledge_import_task` 查询 import / reindex 的最新快照
 
 - ❌️ 6.0 接入聊天主流程，实现 RAG 增强对话
-  - ❌️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
+  - ✅️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
   - ✅️ 6.2 `App.tsx` 普通文本发送前已调用 retrieval，当前主发送链会先获取 retrieval context 再进入聊天请求
   - ✅️ 6.3 当 RAG 关闭、无 ready 知识库文档或 retrieval 失败时，主聊天流程已显式降级到普通聊天分支
   - ❌️ 6.4 assistant 模式与 interviewer 模式尚未实现不同的 retrieval 策略
