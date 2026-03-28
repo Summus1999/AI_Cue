@@ -15,6 +15,10 @@
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装、后台任务状态查询、文档 chunk 明细查询与类型定义。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
+- `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，供主流程与回归测试复用。
+- `src/services/chatReplay.ts` - 继续生成 / 重试消息的请求准备纯函数模块，负责恢复原用户上下文与请求元数据。
+- `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback 的前端回归测试。
+- `src/services/__tests__/chatReplay.test.ts` - 覆盖 continue generate / retry 请求准备逻辑的前端回归测试。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
 - `src/store/rag.ts` - 当前前端 RAG store。
 - `src/App.tsx` - 主聊天编排与消息渲染。
@@ -24,6 +28,8 @@
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
+- `package.json` - 新增 `npm test` 脚本，并引入前端回归测试所需的 `vitest`。
+- `package-lock.json` - 同步前端测试依赖锁文件。
 - `README.md` - 项目说明，当前尚未同步 RAG 真实状态。
 - `TODO.md` - 进度文档，当前与 RAG 真实状态存在偏差。
 
@@ -83,7 +89,7 @@
   - ✅️ 4.5 已新增 `rag_retrieve_with_citations` 命令，返回 `prompt context + citations`
   - ✅️ 4.6 已有空结果、低相似度过滤、不同来源排序、结构化 citation 的后端测试
 
-- 未完成 5.0 把后端 RAG 能力暴露成完整可用的前后端接口
+- ✅️ 5.0 把后端 RAG 能力暴露成完整可用的前后端接口
   - ✅️ 5.1 `store/config.ts` 已新增 RAG 开关、检索范围、OCR 开关、Embedding Provider / Model、自动重建索引策略等配置字段
   - ✅️ 5.2 `ragService.ts` 已声明 retrieval with citations、知识库 CRUD、文档详情、导入、重建索引等前端接口签名
   - ✅️ 5.3 后端已实现并注册 `rag_import_knowledge_document` 命令
@@ -92,15 +98,15 @@
   - ✅️ 5.6 前端已可通过 `rag_list_knowledge_document_chunks` 拿到文档预览所需的 chunk / page / heading path 明细接口
   - ✅️ 5.7 当前接口层已补齐后台任务状态同步能力，可通过后端任务注册表和 `rag_list_knowledge_import_tasks` / `rag_get_knowledge_import_task` 查询 import / reindex 的最新快照
 
-- ❌️ 6.0 接入聊天主流程，实现 RAG 增强对话
+- ✅️ 6.0 接入聊天主流程，实现 RAG 增强对话
   - ✅️ 6.1 `aiChat.ts` 已为 `sendStream()` / `sendChat()` 增加可选 `retrievalContext` 注入能力
   - ✅️ 6.2 `App.tsx` 普通文本发送前已调用 retrieval，当前主发送链会先获取 retrieval context 再进入聊天请求
   - ✅️ 6.3 当 RAG 关闭、无 ready 知识库文档或 retrieval 失败时，主聊天流程已显式降级到普通聊天分支
   - ✅️ 6.4 assistant 模式与 interviewer 模式已实现不同的 retrieval 策略
   - ✅️ 6.5 `rag.retrievalScope` 已真实影响主聊天链路传给后端的检索来源与会话过滤策略
   - ✅️ 6.6 回答消息下方已渲染 citation 列表，仓库中已新增 `MessageCitations` 组件
-  - ❌️ 6.7 继续生成、重试消息等路径尚未纳入 retrieval / citation 逻辑
-  - ❌️ 6.8 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证尚未补齐
+  - ✅️ 6.7 继续生成、重试消息等路径已纳入 retrieval / citation 逻辑
+  - ✅️ 6.8 已补齐 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证
 
 - ❌️ 7.0 构建知识库管理 UI
   - ❌️ 7.1 `src/store/rag.ts` 仍只管理 search / embed / stats，尚未保存知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
@@ -125,7 +131,7 @@
   - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
   - ❌️ 9.4 尚未补齐围绕真实导入命令、真实重建索引命令、fingerprint 跳过、启动恢复的集成测试
-  - ❌️ 9.5 仓库里仍缺少知识库 UI 与聊天 RAG 接入的前端测试 / 回归 harness
+  - ❌️ 9.5 知识库 UI 的前端测试仍缺失；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
   - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
   - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
 
