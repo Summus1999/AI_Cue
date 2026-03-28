@@ -34,7 +34,7 @@ import {
   sendStream,
   buildContextHistory,
 } from "./services/aiChat";
-import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
+import { loadConfig, saveConfig, AppConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
 import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isCompactMode, isPassthroughEnabled, setPassthrough, minimizeToRightDock } from './services/windowManager';
@@ -125,6 +125,63 @@ function getInterruptReason(finishReason?: string): Message['interruptReason'] {
   if (finishReason === 'interrupted') return 'network';
   if (finishReason === 'error') return 'error';
   return undefined;
+}
+
+async function getKnowledgeReadyState(): Promise<boolean | null> {
+  try {
+    const knowledgeBases = await ragService.listKnowledgeBases();
+    const candidateBases = knowledgeBases.filter((base) => base.documentCount > 0);
+    if (candidateBases.length === 0) {
+      return false;
+    }
+
+    const documentLists = await Promise.all(
+      candidateBases.map((base) => ragService.listKnowledgeDocuments(base.id)),
+    );
+
+    return documentLists.some((documents) =>
+      documents.some((document) => document.indexState === 'ready'),
+    );
+  } catch (error) {
+    console.warn('[RAG] 检查知识库索引状态失败，将按未知状态降级:', error);
+    return null;
+  }
+}
+
+// 检索链路只能增强回答，不能阻塞主聊天链路。
+async function resolveChatRetrievalContext(
+  config: AppConfig,
+  query: string,
+  sessionId?: string,
+): Promise<string | undefined> {
+  if (!config.rag.enabled) {
+    console.info('[RAG] 聊天降级到普通模式: RAG 开关关闭');
+    return undefined;
+  }
+
+  const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
+  if (!ragProviderConfig?.apiKey?.trim()) {
+    console.info(`[RAG] 聊天降级到普通模式: ${config.rag.embeddingProvider} 未配置 API Key`);
+    return undefined;
+  }
+
+  try {
+    const retrievalBundle = await ragService.retrieveWithCitations(query, 2000, 5, sessionId);
+    if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
+      return retrievalBundle.promptContext;
+    }
+
+    const knowledgeReadyState = await getKnowledgeReadyState();
+    if (knowledgeReadyState === false) {
+      console.info('[RAG] 聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
+    } else {
+      console.info('[RAG] 聊天降级到普通模式: retrieval 未返回可用上下文');
+    }
+    return undefined;
+  } catch (error) {
+    console.warn('[RAG] 聊天检索失败，继续走普通聊天链路:', error);
+    return undefined;
+  }
 }
 
 function App() {
@@ -432,22 +489,9 @@ function App() {
         recentMessages,
         config.contextWindowSize ?? 5,
       );
-      const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
-      const canUseRetrieval = !imageBase64
-        && config.rag.enabled
-        && Boolean(ragProviderConfig?.apiKey?.trim());
-      let retrievalContext: string | undefined;
-      if (canUseRetrieval) {
-        const retrievalBundle = await ragService.retrieveWithCitations(
-          userContent,
-          2000,
-          5,
-          sessionId ?? undefined,
-        );
-        if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
-          retrievalContext = retrievalBundle.promptContext;
-        }
-      }
+      const retrievalContext = !imageBase64
+        ? await resolveChatRetrievalContext(config, userContent, sessionId ?? undefined)
+        : undefined;
 
       const send = async () => {
         if (imageBase64) {
