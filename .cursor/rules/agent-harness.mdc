@@ -22,9 +22,9 @@ After every completed sub-task, you MUST run the full project verification gate 
 
 1. Run `npm run build` from the project root
 2. Run `cargo test` from `src-tauri`
-3. Only when both commands pass may you start the git submission flow
+3. Only when both commands pass must you update the project-related Markdown documents affected by the current sub-task
 4. Stage only the changes for the current sub-task
 5. Create a clear git commit for that sub-task
 6. Push the current local branch to the corresponding remote branch on `origin`
-7. Only when verification passes and the push succeeds may the sub-task be considered complete
+7. Only when verification passes, Markdown docs are synchronized, and the push succeeds may the sub-task be considered complete
 8. Only when the sub-task is complete may you start the next sub-task
