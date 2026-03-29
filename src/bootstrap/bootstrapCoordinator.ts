@@ -29,6 +29,7 @@ import {
   perfWindowBoundsRestored,
 } from '../services/perf/perfInstrumentation';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
+import { ragService } from '../services/ragService';
 
 // 启动任务类型
 export type BootstrapTask = 
@@ -172,6 +173,33 @@ async function restoreSessionFromSnapshot(snapshot: RuntimeConfigSnapshot): Prom
   return lastSession;
 }
 
+interface RagStartupRecoveryService {
+  recoverStuckKnowledgeDocuments: () => Promise<{ fileName: string }[]>;
+}
+
+export async function recoverInterruptedKnowledgeIndexingOnStartup(
+  snapshot: RuntimeConfigSnapshot,
+  service: RagStartupRecoveryService = ragService,
+): Promise<void> {
+  if (snapshot.config.rag.autoReindexPolicy !== 'on_startup') {
+    return;
+  }
+
+  try {
+    const recoveredDocuments = await service.recoverStuckKnowledgeDocuments();
+    if (recoveredDocuments.length === 0) {
+      return;
+    }
+
+    console.info(
+      `[Bootstrap] 已恢复 ${recoveredDocuments.length} 个上次中断的知识库索引任务`,
+      recoveredDocuments.map((document) => document.fileName),
+    );
+  } catch (err) {
+    console.warn('[Bootstrap] 恢复中断的知识库索引任务失败:', err);
+  }
+}
+
 /**
  * 启动编排主函数
  * 
@@ -208,6 +236,7 @@ export async function bootstrap(
 
     // 1.5 启动阶段同步 RAG Embedding Provider 到后端运行时
     await ensureRagRuntimeConfigured(snapshot.config, 'startup');
+    await recoverInterruptedKnowledgeIndexingOnStartup(snapshot);
 
     // 2. 并行执行窗口状态初始化
     await Promise.all([

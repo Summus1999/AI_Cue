@@ -531,6 +531,13 @@ export const ragService = {
   },
 
   /**
+   * 恢复应用重启前卡在 indexing 的知识库文档
+   */
+  async recoverStuckKnowledgeDocuments(): Promise<KnowledgeDocumentRecord[]> {
+    return invoke<KnowledgeDocumentRecord[]>('rag_recover_stuck_knowledge_documents');
+  },
+
+  /**
    * 删除知识库
    * @param knowledgeBaseId 知识库 ID
    */

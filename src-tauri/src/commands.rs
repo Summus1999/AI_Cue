@@ -1418,6 +1418,14 @@ pub fn rag_get_knowledge_base_stats(
     crate::database::get_knowledge_base_stats(&db, &knowledge_base_id)
 }
 
+/// 恢复应用重启前卡在 indexing 的知识库文档
+#[tauri::command]
+pub fn rag_recover_stuck_knowledge_documents(
+    db: State<'_, crate::database::Database>,
+) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
+    crate::database::recover_stuck_knowledge_documents(&db)
+}
+
 /// 删除知识库
 #[tauri::command]
 pub fn rag_delete_knowledge_base(

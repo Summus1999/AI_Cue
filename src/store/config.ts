@@ -153,7 +153,7 @@ export const RAG_AUTO_REINDEX_POLICY_OPTIONS: { id: RagAutoReindexPolicy; name: 
   {
     id: 'on_startup',
     name: '启动时扫描',
-    description: '应用启动后尝试扫描并处理待重建或失败文档。',
+    description: '应用启动后恢复上次中断的 indexing 文档，避免状态长期卡死。',
   },
 ];
 

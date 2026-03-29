@@ -745,6 +745,9 @@ fn touch_knowledge_base(
     Ok(())
 }
 
+const KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR: &str =
+    "应用重启后恢复：上次索引任务未完成，请重试";
+
 /// 创建新会话（支持元数据）
 pub fn create_session(
     db: &Database,
@@ -1656,6 +1659,66 @@ pub fn update_knowledge_document_index_state(
     }
 
     Ok(())
+}
+
+/// 恢复应用重启前卡在 indexing 状态的知识库文档
+pub fn recover_stuck_knowledge_documents(
+    db: &Database,
+) -> Result<Vec<KnowledgeDocumentRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let now = current_timestamp_ms();
+
+    let mut stmt = tx
+        .prepare(
+            "SELECT id, knowledge_base_id, title, file_name, file_extension, document_type,
+                    source_path, source_byte_size, source_modified_at, content_hash, fingerprint,
+                    index_state, last_error, chunk_count, embedding_count, created_at, updated_at,
+                    indexed_at
+             FROM kb_documents
+             WHERE index_state = 'indexing'
+             ORDER BY updated_at DESC, created_at DESC, id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], map_knowledge_document_row)
+        .map_err(|e| e.to_string())?;
+    let mut indexing_documents = Vec::new();
+    for row in rows {
+        indexing_documents.push(row.map_err(|e| e.to_string())?);
+    }
+    drop(stmt);
+
+    let mut recovered = Vec::new();
+    let mut touched_knowledge_base_ids = std::collections::HashSet::new();
+
+    for mut document in indexing_documents {
+        document.index_state = KnowledgeDocumentIndexState::Failed;
+        document.last_error = Some(KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR.to_string());
+        document.updated_at = now;
+
+        tx.execute(
+            "UPDATE kb_documents
+             SET index_state = 'failed',
+                 last_error = ?1,
+                 updated_at = ?2
+             WHERE id = ?3",
+            params![document.last_error.as_deref(), now, &document.id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        touched_knowledge_base_ids.insert(document.knowledge_base_id.clone());
+        recovered.push(document);
+    }
+
+    for knowledge_base_id in touched_knowledge_base_ids {
+        touch_knowledge_base(&tx, &knowledge_base_id, now)?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(recovered)
 }
 
 /// 删除知识库文档
@@ -2576,6 +2639,85 @@ mod tests {
             Some("stats-model-v2")
         );
         assert!(stats.latest_indexed_at.is_some());
+    }
+
+    #[test]
+    fn test_recover_stuck_knowledge_documents_marks_indexing_documents_failed() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "Recovery".to_string(),
+                description: Some("restart recovery".to_string()),
+            },
+        )
+        .unwrap();
+
+        let indexing_document = create_knowledge_document(
+            &db,
+            CreateKnowledgeDocumentInput {
+                knowledge_base_id: kb.id.clone(),
+                title: "stuck".to_string(),
+                file_name: "stuck.md".to_string(),
+                file_extension: Some("md".to_string()),
+                document_type: "markdown".to_string(),
+                source_path: "C:\\docs\\stuck.md".to_string(),
+                source_byte_size: 512,
+                source_modified_at: 1_710_000_000_000,
+                content_hash: "sha1:stuck".to_string(),
+                fingerprint: "fp:C:\\docs\\stuck.md:512:1710000000000:stuck".to_string(),
+                index_state: Some(KnowledgeDocumentIndexState::Indexing),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let ready_document = create_knowledge_document(
+            &db,
+            CreateKnowledgeDocumentInput {
+                knowledge_base_id: kb.id.clone(),
+                title: "ready".to_string(),
+                file_name: "ready.md".to_string(),
+                file_extension: Some("md".to_string()),
+                document_type: "markdown".to_string(),
+                source_path: "C:\\docs\\ready.md".to_string(),
+                source_byte_size: 256,
+                source_modified_at: 1_710_000_000_100,
+                content_hash: "sha1:ready".to_string(),
+                fingerprint: "fp:C:\\docs\\ready.md:256:1710000000100:ready".to_string(),
+                index_state: Some(KnowledgeDocumentIndexState::Ready),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let recovered = recover_stuck_knowledge_documents(&db).unwrap();
+
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, indexing_document.id);
+        assert_eq!(recovered[0].index_state, KnowledgeDocumentIndexState::Failed);
+        assert_eq!(
+            recovered[0].last_error.as_deref(),
+            Some(KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR)
+        );
+
+        let persisted_indexing = get_knowledge_document(&db, &indexing_document.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted_indexing.index_state,
+            KnowledgeDocumentIndexState::Failed
+        );
+        assert_eq!(
+            persisted_indexing.last_error.as_deref(),
+            Some(KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR)
+        );
+
+        let persisted_ready = get_knowledge_document(&db, &ready_document.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted_ready.index_state, KnowledgeDocumentIndexState::Ready);
+        assert_eq!(persisted_ready.last_error, None);
     }
 
     #[test]

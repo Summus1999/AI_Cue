@@ -9,10 +9,10 @@
 - `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建/异常文档重试请求模型、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件、embedding 结构化日志与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
-- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计，以及文档预览/跳过导入所需的明细查询。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
-- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试与知识库统计入口。
-- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、后台任务状态查询、文档 chunk 明细查询与类型定义。
+- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计，以及应用重启后 `indexing` 卡死文档恢复。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
+- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复与知识库统计入口。
+- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与类型定义。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
 - `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，供主流程与回归测试复用。
@@ -28,7 +28,8 @@
 - `src/components/knowledge/KnowledgeImportPanel.tsx` - 文档导入面板组件，负责文件选择、发起导入、乐观状态行、阶段进度与失败展示。
 - `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
-- `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
+- `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置，并按 `on_startup` 策略恢复中断的知识库索引状态。
+- `src/bootstrap/bootstrapCoordinator.test.ts` - 启动恢复策略回归测试，覆盖 `on_startup` 触发与非触发分支。
 - `src/components/SettingsPanel.tsx` - 当前设置面板，已增加 RAG 配置区块和知识库入口，并会在保存配置后同步 RAG runtime 配置。
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
@@ -123,13 +124,13 @@
   - ✅️ 7.7 已接入删除文档、重建索引、删除知识库操作，并依赖 store 即时刷新当前列表与选中状态
   - ✅️ 7.8 `SettingsPanel.tsx` 已增加 RAG 配置区块和知识库入口
 
-- ❌️ 8.0 做增量索引、后台重试与运维加固
+- ✅️ 8.0 做增量索引、后台重试与运维加固
   - ✅️ 8.1 已基于 fingerprint 对同路径未变化且模型一致的 ready 文档做 unchanged file 跳过策略
   - ✅️ 8.2 已补齐整库级别的真实重建索引逻辑，并复用现有单文档重建链路顺序处理全部文档
   - ✅️ 8.3 已提供知识库维度的后台重试命令，可批量处理 `pending` 或 `failed` 文档并透传进度到前端
   - ✅️ 8.4 已为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
   - ✅️ 8.5 已提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
-  - ❌️ 8.6 尚未处理应用重启后 `indexing` 状态卡死恢复
+  - ✅️ 8.6 已在启动阶段按 `on_startup` 策略恢复应用重启前卡在 `indexing` 的文档，统一转为 `failed` 并保留可重试错误信息
 
 - ❌️ 9.0 补齐测试、验收与文档同步
   - ✅️ 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
