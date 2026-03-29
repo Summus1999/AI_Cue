@@ -158,14 +158,14 @@ function buildStreamEventName(
   return `${eventPrefix}:${requestId}`;
 }
 
-export async function cancelStreamRequest(requestId: string): Promise<void> {
+export function cancelStreamRequest(requestId: string): void {
+  // 本地立即停止监听
   localStreamControllers.get(requestId)?.();
 
-  try {
-    await invoke('ai_cancel_stream', { requestId });
-  } catch (error) {
-    console.error('[AI] 取消流请求失败:', error);
-  }
+  // 后端异步取消，不阻塞前端
+  invoke('ai_cancel_stream', { requestId }).catch((error) => {
+    console.warn('[AI] 后端取消流请求失败（本地已停止）:', error);
+  });
 }
 
 async function streamWithEvent(
@@ -176,7 +176,6 @@ async function streamWithEvent(
 ): Promise<StreamResult> {
   const eventName = buildStreamEventName(options.requestId, options.eventPrefix ?? 'ai-stream');
   const charQueue: string[] = [];
-  let isProcessing = false;
   let isDone = false;
   let resolveDone: ((result: StreamResult) => void) | null = null;
   let rejectDone: ((error: Error) => void) | null = null;
@@ -194,8 +193,13 @@ async function streamWithEvent(
     charQueue.length = 0;
     localStreamControllers.delete(options.requestId);
     if (unlistenFn) {
-      unlistenFn();
-      unlistenFn = null;
+      try {
+        unlistenFn();
+      } catch (e) {
+        console.warn('[AI] 事件监听器清理异常:', e);
+      } finally {
+        unlistenFn = null;
+      }
     }
   };
 
@@ -221,50 +225,37 @@ async function streamWithEvent(
   }, STREAM_TIMEOUT_MS);
 
   const processQueue = () => {
-    if (isSettled) {
-      return;
-    }
-    if (isProcessing || charQueue.length === 0) {
-      if (isDone && charQueue.length === 0) {
-        onChunk('', true, streamResult.isComplete, streamResult.finishReason);
-        resolveStream(streamResult);
-      }
-      return;
+    if (isSettled) return;
+
+    // 有数据就批量处理
+    if (charQueue.length > 0) {
+      const batch = charQueue.splice(0, charQueue.length);
+      onChunk(batch.join(''), false);
     }
 
-    isProcessing = true;
-    const char = charQueue.shift()!;
-    onChunk(char, false);
-
-    setTimeout(() => {
-      isProcessing = false;
-      processQueue();
-    }, 30);
+    // 队列已空且流已结束，触发完成
+    if (isDone && charQueue.length === 0) {
+      onChunk('', true, streamResult.isComplete, streamResult.finishReason);
+      resolveStream(streamResult);
+      return;
+    }
   };
 
   const unlisten = await listen<StreamEvent>(eventName, (event) => {
-    if (isSettled) {
-      return;
-    }
+    if (isSettled) return;
 
     if (event.payload.done) {
       isDone = true;
-      // 保存流完成状态
       streamResult = {
         isComplete: event.payload.isComplete ?? true,
         finishReason: event.payload.finishReason,
       };
-      if (charQueue.length === 0) {
-        onChunk('', true, streamResult.isComplete, streamResult.finishReason);
-        resolveStream(streamResult);
-      }
+      processQueue();
       return;
     }
 
     if (event.payload.content) {
-      for (const char of event.payload.content) {
-        charQueue.push(char);
-      }
+      charQueue.push(event.payload.content);
       processQueue();
     }
   });

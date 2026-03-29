@@ -756,6 +756,27 @@ impl KnowledgeBaseImportOrchestrator {
             }
         };
 
+        // 解析完成后，验证文件在解析期间未被外部修改
+        let post_parse_snapshot = SourceDocumentSnapshot::from_path(&request.path)
+            .map_err(|e| format!("解析后校验失败: {e}"))?;
+        if post_parse_snapshot.fingerprint != snapshot.fingerprint {
+            let _ = self.mark_document_failed(
+                &document.id,
+                "文件在解析期间被外部修改，导入已中止",
+            );
+            self.report_progress(
+                progress_callback,
+                progress_context.event(
+                    KnowledgeBaseImportStage::Parse,
+                    KnowledgeBaseImportProgressStatus::Failed,
+                    "文件在解析期间被外部修改，请重新导入".to_string(),
+                    None,
+                    None,
+                ),
+            );
+            return Err("文件在解析期间被外部修改，导入已中止。请重试。".to_string());
+        }
+
         self.report_progress(
             progress_callback,
             progress_context.event(

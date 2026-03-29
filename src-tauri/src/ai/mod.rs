@@ -45,17 +45,18 @@ pub struct ProviderRegistry {
 
 impl Clone for ProviderRegistry {
     fn clone(&self) -> Self {
+        let dynamic_clone = match self.dynamic.read() {
+            Ok(map) => map.clone(),
+            Err(poisoned) => {
+                tracing::warn!("ProviderRegistry clone 时锁已中毒，使用中毒数据恢复");
+                poisoned.into_inner().clone()
+            }
+        };
         Self {
             qwen: self.qwen.clone(),
             openai_compat: self.openai_compat.clone(),
             claude: self.claude.clone(),
-            // 深拷贝 dynamic HashMap
-            dynamic: RwLock::new(
-                self.dynamic
-                    .read()
-                    .map(|map| map.clone())
-                    .unwrap_or_default(),
-            ),
+            dynamic: RwLock::new(dynamic_clone),
         }
     }
 }
@@ -235,14 +236,19 @@ impl ProviderRegistry {
         model: &str,
         messages: Vec<ChatMessage>,
     ) -> Result<String, traits::AIError> {
-        let dynamic = self
-            .dynamic
-            .read()
-            .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
-
-        let provider = dynamic
-            .get(provider_id)
-            .ok_or_else(|| traits::AIError::Config(format!("Provider '{}' 不存在", provider_id)))?;
+        // 在锁内 clone Provider，释放锁后再 await，避免跨 await 持有读锁
+        let provider = {
+            let dynamic = self
+                .dynamic
+                .read()
+                .map_err(|e| traits::AIError::Config(format!("锁获取失败: {}", e)))?;
+            dynamic
+                .get(provider_id)
+                .ok_or_else(|| {
+                    traits::AIError::Config(format!("Provider '{}' 不存在", provider_id))
+                })?
+                .clone()
+        };
 
         provider.chat(config, model, messages).await
     }

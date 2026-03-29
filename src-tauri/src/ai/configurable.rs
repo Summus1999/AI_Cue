@@ -77,7 +77,7 @@ impl ConfigurableProvider {
         model: &str,
         messages: &[ChatMessage],
         stream: bool,
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value, super::traits::AIError> {
         let transform = self.descriptor.request_transform.as_ref();
 
         let model_field = transform
@@ -91,16 +91,29 @@ impl ConfigurableProvider {
             .unwrap_or("stream");
 
         let mut body = serde_json::json!({
-            model_field: model,
-            messages_field: messages,
-            stream_field: stream,
+            "model_field": model,
+            "messages_field": messages,
+            "stream_field": stream,
         });
 
-        // 重命名字段（因为我们用的是字面量作为 key）
-        let body_obj = body.as_object_mut().unwrap();
-        let model_value = body_obj.remove("model_field").unwrap();
-        let messages_value = body_obj.remove("messages_field").unwrap();
-        let stream_value = body_obj.remove("stream_field").unwrap();
+        // 重命名字段（因为 json! 宏使用的是字面量 key）
+        let body_obj = body.as_object_mut()
+            .ok_or_else(|| super::traits::AIError::Config(
+                "请求体构建异常：不是 JSON 对象".into(),
+            ))?;
+
+        let model_value = body_obj.remove("model_field")
+            .ok_or_else(|| super::traits::AIError::Config(
+                "请求体构建异常：model_field 缺失".into(),
+            ))?;
+        let messages_value = body_obj.remove("messages_field")
+            .ok_or_else(|| super::traits::AIError::Config(
+                "请求体构建异常：messages_field 缺失".into(),
+            ))?;
+        let stream_value = body_obj.remove("stream_field")
+            .ok_or_else(|| super::traits::AIError::Config(
+                "请求体构建异常：stream_field 缺失".into(),
+            ))?;
 
         body_obj.insert(model_field.to_string(), model_value);
         body_obj.insert(messages_field.to_string(), messages_value);
@@ -115,7 +128,24 @@ impl ConfigurableProvider {
             }
         }
 
-        body
+        Ok(body)
+    }
+
+    /// 从 JSON 响应中按点号路径提取内容
+    /// 支持 "choices.0.message.content" 格式，数字段表示数组索引
+    fn extract_content(json: &serde_json::Value, content_path: Option<&str>) -> String {
+        let path = content_path.unwrap_or("choices.0.message.content");
+        let mut current = json;
+
+        for segment in path.split('.') {
+            current = if let Ok(index) = segment.parse::<usize>() {
+                &current[index]
+            } else {
+                &current[segment]
+            };
+        }
+
+        current.as_str().unwrap_or("").to_string()
     }
 }
 
@@ -134,7 +164,7 @@ impl AIProvider for ConfigurableProvider {
 
         let url = self.build_url(config, endpoint);
         let url = self.add_auth_to_url(&url, &config.api_key);
-        let body = self.build_request_body(model, &messages, false);
+        let body = self.build_request_body(model, &messages, false)?;
 
         let client = create_http_client(60)?;
 
@@ -176,11 +206,13 @@ impl AIProvider for ConfigurableProvider {
             .await
             .map_err(|e| super::traits::AIError::StreamParse(e.to_string()))?;
 
-        // 简化实现：使用默认的 content path
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        // 使用 response_transform.content_path 配置提取内容，默认为 OpenAI 格式
+        let content_path = self
+            .descriptor
+            .response_transform
+            .as_ref()
+            .and_then(|t| t.content_path.as_deref());
+        let content = Self::extract_content(&json, content_path);
 
         Ok(content)
     }
@@ -201,7 +233,7 @@ impl AIProvider for ConfigurableProvider {
 
         let url = self.build_url(config, endpoint);
         let url = self.add_auth_to_url(&url, &config.api_key);
-        let body = self.build_request_body(model, &messages, true);
+        let body = self.build_request_body(model, &messages, true)?;
 
         let client = create_http_client(120)?;
 
