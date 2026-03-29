@@ -45,6 +45,18 @@ pub struct ReindexKnowledgeDocumentRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReindexKnowledgeBaseRequest {
+    pub knowledge_base_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_options: Option<ParseOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_config: Option<ChunkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreparedKnowledgeBaseImport {
     pub document: KnowledgeDocumentRecord,
     pub parsed_document: ParsedDocument,
@@ -73,6 +85,23 @@ pub struct CompletedKnowledgeBaseImport {
     pub chunks: Vec<DocumentChunk>,
     pub persisted_chunks: Vec<KnowledgeChunkRecord>,
     pub persisted_embeddings: Vec<KnowledgeEmbeddingRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeBaseReindexFailure {
+    pub document_id: String,
+    pub file_name: String,
+    pub source_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletedKnowledgeBaseReindex {
+    pub knowledge_base_id: String,
+    pub documents: Vec<CompletedKnowledgeBaseImport>,
+    pub failures: Vec<KnowledgeBaseReindexFailure>,
 }
 
 pub type KnowledgeBaseImportProgressCallback =

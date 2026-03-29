@@ -24,11 +24,12 @@ pub use self::embedder::{
     EmbeddingProviderKind, OpenAiEmbedding, QwenEmbedding,
 };
 pub use self::knowledge_base::{
-    CompletedKnowledgeBaseImport, KnowledgeBaseImportOperation, KnowledgeBaseImportOrchestrator,
-    KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback,
-    KnowledgeBaseImportProgressStatus, KnowledgeBaseImportRequest, KnowledgeBaseImportStage,
-    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, ReindexKnowledgeDocumentRequest,
-    SourceDocumentSnapshot,
+    CompletedKnowledgeBaseImport, CompletedKnowledgeBaseReindex, KnowledgeBaseImportOperation,
+    KnowledgeBaseImportOrchestrator, KnowledgeBaseImportProgress,
+    KnowledgeBaseImportProgressCallback, KnowledgeBaseImportProgressStatus,
+    KnowledgeBaseImportRequest, KnowledgeBaseImportStage, KnowledgeBaseReindexFailure,
+    PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, ReindexKnowledgeBaseRequest,
+    ReindexKnowledgeDocumentRequest, SourceDocumentSnapshot,
 };
 pub use self::ocr::{
     create_default_ocr_engine, OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult,
@@ -189,6 +190,62 @@ impl RagEngine {
         orchestrator
             .reindex_document_with_embeddings_and_progress(request, embedder, progress_callback)
             .await
+    }
+
+    pub async fn reindex_knowledge_base(
+        &self,
+        request: &knowledge_base::ReindexKnowledgeBaseRequest,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
+        self.reindex_knowledge_base_with_progress(request, None).await
+    }
+
+    pub async fn reindex_knowledge_base_with_progress(
+        &self,
+        request: &knowledge_base::ReindexKnowledgeBaseRequest,
+        progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
+        let embedder = self.configured_embedder()?;
+        let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
+        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?;
+        let mut completed = Vec::with_capacity(documents.len());
+        let mut failures = Vec::new();
+
+        for document in documents {
+            let child_request_id = request
+                .progress_event_id
+                .as_ref()
+                .map(|request_id| format!("{request_id}:{}", document.id));
+
+            let reindex_request = knowledge_base::ReindexKnowledgeDocumentRequest {
+                document_id: document.id.clone(),
+                parse_options: request.parse_options.clone(),
+                chunk_config: request.chunk_config.clone(),
+                progress_event_id: child_request_id,
+            };
+
+            match orchestrator
+                .reindex_document_with_embeddings_and_progress(
+                    &reindex_request,
+                    embedder.clone(),
+                    progress_callback.clone(),
+                )
+                .await
+            {
+                Ok(result) => completed.push(result),
+                Err(error) => failures.push(knowledge_base::KnowledgeBaseReindexFailure {
+                    document_id: document.id,
+                    file_name: document.file_name,
+                    source_path: document.source_path,
+                    error,
+                }),
+            }
+        }
+
+        Ok(knowledge_base::CompletedKnowledgeBaseReindex {
+            knowledge_base_id: request.knowledge_base_id.clone(),
+            documents: completed,
+            failures,
+        })
     }
 
     pub async fn search(
@@ -731,5 +788,108 @@ mod tests {
             crate::database::list_knowledge_documents(&db, &knowledge_base_id).unwrap();
         assert_eq!(stored_documents.len(), 1);
         assert_eq!(stored_documents[0].id, imported.document.id);
+    }
+
+    #[tokio::test]
+    async fn test_reindex_knowledge_base_reindexes_all_documents_and_keeps_ids() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let knowledge_base_id = create_test_knowledge_base(&db, "Engine Reindex All");
+        let first_path = create_temp_document("engine-reindex-base-1.md", "# Rust\n\nDoc one.\n");
+        let second_path = create_temp_document("engine-reindex-base-2.md", "# Rust\n\nDoc two.\n");
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v1",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+
+        let first_import = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: first_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+        let second_import = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: second_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+
+        std::fs::write(
+            &first_path,
+            "# Rust\n\nDoc one.\n\n## Reindexed\n\nUpdated content for doc one.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &second_path,
+            "# Rust\n\nDoc two.\n\n## Reindexed\n\nUpdated content for doc two.\n",
+        )
+        .unwrap();
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v2",
+                vec![0.0, 1.0, 0.0],
+            )))
+            .unwrap();
+
+        let reindexed = engine
+            .reindex_knowledge_base(&ReindexKnowledgeBaseRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                parse_options: None,
+                chunk_config: Some(ChunkConfig {
+                    max_chunk_size: 70,
+                    overlap_size: 0,
+                    min_chunk_size: 18,
+                    prefer_structure_boundary: true,
+                }),
+                progress_event_id: Some("kb-reindex-all".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(reindexed.knowledge_base_id, knowledge_base_id);
+        assert_eq!(reindexed.documents.len(), 2);
+        assert!(reindexed.failures.is_empty());
+        assert!(reindexed
+            .documents
+            .iter()
+            .all(|result| result.document.index_state == crate::database::KnowledgeDocumentIndexState::Ready));
+        assert!(reindexed
+            .documents
+            .iter()
+            .all(|result| result
+                .persisted_embeddings
+                .iter()
+                .all(|embedding| embedding.model_id == "mock-kb-model-v2")));
+
+        let reindexed_ids = reindexed
+            .documents
+            .iter()
+            .map(|result| result.document.id.clone())
+            .collect::<Vec<_>>();
+        assert!(reindexed_ids.contains(&first_import.document.id));
+        assert!(reindexed_ids.contains(&second_import.document.id));
+
+        let stored_documents =
+            crate::database::list_knowledge_documents(&db, &knowledge_base_id).unwrap();
+        assert_eq!(stored_documents.len(), 2);
+        assert!(stored_documents
+            .iter()
+            .any(|document| document.id == first_import.document.id));
+        assert!(stored_documents
+            .iter()
+            .any(|document| document.id == second_import.document.id));
     }
 }

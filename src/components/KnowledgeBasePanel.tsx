@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Database, RefreshCw, Trash2 } from 'lucide-react';
 import { useRagStore } from '../store/rag';
+import { loadConfig } from '../store/config';
 import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
 import { KnowledgeDocumentPreview } from './knowledge/KnowledgeDocumentPreview';
@@ -19,12 +20,14 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     isLoadingKnowledgeDocumentsByKnowledgeBaseId,
     isLoadingKnowledgeDocumentChunksById,
     isDeletingKnowledgeBaseById,
+    isReindexingKnowledgeBaseById,
     knowledgeDocumentDetailsById,
     knowledgeDocumentsByKnowledgeBaseId,
     knowledgeDocumentChunksById,
     error,
     clearError,
     deleteKnowledgeBase,
+    reindexKnowledgeBase,
     refreshKnowledgeBases,
     refreshKnowledgeDocument,
     refreshKnowledgeDocumentChunks,
@@ -72,6 +75,9 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     : false;
   const isDeletingKnowledgeBase = currentKnowledgeBaseId
     ? isDeletingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
+    : false;
+  const isReindexingKnowledgeBase = currentKnowledgeBaseId
+    ? isReindexingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
     : false;
   const [confirmDeleteKnowledgeBaseId, setConfirmDeleteKnowledgeBaseId] = useState<string | null>(null);
 
@@ -160,6 +166,25 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     }
   };
 
+  const handleReindexKnowledgeBase = async () => {
+    if (!currentKnowledgeBaseId) {
+      return;
+    }
+
+    clearError();
+    try {
+      const config = await loadConfig();
+      await reindexKnowledgeBase({
+        knowledgeBaseId: currentKnowledgeBaseId,
+        parseOptions: {
+          enableOcr: config.rag.enableOcr,
+        },
+      });
+    } catch (reindexError) {
+      console.error('Failed to reindex knowledge base:', reindexError);
+    }
+  };
+
   return (
     <div className="flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       <div
@@ -222,25 +247,38 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                 </p>
               </div>
               {currentKnowledgeBase && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleDeleteKnowledgeBase();
-                  }}
-                  disabled={isDeletingKnowledgeBase}
-                  className={`flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
-                    confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
-                      ? 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'
-                      : 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
-                  } disabled:cursor-not-allowed disabled:opacity-50`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  {isDeletingKnowledgeBase
-                    ? '删除中...'
-                    : confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
-                      ? '确认删除知识库'
-                      : '删除当前知识库'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleReindexKnowledgeBase();
+                    }}
+                    disabled={isDeletingKnowledgeBase || isReindexingKnowledgeBase || currentDocuments.length === 0}
+                    className="flex items-center gap-1 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReindexingKnowledgeBase ? 'animate-spin' : ''}`} />
+                    {isReindexingKnowledgeBase ? '整库重建中...' : '重建当前知识库'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDeleteKnowledgeBase();
+                    }}
+                    disabled={isDeletingKnowledgeBase || isReindexingKnowledgeBase}
+                    className={`flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                      confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
+                        ? 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'
+                        : 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
+                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {isDeletingKnowledgeBase
+                      ? '删除中...'
+                      : confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
+                        ? '确认删除知识库'
+                        : '删除当前知识库'}
+                  </button>
+                </div>
               )}
             </div>
 

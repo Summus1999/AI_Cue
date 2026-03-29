@@ -203,12 +203,32 @@ export interface ReindexKnowledgeDocumentRequest {
   progressEventId?: string;
 }
 
+export interface ReindexKnowledgeBaseRequest {
+  knowledgeBaseId: string;
+  parseOptions?: ParseOptions;
+  chunkConfig?: ChunkConfig;
+  progressEventId?: string;
+}
+
 export interface CompletedKnowledgeBaseImport {
   document: KnowledgeDocumentRecord;
   parsedDocument: ParsedDocument;
   chunks: DocumentChunk[];
   persistedChunks: KnowledgeChunkRecord[];
   persistedEmbeddings: KnowledgeEmbeddingRecord[];
+}
+
+export interface KnowledgeBaseReindexFailure {
+  documentId: string;
+  fileName: string;
+  sourcePath: string;
+  error: string;
+}
+
+export interface CompletedKnowledgeBaseReindex {
+  knowledgeBaseId: string;
+  documents: CompletedKnowledgeBaseImport[];
+  failures: KnowledgeBaseReindexFailure[];
 }
 
 export type KnowledgeBaseImportOperation = 'import' | 'reindex';
@@ -263,12 +283,19 @@ function createKnowledgeBaseImportProgressId(): string {
 
 async function onKnowledgeBaseImportProgress(
   callback: (progress: KnowledgeBaseImportProgress) => void,
-  progressEventId?: string,
+  options: {
+    requestId?: string;
+    requestIdPrefix?: string;
+  } = {},
 ): Promise<() => void> {
-  const expectedRequestId = normalizeProgressEventId(progressEventId);
+  const expectedRequestId = normalizeProgressEventId(options.requestId);
+  const expectedRequestIdPrefix = normalizeProgressEventId(options.requestIdPrefix);
 
   return listen<KnowledgeBaseImportProgress>(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, (event) => {
     if (expectedRequestId && event.payload.requestId !== expectedRequestId) {
+      return;
+    }
+    if (expectedRequestIdPrefix && !event.payload.requestId?.startsWith(expectedRequestIdPrefix)) {
       return;
     }
 
@@ -294,11 +321,42 @@ async function invokeKnowledgeBaseImportWithProgress<
   let unlisten: (() => void) | null = null;
 
   if (onProgress) {
-    unlisten = await onKnowledgeBaseImportProgress(onProgress, progressEventId);
+    unlisten = await onKnowledgeBaseImportProgress(onProgress, {
+      requestId: progressEventId,
+    });
   }
 
   try {
     return await invoke<CompletedKnowledgeBaseImport>(command, {
+      request: requestWithProgress,
+    });
+  } finally {
+    unlisten?.();
+  }
+}
+
+async function invokeKnowledgeBaseBatchReindexWithProgress(
+  request: ReindexKnowledgeBaseRequest,
+  onProgress?: (progress: KnowledgeBaseImportProgress) => void,
+): Promise<CompletedKnowledgeBaseReindex> {
+  await ensureRagRuntimeConfigured(undefined, 'rag_reindex_knowledge_base');
+
+  const progressEventId =
+    normalizeProgressEventId(request.progressEventId)
+    || (onProgress ? createKnowledgeBaseImportProgressId() : undefined);
+  const requestWithProgress = progressEventId
+    ? { ...request, progressEventId }
+    : request;
+  let unlisten: (() => void) | null = null;
+
+  if (onProgress && progressEventId) {
+    unlisten = await onKnowledgeBaseImportProgress(onProgress, {
+      requestIdPrefix: `${progressEventId}:`,
+    });
+  }
+
+  try {
+    return await invoke<CompletedKnowledgeBaseReindex>('rag_reindex_knowledge_base', {
       request: requestWithProgress,
     });
   } finally {
@@ -507,6 +565,17 @@ export const ragService = {
       request,
       onProgress,
     );
+  },
+
+  /**
+   * 重建整个知识库中的所有文档索引
+   * @param request 整库重建索引请求
+   */
+  async reindexKnowledgeBase(
+    request: ReindexKnowledgeBaseRequest,
+    onProgress?: (progress: KnowledgeBaseImportProgress) => void,
+  ): Promise<CompletedKnowledgeBaseReindex> {
+    return invokeKnowledgeBaseBatchReindexWithProgress(request, onProgress);
   },
 
   /**

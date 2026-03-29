@@ -1089,10 +1089,11 @@ pub fn log_from_frontend(level: String, module: String, message: String, data: O
 
 use crate::rag::{
     chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig,
-    CompletedKnowledgeBaseImport, ContextConfig, DocumentChunk, EmbeddingProviderConfig,
-    KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback, KnowledgeBaseImportRequest,
-    KnowledgeBaseImportTaskRegistry, KnowledgeBaseImportTaskSnapshot, ParseOptions, ParsedDocument,
-    RagContextBundle, RagEngine, ReindexKnowledgeDocumentRequest,
+    CompletedKnowledgeBaseImport, CompletedKnowledgeBaseReindex, ContextConfig, DocumentChunk,
+    EmbeddingProviderConfig, KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback,
+    KnowledgeBaseImportRequest, KnowledgeBaseImportTaskRegistry,
+    KnowledgeBaseImportTaskSnapshot, ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
+    ReindexKnowledgeBaseRequest, ReindexKnowledgeDocumentRequest,
 };
 
 const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT: &str = "rag-import-progress";
@@ -1309,6 +1310,30 @@ pub async fn rag_reindex_knowledge_document(
 
     engine
         .reindex_knowledge_document_with_progress(
+            &request,
+            Some(create_rag_import_progress_callback(
+                &app,
+                task_registry.inner().clone(),
+            )),
+        )
+        .await
+}
+
+/// 重建整个知识库中的所有文档索引
+#[tauri::command]
+pub async fn rag_reindex_knowledge_base(
+    app: AppHandle,
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
+    request: ReindexKnowledgeBaseRequest,
+) -> Result<CompletedKnowledgeBaseReindex, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
+    engine
+        .reindex_knowledge_base_with_progress(
             &request,
             Some(create_rag_import_progress_callback(
                 &app,

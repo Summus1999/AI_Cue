@@ -3,6 +3,7 @@ import { createStore } from 'zustand/vanilla';
 
 import type {
   CompletedKnowledgeBaseImport,
+  CompletedKnowledgeBaseReindex,
   KnowledgeBaseImportProgress,
   KnowledgeBaseImportTaskSnapshot,
   KnowledgeBaseRecord,
@@ -117,6 +118,18 @@ function createCompletedImport(document: KnowledgeDocumentRecord): CompletedKnow
   };
 }
 
+function createCompletedReindex(
+  knowledgeBaseId: string,
+  documents: KnowledgeDocumentRecord[],
+  failures: CompletedKnowledgeBaseReindex['failures'] = [],
+): CompletedKnowledgeBaseReindex {
+  return {
+    knowledgeBaseId,
+    documents: documents.map((document) => createCompletedImport(document)),
+    failures,
+  };
+}
+
 function createMockService(overrides: Partial<Parameters<typeof createRagState>[0]> = {}) {
   const stats: RagStats = {
     total_embeddings: 0,
@@ -139,6 +152,7 @@ function createMockService(overrides: Partial<Parameters<typeof createRagState>[
     listKnowledgeDocumentChunks: vi.fn().mockResolvedValue([]),
     deleteKnowledgeDocument: vi.fn().mockResolvedValue(undefined),
     importKnowledgeDocument: vi.fn(),
+    reindexKnowledgeBase: vi.fn(),
     reindexKnowledgeDocument: vi.fn(),
     listKnowledgeImportTasks: vi.fn().mockResolvedValue([]),
     getKnowledgeImportTask: vi.fn().mockResolvedValue(null),
@@ -253,5 +267,64 @@ describe('useRagStore state', () => {
       stage: 'finalize',
     });
     expect(store.getState().isReindexingByDocumentId['doc-1']).toBe(false);
+  });
+
+  it('tracks knowledge-base reindex progress and preserves per-document task state', async () => {
+    const firstDocument = createDocument('doc-1', 'kb-1');
+    const secondDocument = createDocument('doc-2', 'kb-1');
+    const runningProgress: KnowledgeBaseImportProgress = {
+      requestId: 'batch-1:doc-1',
+      operation: 'reindex',
+      stage: 'chunk',
+      status: 'running',
+      current: 2,
+      total: 4,
+      knowledgeBaseId: 'kb-1',
+      documentId: 'doc-1',
+      fileName: firstDocument.fileName,
+      sourcePath: firstDocument.sourcePath,
+      chunkCount: 2,
+      embeddingCount: null,
+      message: 'chunking',
+    };
+    const completedTask = createTaskSnapshot('batch-1:doc-1', 'doc-1', 'completed');
+
+    const service = createMockService({
+      reindexKnowledgeBase: vi.fn().mockImplementation(async (_request, onProgress) => {
+        onProgress?.(runningProgress);
+        return createCompletedReindex('kb-1', [firstDocument, secondDocument], [
+          {
+            documentId: 'doc-2',
+            fileName: secondDocument.fileName,
+            sourcePath: secondDocument.sourcePath,
+            error: 'parse failed',
+          },
+        ]);
+      }),
+      listKnowledgeImportTasks: vi.fn().mockResolvedValue([completedTask]),
+      listKnowledgeBases: vi.fn().mockResolvedValue([createKnowledgeBase('kb-1', 'Algorithms')]),
+      listKnowledgeDocuments: vi.fn().mockResolvedValue([firstDocument, secondDocument]),
+      getKnowledgeDocument: vi.fn().mockResolvedValue(firstDocument),
+      listKnowledgeDocumentChunks: vi.fn().mockResolvedValue([createChunk(firstDocument.id)]),
+    });
+    const store = createStore<RagState>(createRagState(service));
+    store.setState({
+      ...store.getState(),
+      currentKnowledgeBaseId: 'kb-1',
+      currentDocumentId: 'doc-1',
+    });
+
+    const result = await store.getState().reindexKnowledgeBase({
+      knowledgeBaseId: 'kb-1',
+    });
+
+    expect(result.documents).toHaveLength(2);
+    expect(result.failures).toHaveLength(1);
+    expect(store.getState().isReindexingKnowledgeBaseById['kb-1']).toBe(false);
+    expect(store.getState().reindexStatesByDocumentId['doc-1']).toMatchObject({
+      requestId: 'batch-1:doc-1',
+      status: 'completed',
+    });
+    expect(store.getState().error).toContain('1 个文档失败');
   });
 });

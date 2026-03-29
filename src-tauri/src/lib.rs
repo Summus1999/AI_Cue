@@ -223,6 +223,7 @@ pub fn run() {
             commands::rag_delete_vectors,
             commands::rag_import_knowledge_document,
             commands::rag_reindex_knowledge_document,
+            commands::rag_reindex_knowledge_base,
             commands::rag_list_knowledge_import_tasks,
             commands::rag_get_knowledge_import_task,
             commands::rag_create_knowledge_base,

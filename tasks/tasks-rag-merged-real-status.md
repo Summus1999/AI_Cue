@@ -1,6 +1,6 @@
 ## Relevant Files
 
-- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及知识库导入/重建进度透传。
+- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及单文档/整库级知识库导入与重建进度透传。
 - `src-tauri/src/rag/retriever.rs` - 消息向量检索、知识库向量检索、结果融合与结构化返回。
 - `src-tauri/src/rag/context_builder.rs` - Prompt context 构建与 citation 元信息生成。
 - `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断。
@@ -10,9 +10,9 @@
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入，以及文档预览/跳过导入所需的明细查询。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建索引命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
 - `src-tauri/src/lib.rs` - Tauri 命令注册。
-- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装、后台任务状态查询、文档 chunk 明细查询与类型定义。
+- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建进度监听封装、后台任务状态查询、文档 chunk 明细查询与类型定义。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
 - `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，供主流程与回归测试复用。
@@ -20,10 +20,10 @@
 - `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback 的前端回归测试。
 - `src/services/__tests__/chatReplay.test.ts` - 覆盖 continue generate / retry 请求准备逻辑的前端回归测试。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
-- `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、导入任务、文档详情/分块、重建索引状态与错误状态。
-- `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、文档详情/分块、任务快照与重建索引状态同步。
+- `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、导入任务、单文档/整库重建索引状态与错误状态。
+- `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、文档详情/分块、任务快照、单文档与整库重建索引状态同步。
 - `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口，并将知识库页面切换到独立面板组件。
-- `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、导入区、删除知识库操作、文档列表与文档预览挂载点。
+- `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、导入区、整库重建索引、删除知识库操作、文档列表与文档预览挂载点。
 - `src/components/knowledge/KnowledgeDocumentList.tsx` - 当前知识库的文档列表组件，负责文档状态展示与当前文档选择。
 - `src/components/knowledge/KnowledgeImportPanel.tsx` - 文档导入面板组件，负责文件选择、发起导入、乐观状态行、阶段进度与失败展示。
 - `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
@@ -125,7 +125,7 @@
 
 - ❌️ 8.0 做增量索引、后台重试与运维加固
   - ✅️ 8.1 已基于 fingerprint 对同路径未变化且模型一致的 ready 文档做 unchanged file 跳过策略
-  - ❌️ 8.2 尚未提供单文档或整库级别的真实重建索引逻辑
+  - ✅️ 8.2 已补齐整库级别的真实重建索引逻辑，并复用现有单文档重建链路顺序处理全部文档
   - ❌️ 8.3 尚未提供后台扫描 / 重试命令来处理 `pending` 或 `failed` 文档
   - ❌️ 8.4 尚未为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
   - ❌️ 8.5 尚未提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
