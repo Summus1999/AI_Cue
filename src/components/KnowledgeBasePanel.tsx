@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { ArrowLeft, Database, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Database, RefreshCw, Trash2 } from 'lucide-react';
 import { useRagStore } from '../store/rag';
 import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
@@ -18,10 +18,13 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     isLoadingKnowledgeDocumentDetailsById,
     isLoadingKnowledgeDocumentsByKnowledgeBaseId,
     isLoadingKnowledgeDocumentChunksById,
+    isDeletingKnowledgeBaseById,
     knowledgeDocumentDetailsById,
     knowledgeDocumentsByKnowledgeBaseId,
     knowledgeDocumentChunksById,
     error,
+    clearError,
+    deleteKnowledgeBase,
     refreshKnowledgeBases,
     refreshKnowledgeDocument,
     refreshKnowledgeDocumentChunks,
@@ -67,6 +70,14 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
   const isLoadingDocumentChunks = currentDocumentId
     ? isLoadingKnowledgeDocumentChunksById[currentDocumentId] ?? false
     : false;
+  const isDeletingKnowledgeBase = currentKnowledgeBaseId
+    ? isDeletingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
+    : false;
+  const [confirmDeleteKnowledgeBaseId, setConfirmDeleteKnowledgeBaseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirmDeleteKnowledgeBaseId(null);
+  }, [currentKnowledgeBaseId]);
 
   useEffect(() => {
     if (!currentKnowledgeBaseId) {
@@ -130,6 +141,25 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     setCurrentKnowledgeBase(knowledgeBaseId);
   };
 
+  const handleDeleteKnowledgeBase = async () => {
+    if (!currentKnowledgeBaseId) {
+      return;
+    }
+
+    if (confirmDeleteKnowledgeBaseId !== currentKnowledgeBaseId) {
+      setConfirmDeleteKnowledgeBaseId(currentKnowledgeBaseId);
+      return;
+    }
+
+    clearError();
+    try {
+      await deleteKnowledgeBase(currentKnowledgeBaseId);
+      setConfirmDeleteKnowledgeBaseId(null);
+    } catch (deleteError) {
+      console.error('Failed to delete knowledge base:', deleteError);
+    }
+  };
+
   return (
     <div className="flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       <div
@@ -167,7 +197,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   知识库管理面板已拆分
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表、文档预览和导入状态区。后续会继续补上删除和重建索引操作。
+                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表、文档预览、导入状态区，以及删除和重建索引操作。
                 </p>
               </div>
               <div className="min-w-28 rounded-2xl bg-amber-100 px-4 py-3 text-center">
@@ -178,17 +208,40 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           </div>
 
           <div className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-sm">
-            <div>
-              <h3 className="text-sm font-semibold text-amber-900">当前状态</h3>
-              <p className="mt-1 text-sm text-amber-700/80">
-                {isLoadingKnowledgeBases
-                  ? '正在加载知识库列表...'
-                  : currentKnowledgeBase
-                    ? `当前选中知识库：${currentKnowledgeBase.name}`
-                    : knowledgeBases.length > 0
-                      ? '知识库列表已加载，但文档管理区还会在后续子任务接入。'
-                      : '当前还没有可展示的知识库。'}
-              </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-amber-900">当前状态</h3>
+                <p className="mt-1 text-sm text-amber-700/80">
+                  {isLoadingKnowledgeBases
+                    ? '正在加载知识库列表...'
+                    : currentKnowledgeBase
+                      ? `当前选中知识库：${currentKnowledgeBase.name}`
+                      : knowledgeBases.length > 0
+                        ? '知识库列表已加载，但文档管理区还会在后续子任务接入。'
+                        : '当前还没有可展示的知识库。'}
+                </p>
+              </div>
+              {currentKnowledgeBase && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleDeleteKnowledgeBase();
+                  }}
+                  disabled={isDeletingKnowledgeBase}
+                  className={`flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                    confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
+                      ? 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'
+                      : 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {isDeletingKnowledgeBase
+                    ? '删除中...'
+                    : confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
+                      ? '确认删除知识库'
+                      : '删除当前知识库'}
+                </button>
+              )}
             </div>
 
             {error && (
@@ -250,6 +303,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
               chunks={currentDocumentChunks}
               isLoadingDocument={isLoadingDocument}
               isLoadingChunks={isLoadingDocumentChunks}
+              knowledgeBaseId={currentKnowledgeBaseId}
             />
           </div>
         </div>

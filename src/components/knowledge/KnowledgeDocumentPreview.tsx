@@ -1,7 +1,11 @@
-import { AlertCircle, Clock3, FileText, Hash, LoaderCircle, MapPin } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertCircle, Clock3, FileText, Hash, LoaderCircle, MapPin, RefreshCw, Trash2 } from 'lucide-react';
+import { loadConfig } from '../../store/config';
+import { useRagStore } from '../../store/rag';
 import type { KnowledgeChunkRecord, KnowledgeDocumentRecord } from '../../services/ragService';
 
 interface KnowledgeDocumentPreviewProps {
+  knowledgeBaseId: string | null;
   document: KnowledgeDocumentRecord | null;
   chunks: KnowledgeChunkRecord[];
   isLoadingDocument: boolean;
@@ -59,12 +63,106 @@ function formatChunkType(chunk: KnowledgeChunkRecord): string {
   return chunk.chunkType;
 }
 
+function formatStage(stage: string): string {
+  switch (stage) {
+    case 'parse':
+      return '解析';
+    case 'chunk':
+      return '分块';
+    case 'embed':
+      return '向量化';
+    case 'finalize':
+      return '收尾';
+    default:
+      return stage;
+  }
+}
+
 export function KnowledgeDocumentPreview({
+  knowledgeBaseId,
   document,
   chunks,
   isLoadingDocument,
   isLoadingChunks,
 }: KnowledgeDocumentPreviewProps) {
+  const {
+    clearError,
+    deleteKnowledgeDocument,
+    isDeletingKnowledgeDocumentById,
+    isReindexingByDocumentId,
+    reindexKnowledgeDocument,
+    reindexStatesByDocumentId,
+  } = useRagStore();
+  const [enableOcr, setEnableOcr] = useState(false);
+  const [confirmDeleteDocumentId, setConfirmDeleteDocumentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirmDeleteDocumentId(null);
+  }, [document?.id]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void loadConfig()
+      .then((config) => {
+        if (mounted) {
+          setEnableOcr(config.rag.enableOcr);
+        }
+      })
+      .catch((loadError) => {
+        console.error('Failed to load config for knowledge document preview:', loadError);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const isDeletingDocument = document
+    ? isDeletingKnowledgeDocumentById[document.id] ?? false
+    : false;
+  const isReindexingDocument = document
+    ? isReindexingByDocumentId[document.id] ?? false
+    : false;
+  const reindexState = document ? reindexStatesByDocumentId[document.id] ?? null : null;
+
+  const handleReindex = async () => {
+    if (!document) {
+      return;
+    }
+
+    clearError();
+    try {
+      await reindexKnowledgeDocument({
+        documentId: document.id,
+        parseOptions: {
+          enableOcr,
+        },
+      });
+    } catch (reindexError) {
+      console.error('Failed to reindex knowledge document:', reindexError);
+    }
+  };
+
+  const handleDeleteDocument = async () => {
+    if (!document) {
+      return;
+    }
+
+    if (confirmDeleteDocumentId !== document.id) {
+      setConfirmDeleteDocumentId(document.id);
+      return;
+    }
+
+    clearError();
+    try {
+      await deleteKnowledgeDocument(document.id, knowledgeBaseId ?? undefined);
+      setConfirmDeleteDocumentId(null);
+    } catch (deleteError) {
+      console.error('Failed to delete knowledge document:', deleteError);
+    }
+  };
+
   if (!document && !isLoadingDocument && !isLoadingChunks) {
     return (
       <section className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-sm">
@@ -82,13 +180,47 @@ export function KnowledgeDocumentPreview({
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-amber-900">文档预览</h3>
           <p className="mt-1 text-sm text-amber-700/80">
-            查看当前选中文档的元数据和 chunk 明细，后续导入与重建索引交互也会在这一侧补齐。
+            查看当前选中文档的元数据和 chunk 明细，并在这里直接执行重建索引或删除文档。
           </p>
         </div>
         {document && (
-          <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${getIndexStateLabel(document).className}`}>
-            {getIndexStateLabel(document).label}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${getIndexStateLabel(document).className}`}>
+              {getIndexStateLabel(document).label}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void handleReindex();
+                }}
+                disabled={isReindexingDocument || isDeletingDocument}
+                className="flex items-center gap-1 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isReindexingDocument ? 'animate-spin' : ''}`} />
+                {isReindexingDocument ? '重建中...' : '重建索引'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleDeleteDocument();
+                }}
+                disabled={isReindexingDocument || isDeletingDocument}
+                className={`flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                  confirmDeleteDocumentId === document.id
+                    ? 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'
+                    : 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {isDeletingDocument
+                  ? '删除中...'
+                  : confirmDeleteDocumentId === document.id
+                    ? '确认删除文档'
+                    : '删除文档'}
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -135,6 +267,32 @@ export function KnowledgeDocumentPreview({
                 <span className="break-all">Fingerprint：{document.fingerprint}</span>
               </div>
             </div>
+
+            {reindexState && (
+              <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-700">
+                <div className="flex items-center justify-between gap-3">
+                  <span>最近重建索引状态：{reindexState.status === 'running' ? '进行中' : reindexState.status === 'failed' ? '失败' : '完成'}</span>
+                  <span>{reindexState.current}/{reindexState.total}</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-blue-100">
+                  <div
+                    className={`h-full rounded-full ${
+                      reindexState.status === 'failed'
+                        ? 'bg-red-400'
+                        : reindexState.status === 'completed'
+                          ? 'bg-emerald-500'
+                          : 'bg-blue-500'
+                    }`}
+                    style={{
+                      width: `${Math.max(0, Math.min(100, reindexState.total > 0 ? (reindexState.current / reindexState.total) * 100 : 0))}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-2">
+                  阶段：{formatStage(reindexState.stage)} · {reindexState.message}
+                </p>
+              </div>
+            )}
 
             {document.lastError && (
               <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

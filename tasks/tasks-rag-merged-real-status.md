@@ -23,10 +23,10 @@
 - `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、导入任务、文档详情/分块、重建索引状态与错误状态。
 - `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、文档详情/分块、任务快照与重建索引状态同步。
 - `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口，并将知识库页面切换到独立面板组件。
-- `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、导入区、文档列表与文档预览挂载点。
+- `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、导入区、删除知识库操作、文档列表与文档预览挂载点。
 - `src/components/knowledge/KnowledgeDocumentList.tsx` - 当前知识库的文档列表组件，负责文档状态展示与当前文档选择。
 - `src/components/knowledge/KnowledgeImportPanel.tsx` - 文档导入面板组件，负责文件选择、发起导入、乐观状态行、阶段进度与失败展示。
-- `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、索引状态与 chunk 明细。
+- `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
 - `src/components/SettingsPanel.tsx` - 当前设置面板，当前会在保存配置后同步 RAG runtime 配置。
@@ -120,7 +120,7 @@
   - ✅️ 7.4 已新增 `src/components/knowledge/KnowledgeDocumentList.tsx`，并接入知识库面板展示当前库文档列表
   - ✅️ 7.5 已新增 `src/components/knowledge/KnowledgeDocumentPreview.tsx`，并接入文档详情与 chunk 预览
   - ✅️ 7.6 已接入文件选择、导入按钮、乐观状态行、阶段进度显示和失败可见性
-  - ❌️ 7.7 尚未实现删除文档、重建索引、删除知识库后的即时刷新逻辑
+  - ✅️ 7.7 已接入删除文档、重建索引、删除知识库操作，并依赖 store 即时刷新当前列表与选中状态
   - ❌️ 7.8 `SettingsPanel.tsx` 尚未增加 RAG 配置区块和知识库入口
 
 - ❌️ 8.0 做增量索引、后台重试与运维加固
