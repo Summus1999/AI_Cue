@@ -153,6 +153,7 @@ function createMockService(overrides: Partial<Parameters<typeof createRagState>[
     deleteKnowledgeDocument: vi.fn().mockResolvedValue(undefined),
     importKnowledgeDocument: vi.fn(),
     reindexKnowledgeBase: vi.fn(),
+    retryKnowledgeBaseDocuments: vi.fn(),
     reindexKnowledgeDocument: vi.fn(),
     listKnowledgeImportTasks: vi.fn().mockResolvedValue([]),
     getKnowledgeImportTask: vi.fn().mockResolvedValue(null),
@@ -326,5 +327,55 @@ describe('useRagStore state', () => {
       status: 'completed',
     });
     expect(store.getState().error).toContain('1 个文档失败');
+  });
+
+  it('tracks retry progress for pending and failed documents in a knowledge base', async () => {
+    const failedDocument = createDocument('doc-failed', 'kb-1', { indexState: 'failed' });
+    const pendingDocument = createDocument('doc-pending', 'kb-1', { indexState: 'pending' });
+    const runningProgress: KnowledgeBaseImportProgress = {
+      requestId: 'retry-1:doc-failed',
+      operation: 'reindex',
+      stage: 'parse',
+      status: 'running',
+      current: 1,
+      total: 4,
+      knowledgeBaseId: 'kb-1',
+      documentId: 'doc-failed',
+      fileName: failedDocument.fileName,
+      sourcePath: failedDocument.sourcePath,
+      chunkCount: null,
+      embeddingCount: null,
+      message: 'parsing',
+    };
+    const completedTask = createTaskSnapshot('retry-1:doc-failed', 'doc-failed', 'completed');
+
+    const service = createMockService({
+      retryKnowledgeBaseDocuments: vi.fn().mockImplementation(async (_request, onProgress) => {
+        onProgress?.(runningProgress);
+        return createCompletedReindex('kb-1', [failedDocument, pendingDocument], []);
+      }),
+      listKnowledgeImportTasks: vi.fn().mockResolvedValue([completedTask]),
+      listKnowledgeBases: vi.fn().mockResolvedValue([createKnowledgeBase('kb-1', 'Algorithms')]),
+      listKnowledgeDocuments: vi.fn().mockResolvedValue([failedDocument, pendingDocument]),
+      getKnowledgeDocument: vi.fn().mockResolvedValue(failedDocument),
+      listKnowledgeDocumentChunks: vi.fn().mockResolvedValue([createChunk(failedDocument.id)]),
+    });
+    const store = createStore<RagState>(createRagState(service));
+    store.setState({
+      ...store.getState(),
+      currentKnowledgeBaseId: 'kb-1',
+      currentDocumentId: 'doc-failed',
+    });
+
+    const result = await store.getState().retryKnowledgeBaseDocuments({
+      knowledgeBaseId: 'kb-1',
+    });
+
+    expect(result.documents).toHaveLength(2);
+    expect(store.getState().isRetryingKnowledgeBaseById['kb-1']).toBe(false);
+    expect(store.getState().reindexStatesByDocumentId['doc-failed']).toMatchObject({
+      requestId: 'retry-1:doc-failed',
+      status: 'completed',
+    });
   });
 });

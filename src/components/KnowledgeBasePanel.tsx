@@ -21,6 +21,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     isLoadingKnowledgeDocumentChunksById,
     isDeletingKnowledgeBaseById,
     isReindexingKnowledgeBaseById,
+    isRetryingKnowledgeBaseById,
     knowledgeDocumentDetailsById,
     knowledgeDocumentsByKnowledgeBaseId,
     knowledgeDocumentChunksById,
@@ -28,6 +29,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     clearError,
     deleteKnowledgeBase,
     reindexKnowledgeBase,
+    retryKnowledgeBaseDocuments,
     refreshKnowledgeBases,
     refreshKnowledgeDocument,
     refreshKnowledgeDocumentChunks,
@@ -79,7 +81,14 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
   const isReindexingKnowledgeBase = currentKnowledgeBaseId
     ? isReindexingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
     : false;
+  const isRetryingKnowledgeBase = currentKnowledgeBaseId
+    ? isRetryingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
+    : false;
   const [confirmDeleteKnowledgeBaseId, setConfirmDeleteKnowledgeBaseId] = useState<string | null>(null);
+  const retryableDocumentCount = useMemo(
+    () => currentDocuments.filter((document) => document.indexState === 'pending' || document.indexState === 'failed').length,
+    [currentDocuments],
+  );
 
   useEffect(() => {
     setConfirmDeleteKnowledgeBaseId(null);
@@ -185,6 +194,25 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     }
   };
 
+  const handleRetryKnowledgeBaseDocuments = async () => {
+    if (!currentKnowledgeBaseId || retryableDocumentCount === 0) {
+      return;
+    }
+
+    clearError();
+    try {
+      const config = await loadConfig();
+      await retryKnowledgeBaseDocuments({
+        knowledgeBaseId: currentKnowledgeBaseId,
+        parseOptions: {
+          enableOcr: config.rag.enableOcr,
+        },
+      });
+    } catch (retryError) {
+      console.error('Failed to retry pending or failed knowledge documents:', retryError);
+    }
+  };
+
   return (
     <div className="flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       <div
@@ -251,9 +279,34 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      void handleRetryKnowledgeBaseDocuments();
+                    }}
+                    disabled={
+                      isDeletingKnowledgeBase
+                      || isReindexingKnowledgeBase
+                      || isRetryingKnowledgeBase
+                      || retryableDocumentCount === 0
+                    }
+                    className="flex items-center gap-1 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRetryingKnowledgeBase ? 'animate-spin' : ''}`} />
+                    {isRetryingKnowledgeBase
+                      ? '后台重试中...'
+                      : retryableDocumentCount > 0
+                        ? `重试异常文档 (${retryableDocumentCount})`
+                        : '重试异常文档'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       void handleReindexKnowledgeBase();
                     }}
-                    disabled={isDeletingKnowledgeBase || isReindexingKnowledgeBase || currentDocuments.length === 0}
+                    disabled={
+                      isDeletingKnowledgeBase
+                      || isReindexingKnowledgeBase
+                      || isRetryingKnowledgeBase
+                      || currentDocuments.length === 0
+                    }
                     className="flex items-center gap-1 rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isReindexingKnowledgeBase ? 'animate-spin' : ''}`} />
@@ -264,7 +317,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                     onClick={() => {
                       void handleDeleteKnowledgeBase();
                     }}
-                    disabled={isDeletingKnowledgeBase || isReindexingKnowledgeBase}
+                    disabled={isDeletingKnowledgeBase || isReindexingKnowledgeBase || isRetryingKnowledgeBase}
                     className={`flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
                       confirmDeleteKnowledgeBaseId === currentKnowledgeBaseId
                         ? 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'

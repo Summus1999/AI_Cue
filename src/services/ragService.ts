@@ -210,6 +210,13 @@ export interface ReindexKnowledgeBaseRequest {
   progressEventId?: string;
 }
 
+export interface RetryKnowledgeBaseDocumentsRequest {
+  knowledgeBaseId: string;
+  parseOptions?: ParseOptions;
+  chunkConfig?: ChunkConfig;
+  progressEventId?: string;
+}
+
 export interface CompletedKnowledgeBaseImport {
   document: KnowledgeDocumentRecord;
   parsedDocument: ParsedDocument;
@@ -335,11 +342,12 @@ async function invokeKnowledgeBaseImportWithProgress<
   }
 }
 
-async function invokeKnowledgeBaseBatchReindexWithProgress(
-  request: ReindexKnowledgeBaseRequest,
+async function invokeKnowledgeBaseBatchMaintenanceWithProgress(
+  command: 'rag_reindex_knowledge_base' | 'rag_retry_knowledge_base_documents',
+  request: ReindexKnowledgeBaseRequest | RetryKnowledgeBaseDocumentsRequest,
   onProgress?: (progress: KnowledgeBaseImportProgress) => void,
 ): Promise<CompletedKnowledgeBaseReindex> {
-  await ensureRagRuntimeConfigured(undefined, 'rag_reindex_knowledge_base');
+  await ensureRagRuntimeConfigured(undefined, command);
 
   const progressEventId =
     normalizeProgressEventId(request.progressEventId)
@@ -356,7 +364,7 @@ async function invokeKnowledgeBaseBatchReindexWithProgress(
   }
 
   try {
-    return await invoke<CompletedKnowledgeBaseReindex>('rag_reindex_knowledge_base', {
+    return await invoke<CompletedKnowledgeBaseReindex>(command, {
       request: requestWithProgress,
     });
   } finally {
@@ -575,7 +583,26 @@ export const ragService = {
     request: ReindexKnowledgeBaseRequest,
     onProgress?: (progress: KnowledgeBaseImportProgress) => void,
   ): Promise<CompletedKnowledgeBaseReindex> {
-    return invokeKnowledgeBaseBatchReindexWithProgress(request, onProgress);
+    return invokeKnowledgeBaseBatchMaintenanceWithProgress(
+      'rag_reindex_knowledge_base',
+      request,
+      onProgress,
+    );
+  },
+
+  /**
+   * 扫描并重试当前知识库中 pending / failed 文档
+   * @param request 重试请求
+   */
+  async retryKnowledgeBaseDocuments(
+    request: RetryKnowledgeBaseDocumentsRequest,
+    onProgress?: (progress: KnowledgeBaseImportProgress) => void,
+  ): Promise<CompletedKnowledgeBaseReindex> {
+    return invokeKnowledgeBaseBatchMaintenanceWithProgress(
+      'rag_retry_knowledge_base_documents',
+      request,
+      onProgress,
+    );
   },
 
   /**

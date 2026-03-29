@@ -1094,6 +1094,7 @@ use crate::rag::{
     KnowledgeBaseImportRequest, KnowledgeBaseImportTaskRegistry,
     KnowledgeBaseImportTaskSnapshot, ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
     ReindexKnowledgeBaseRequest, ReindexKnowledgeDocumentRequest,
+    RetryKnowledgeBaseDocumentsRequest,
 };
 
 const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT: &str = "rag-import-progress";
@@ -1334,6 +1335,30 @@ pub async fn rag_reindex_knowledge_base(
 
     engine
         .reindex_knowledge_base_with_progress(
+            &request,
+            Some(create_rag_import_progress_callback(
+                &app,
+                task_registry.inner().clone(),
+            )),
+        )
+        .await
+}
+
+/// 扫描并重试当前知识库中 pending / failed 文档
+#[tauri::command]
+pub async fn rag_retry_knowledge_base_documents(
+    app: AppHandle,
+    engine: State<'_, std::sync::Arc<RagEngine>>,
+    task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
+    request: RetryKnowledgeBaseDocumentsRequest,
+) -> Result<CompletedKnowledgeBaseReindex, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
+    engine
+        .retry_knowledge_base_documents_with_progress(
             &request,
             Some(create_rag_import_progress_callback(
                 &app,

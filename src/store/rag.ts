@@ -16,6 +16,7 @@ import type {
   RagStats,
   ReindexKnowledgeBaseRequest,
   ReindexKnowledgeDocumentRequest,
+  RetryKnowledgeBaseDocumentsRequest,
   SearchResult,
 } from '../services/ragService';
 import { ragService } from '../services/ragService';
@@ -59,6 +60,7 @@ export interface RagState {
   isLoadingKnowledgeDocumentChunksById: Record<string, boolean>;
   isImportingByKnowledgeBaseId: Record<string, boolean>;
   isReindexingKnowledgeBaseById: Record<string, boolean>;
+  isRetryingKnowledgeBaseById: Record<string, boolean>;
   isReindexingByDocumentId: Record<string, boolean>;
   isDeletingKnowledgeBaseById: Record<string, boolean>;
   isDeletingKnowledgeDocumentById: Record<string, boolean>;
@@ -95,6 +97,9 @@ export interface RagState {
   reindexKnowledgeBase: (
     request: ReindexKnowledgeBaseRequest,
   ) => Promise<CompletedKnowledgeBaseReindex>;
+  retryKnowledgeBaseDocuments: (
+    request: RetryKnowledgeBaseDocumentsRequest,
+  ) => Promise<CompletedKnowledgeBaseReindex>;
   reindexKnowledgeDocument: (
     request: ReindexKnowledgeDocumentRequest,
   ) => Promise<CompletedKnowledgeBaseImport>;
@@ -115,6 +120,7 @@ type RagStoreService = Pick<
   | 'deleteKnowledgeDocument'
   | 'importKnowledgeDocument'
   | 'reindexKnowledgeBase'
+  | 'retryKnowledgeBaseDocuments'
   | 'reindexKnowledgeDocument'
   | 'listKnowledgeImportTasks'
   | 'getKnowledgeImportTask'
@@ -283,6 +289,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     isLoadingKnowledgeDocumentChunksById: {},
     isImportingByKnowledgeBaseId: {},
     isReindexingKnowledgeBaseById: {},
+    isRetryingKnowledgeBaseById: {},
     isReindexingByDocumentId: {},
     isDeletingKnowledgeBaseById: {},
     isDeletingKnowledgeDocumentById: {},
@@ -380,6 +387,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         isLoadingKnowledgeDocumentChunksById: {},
         isImportingByKnowledgeBaseId: {},
         isReindexingKnowledgeBaseById: {},
+        isRetryingKnowledgeBaseById: {},
         isReindexingByDocumentId: {},
         isDeletingKnowledgeBaseById: {},
         isDeletingKnowledgeDocumentById: {},
@@ -898,6 +906,76 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           error,
           isReindexingKnowledgeBaseById: {
             ...state.isReindexingKnowledgeBaseById,
+            [request.knowledgeBaseId]: false,
+          },
+        }));
+        throw err;
+      }
+    },
+
+    retryKnowledgeBaseDocuments: async (request) => {
+      const requestId = request.progressEventId ?? service.createKnowledgeBaseImportProgressId();
+      set((state) => ({
+        error: null,
+        isRetryingKnowledgeBaseById: {
+          ...state.isRetryingKnowledgeBaseById,
+          [request.knowledgeBaseId]: true,
+        },
+      }));
+
+      try {
+        const result = await service.retryKnowledgeBaseDocuments(
+          { ...request, progressEventId: requestId },
+          (progress) => {
+            const snapshot = snapshotFromProgress(
+              progress,
+              get().importTasksByRequestId[progress.requestId ?? ''],
+            );
+            if (!snapshot) {
+              return;
+            }
+
+            set((state) => ({
+              activeImportProgressByRequestId: {
+                ...state.activeImportProgressByRequestId,
+                [snapshot.requestId]: progress,
+              },
+              ...updateTaskState(state, snapshot),
+            }));
+          },
+        );
+
+        await get().refreshKnowledgeImportTasks(request.knowledgeBaseId, undefined, true);
+        await get().refreshKnowledgeBases();
+        const refreshedDocuments = await get().refreshKnowledgeDocuments(request.knowledgeBaseId);
+        const currentDocumentId = get().currentDocumentId;
+        const shouldRefreshCurrentDocument = currentDocumentId
+          ? refreshedDocuments.some((document) => document.id === currentDocumentId)
+          : false;
+
+        if (currentDocumentId && shouldRefreshCurrentDocument) {
+          await get().refreshKnowledgeDocument(currentDocumentId);
+          await get().refreshKnowledgeDocumentChunks(currentDocumentId);
+        }
+
+        set((state) => ({
+          currentKnowledgeBaseId: request.knowledgeBaseId,
+          isRetryingKnowledgeBaseById: {
+            ...state.isRetryingKnowledgeBaseById,
+            [request.knowledgeBaseId]: false,
+          },
+          error: result.failures.length > 0
+            ? `后台重试完成，但有 ${result.failures.length} 个文档仍失败：${result.failures[0]?.fileName ?? '未知文档'}`
+            : state.error,
+        }));
+
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : '后台重试知识库文档失败';
+        set((state) => ({
+          error,
+          isRetryingKnowledgeBaseById: {
+            ...state.isRetryingKnowledgeBaseById,
             [request.knowledgeBaseId]: false,
           },
         }));

@@ -29,7 +29,7 @@ pub use self::knowledge_base::{
     KnowledgeBaseImportProgressCallback, KnowledgeBaseImportProgressStatus,
     KnowledgeBaseImportRequest, KnowledgeBaseImportStage, KnowledgeBaseReindexFailure,
     PreparedKnowledgeBaseImport, PreparedKnowledgeChunkEmbedding, ReindexKnowledgeBaseRequest,
-    ReindexKnowledgeDocumentRequest, SourceDocumentSnapshot,
+    ReindexKnowledgeDocumentRequest, RetryKnowledgeBaseDocumentsRequest, SourceDocumentSnapshot,
 };
 pub use self::ocr::{
     create_default_ocr_engine, OcrContentFormat, OcrEngine, OcrError, OcrPageInput, OcrPageResult,
@@ -204,22 +204,76 @@ impl RagEngine {
         request: &knowledge_base::ReindexKnowledgeBaseRequest,
         progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
+        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?;
+        self.process_knowledge_base_document_retries(
+            &request.knowledge_base_id,
+            documents,
+            request.parse_options.clone(),
+            request.chunk_config.clone(),
+            request.progress_event_id.clone(),
+            progress_callback,
+        )
+        .await
+    }
+
+    pub async fn retry_knowledge_base_documents(
+        &self,
+        request: &knowledge_base::RetryKnowledgeBaseDocumentsRequest,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
+        self.retry_knowledge_base_documents_with_progress(request, None)
+            .await
+    }
+
+    pub async fn retry_knowledge_base_documents_with_progress(
+        &self,
+        request: &knowledge_base::RetryKnowledgeBaseDocumentsRequest,
+        progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
+        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?
+            .into_iter()
+            .filter(|document| {
+                matches!(
+                    document.index_state,
+                    crate::database::KnowledgeDocumentIndexState::Pending
+                        | crate::database::KnowledgeDocumentIndexState::Failed
+                )
+            })
+            .collect::<Vec<_>>();
+
+        self.process_knowledge_base_document_retries(
+            &request.knowledge_base_id,
+            documents,
+            request.parse_options.clone(),
+            request.chunk_config.clone(),
+            request.progress_event_id.clone(),
+            progress_callback,
+        )
+        .await
+    }
+
+    async fn process_knowledge_base_document_retries(
+        &self,
+        knowledge_base_id: &str,
+        documents: Vec<crate::database::KnowledgeDocumentRecord>,
+        parse_options: Option<parser::ParseOptions>,
+        chunk_config: Option<chunker::ChunkConfig>,
+        progress_event_id: Option<String>,
+        progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
+    ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
         let embedder = self.configured_embedder()?;
         let orchestrator = knowledge_base::KnowledgeBaseImportOrchestrator::new(self.db.clone());
-        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?;
         let mut completed = Vec::with_capacity(documents.len());
         let mut failures = Vec::new();
 
         for document in documents {
-            let child_request_id = request
-                .progress_event_id
+            let child_request_id = progress_event_id
                 .as_ref()
                 .map(|request_id| format!("{request_id}:{}", document.id));
 
             let reindex_request = knowledge_base::ReindexKnowledgeDocumentRequest {
                 document_id: document.id.clone(),
-                parse_options: request.parse_options.clone(),
-                chunk_config: request.chunk_config.clone(),
+                parse_options: parse_options.clone(),
+                chunk_config: chunk_config.clone(),
                 progress_event_id: child_request_id,
             };
 
@@ -242,7 +296,7 @@ impl RagEngine {
         }
 
         Ok(knowledge_base::CompletedKnowledgeBaseReindex {
-            knowledge_base_id: request.knowledge_base_id.clone(),
+            knowledge_base_id: knowledge_base_id.to_string(),
             documents: completed,
             failures,
         })
@@ -891,5 +945,136 @@ mod tests {
         assert!(stored_documents
             .iter()
             .any(|document| document.id == second_import.document.id));
+    }
+
+    #[tokio::test]
+    async fn test_retry_knowledge_base_documents_retries_pending_and_failed_only() {
+        let db = create_test_db();
+        let engine = RagEngine::new(db.clone());
+        let knowledge_base_id = create_test_knowledge_base(&db, "Engine Retry Pending Failed");
+        let failed_path = create_temp_document("engine-retry-failed.md", "# Rust\n\nFailed doc.\n");
+        let pending_path = create_temp_document("engine-retry-pending.md", "# Rust\n\nPending doc.\n");
+        let ready_path = create_temp_document("engine-retry-ready.md", "# Rust\n\nReady doc.\n");
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v1",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+
+        let failed_import = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: failed_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+        let pending_import = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: pending_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+        let ready_import = engine
+            .import_knowledge_document(&KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: ready_path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            })
+            .await
+            .unwrap();
+
+        crate::database::update_knowledge_document_index_state(
+            &db,
+            &failed_import.document.id,
+            crate::database::KnowledgeDocumentIndexState::Failed,
+            Some("previous failure".to_string()),
+        )
+        .unwrap();
+        crate::database::update_knowledge_document_index_state(
+            &db,
+            &pending_import.document.id,
+            crate::database::KnowledgeDocumentIndexState::Pending,
+            None,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &failed_path,
+            "# Rust\n\nFailed doc.\n\n## Retry\n\nRecovered failed doc.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &pending_path,
+            "# Rust\n\nPending doc.\n\n## Retry\n\nRecovered pending doc.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &ready_path,
+            "# Rust\n\nReady doc.\n\n## Keep\n\nThis ready doc should not be retried.\n",
+        )
+        .unwrap();
+
+        engine
+            .set_embedding_provider(Arc::new(MockEmbeddingProvider::new(
+                "mock-kb-model-v2",
+                vec![0.0, 1.0, 0.0],
+            )))
+            .unwrap();
+
+        let retried = engine
+            .retry_knowledge_base_documents(&RetryKnowledgeBaseDocumentsRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                parse_options: None,
+                chunk_config: Some(ChunkConfig {
+                    max_chunk_size: 70,
+                    overlap_size: 0,
+                    min_chunk_size: 18,
+                    prefer_structure_boundary: true,
+                }),
+                progress_event_id: Some("kb-retry".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(retried.knowledge_base_id, knowledge_base_id);
+        assert_eq!(retried.documents.len(), 2);
+        assert!(retried.failures.is_empty());
+
+        let retried_ids = retried
+            .documents
+            .iter()
+            .map(|result| result.document.id.clone())
+            .collect::<Vec<_>>();
+        assert!(retried_ids.contains(&failed_import.document.id));
+        assert!(retried_ids.contains(&pending_import.document.id));
+        assert!(!retried_ids.contains(&ready_import.document.id));
+
+        let failed_embeddings =
+            crate::database::list_knowledge_document_embeddings(&db, &failed_import.document.id).unwrap();
+        let pending_embeddings =
+            crate::database::list_knowledge_document_embeddings(&db, &pending_import.document.id).unwrap();
+        let ready_embeddings =
+            crate::database::list_knowledge_document_embeddings(&db, &ready_import.document.id).unwrap();
+
+        assert!(failed_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "mock-kb-model-v2"));
+        assert!(pending_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "mock-kb-model-v2"));
+        assert!(ready_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "mock-kb-model-v1"));
     }
 }

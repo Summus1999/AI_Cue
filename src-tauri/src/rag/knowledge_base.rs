@@ -57,6 +57,18 @@ pub struct ReindexKnowledgeBaseRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RetryKnowledgeBaseDocumentsRequest {
+    pub knowledge_base_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_options: Option<ParseOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_config: Option<ChunkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreparedKnowledgeBaseImport {
     pub document: KnowledgeDocumentRecord,
     pub parsed_document: ParsedDocument,
