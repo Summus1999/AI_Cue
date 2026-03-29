@@ -83,6 +83,19 @@ export interface KnowledgeBaseRecord {
   updatedAt: number;
 }
 
+export interface KnowledgeBaseStatsRecord {
+  knowledgeBaseId: string;
+  documentCount: number;
+  chunkCount: number;
+  embeddingCount: number;
+  sourceBytes: number;
+  chunkBytes: number;
+  embeddingBytes: number;
+  storageBytes: number;
+  latestIndexedModelId: string | null;
+  latestIndexedAt: number | null;
+}
+
 export interface KnowledgeDocumentRecord {
   id: string;
   knowledgeBaseId: string;
@@ -503,6 +516,18 @@ export const ragService = {
    */
   async listKnowledgeBases(): Promise<KnowledgeBaseRecord[]> {
     return invoke<KnowledgeBaseRecord[]>('rag_list_knowledge_bases');
+  },
+
+  /**
+   * 获取单个知识库的聚合统计
+   * @param knowledgeBaseId 知识库 ID
+   */
+  async getKnowledgeBaseStats(
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseStatsRecord | null> {
+    return invoke<KnowledgeBaseStatsRecord | null>('rag_get_knowledge_base_stats', {
+      knowledgeBaseId,
+    });
   },
 
   /**

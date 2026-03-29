@@ -1409,6 +1409,15 @@ pub fn rag_list_knowledge_bases(
     crate::database::list_knowledge_bases(&db)
 }
 
+/// 获取单个知识库的聚合统计
+#[tauri::command]
+pub fn rag_get_knowledge_base_stats(
+    db: State<'_, crate::database::Database>,
+    knowledge_base_id: String,
+) -> Result<Option<crate::database::KnowledgeBaseStatsRecord>, String> {
+    crate::database::get_knowledge_base_stats(&db, &knowledge_base_id)
+}
+
 /// 删除知识库
 #[tauri::command]
 pub fn rag_delete_knowledge_base(

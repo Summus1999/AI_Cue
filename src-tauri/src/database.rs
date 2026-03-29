@@ -134,6 +134,21 @@ pub struct KnowledgeBaseRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct KnowledgeBaseStatsRecord {
+    pub knowledge_base_id: String,
+    pub document_count: usize,
+    pub chunk_count: usize,
+    pub embedding_count: usize,
+    pub source_bytes: u64,
+    pub chunk_bytes: u64,
+    pub embedding_bytes: u64,
+    pub storage_bytes: u64,
+    pub latest_indexed_model_id: Option<String>,
+    pub latest_indexed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateKnowledgeDocumentInput {
     pub knowledge_base_id: String,
     pub title: String,
@@ -1148,6 +1163,88 @@ pub fn list_knowledge_bases(db: &Database) -> Result<Vec<KnowledgeBaseRecord>, S
     }
 
     Ok(result)
+}
+
+/// 获取单个知识库的聚合统计
+pub fn get_knowledge_base_stats(
+    db: &Database,
+    knowledge_base_id: &str,
+) -> Result<Option<KnowledgeBaseStatsRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT kb.id,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM kb_documents d
+                        WHERE d.knowledge_base_id = kb.id
+                    ), 0) AS document_count,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM kb_chunks kc
+                        INNER JOIN kb_documents d ON d.id = kc.document_id
+                        WHERE d.knowledge_base_id = kb.id
+                    ), 0) AS chunk_count,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM kb_embeddings ke
+                        WHERE ke.knowledge_base_id = kb.id
+                    ), 0) AS embedding_count,
+                    COALESCE((
+                        SELECT SUM(d.source_byte_size)
+                        FROM kb_documents d
+                        WHERE d.knowledge_base_id = kb.id
+                    ), 0) AS source_bytes,
+                    COALESCE((
+                        SELECT SUM(LENGTH(CAST(kc.text AS BLOB)))
+                        FROM kb_chunks kc
+                        INNER JOIN kb_documents d ON d.id = kc.document_id
+                        WHERE d.knowledge_base_id = kb.id
+                    ), 0) AS chunk_bytes,
+                    COALESCE((
+                        SELECT SUM(LENGTH(ke.embedding))
+                        FROM kb_embeddings ke
+                        WHERE ke.knowledge_base_id = kb.id
+                    ), 0) AS embedding_bytes,
+                    (
+                        SELECT ke.model_id
+                        FROM kb_embeddings ke
+                        WHERE ke.knowledge_base_id = kb.id
+                        ORDER BY ke.created_at DESC, ke.id DESC
+                        LIMIT 1
+                    ) AS latest_indexed_model_id,
+                    (
+                        SELECT ke.created_at
+                        FROM kb_embeddings ke
+                        WHERE ke.knowledge_base_id = kb.id
+                        ORDER BY ke.created_at DESC, ke.id DESC
+                        LIMIT 1
+                    ) AS latest_indexed_at
+             FROM knowledge_bases kb
+             WHERE kb.id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row(params![knowledge_base_id], |row| {
+        let source_bytes = row.get::<_, i64>(4)?.max(0) as u64;
+        let chunk_bytes = row.get::<_, i64>(5)?.max(0) as u64;
+        let embedding_bytes = row.get::<_, i64>(6)?.max(0) as u64;
+
+        Ok(KnowledgeBaseStatsRecord {
+            knowledge_base_id: row.get(0)?,
+            document_count: row.get::<_, i64>(1)?.max(0) as usize,
+            chunk_count: row.get::<_, i64>(2)?.max(0) as usize,
+            embedding_count: row.get::<_, i64>(3)?.max(0) as usize,
+            source_bytes,
+            chunk_bytes,
+            embedding_bytes,
+            storage_bytes: source_bytes + chunk_bytes + embedding_bytes,
+            latest_indexed_model_id: row.get(7)?,
+            latest_indexed_at: row.get(8)?,
+        })
+    })
+    .optional()
+    .map_err(|e| e.to_string())
 }
 
 /// 删除知识库
@@ -2362,6 +2459,123 @@ mod tests {
         assert_eq!(count_rows(&db, "kb_documents"), 0);
         assert_eq!(count_rows(&db, "kb_chunks"), 0);
         assert_eq!(count_rows(&db, "kb_embeddings"), 0);
+    }
+
+    #[test]
+    fn test_get_knowledge_base_stats_aggregates_counts_storage_and_latest_model() {
+        let db = create_test_db();
+        let kb = create_knowledge_base(
+            &db,
+            CreateKnowledgeBaseInput {
+                name: "Stats".to_string(),
+                description: Some("aggregate stats".to_string()),
+            },
+        )
+        .unwrap();
+
+        let first_document =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\stats-a.md"))
+                .unwrap();
+        let second_document =
+            create_knowledge_document(&db, sample_document_input(&kb.id, "C:\\docs\\stats-b.md"))
+                .unwrap();
+
+        let second_document = reset_knowledge_document_for_reindex(
+            &db,
+            &second_document.id,
+            CreateKnowledgeDocumentInput {
+                knowledge_base_id: kb.id.clone(),
+                title: "Stats B".to_string(),
+                file_name: "stats-b.md".to_string(),
+                file_extension: Some("md".to_string()),
+                document_type: "markdown".to_string(),
+                source_path: "C:\\docs\\stats-b.md".to_string(),
+                source_byte_size: 2048,
+                source_modified_at: 1_720_000_000_000,
+                content_hash: "sha1:stats-b".to_string(),
+                fingerprint: "fp:C:\\docs\\stats-b.md:2048:1720000000000:stats-b".to_string(),
+                index_state: Some(KnowledgeDocumentIndexState::Indexing),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let chunks = insert_knowledge_chunks(
+            &db,
+            &first_document.id,
+            &[
+                CreateKnowledgeChunkInput {
+                    chunk_index: 0,
+                    text: "alpha".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["A".to_string()],
+                    page_number: Some(1),
+                    language: None,
+                    start_offset: 0,
+                    end_offset: 5,
+                    block_count: 1,
+                },
+                CreateKnowledgeChunkInput {
+                    chunk_index: 1,
+                    text: "beta beta".to_string(),
+                    chunk_type: "text".to_string(),
+                    heading_path: vec!["B".to_string()],
+                    page_number: Some(2),
+                    language: None,
+                    start_offset: 6,
+                    end_offset: 15,
+                    block_count: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        insert_knowledge_embeddings(
+            &db,
+            &[CreateKnowledgeEmbeddingInput {
+                knowledge_base_id: kb.id.clone(),
+                document_id: first_document.id.clone(),
+                chunk_id: chunks[0].id.clone(),
+                embedding: vec![0.1, 0.2, 0.3],
+                embedding_dim: 3,
+                model_id: "stats-model-v1".to_string(),
+            }],
+        )
+        .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        insert_knowledge_embeddings(
+            &db,
+            &[CreateKnowledgeEmbeddingInput {
+                knowledge_base_id: kb.id.clone(),
+                document_id: first_document.id.clone(),
+                chunk_id: chunks[1].id.clone(),
+                embedding: vec![0.4, 0.5, 0.6],
+                embedding_dim: 3,
+                model_id: "stats-model-v2".to_string(),
+            }],
+        )
+        .unwrap();
+
+        let stats = get_knowledge_base_stats(&db, &kb.id).unwrap().unwrap();
+
+        assert_eq!(stats.knowledge_base_id, kb.id);
+        assert_eq!(stats.document_count, 2);
+        assert_eq!(stats.chunk_count, 2);
+        assert_eq!(stats.embedding_count, 2);
+        assert_eq!(stats.source_bytes, 1024 + second_document.source_byte_size);
+        assert_eq!(stats.chunk_bytes, "alpha".len() as u64 + "beta beta".len() as u64);
+        assert_eq!(stats.embedding_bytes, (3 * std::mem::size_of::<f32>() * 2) as u64);
+        assert_eq!(
+            stats.storage_bytes,
+            stats.source_bytes + stats.chunk_bytes + stats.embedding_bytes
+        );
+        assert_eq!(
+            stats.latest_indexed_model_id.as_deref(),
+            Some("stats-model-v2")
+        );
+        assert!(stats.latest_indexed_at.is_some());
     }
 
     #[test]

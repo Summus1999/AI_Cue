@@ -11,6 +11,7 @@ import type {
   KnowledgeBaseImportStage,
   KnowledgeBaseImportTaskSnapshot,
   KnowledgeBaseRecord,
+  KnowledgeBaseStatsRecord,
   KnowledgeChunkRecord,
   KnowledgeDocumentRecord,
   RagStats,
@@ -45,6 +46,7 @@ export interface RagState {
   knowledgeBases: KnowledgeBaseRecord[];
   currentKnowledgeBaseId: string | null;
   currentDocumentId: string | null;
+  knowledgeBaseStatsById: Record<string, KnowledgeBaseStatsRecord>;
   knowledgeDocumentsByKnowledgeBaseId: Record<string, KnowledgeDocumentRecord[]>;
   knowledgeDocumentDetailsById: Record<string, KnowledgeDocumentRecord>;
   knowledgeDocumentChunksById: Record<string, KnowledgeChunkRecord[]>;
@@ -55,6 +57,7 @@ export interface RagState {
 
   // 加载与变更状态
   isLoadingKnowledgeBases: boolean;
+  isLoadingKnowledgeBaseStatsById: Record<string, boolean>;
   isLoadingKnowledgeDocumentsByKnowledgeBaseId: Record<string, boolean>;
   isLoadingKnowledgeDocumentDetailsById: Record<string, boolean>;
   isLoadingKnowledgeDocumentChunksById: Record<string, boolean>;
@@ -79,6 +82,9 @@ export interface RagState {
   setCurrentDocument: (documentId: string | null) => void;
   clearKnowledgeState: () => void;
   refreshKnowledgeBases: () => Promise<KnowledgeBaseRecord[]>;
+  refreshKnowledgeBaseStats: (
+    knowledgeBaseId?: string,
+  ) => Promise<KnowledgeBaseStatsRecord | null>;
   createKnowledgeBase: (input: CreateKnowledgeBaseInput) => Promise<KnowledgeBaseRecord>;
   deleteKnowledgeBase: (knowledgeBaseId: string) => Promise<void>;
   refreshKnowledgeDocuments: (knowledgeBaseId?: string) => Promise<KnowledgeDocumentRecord[]>;
@@ -113,6 +119,7 @@ type RagStoreService = Pick<
   | 'getStats'
   | 'createKnowledgeBase'
   | 'listKnowledgeBases'
+  | 'getKnowledgeBaseStats'
   | 'deleteKnowledgeBase'
   | 'listKnowledgeDocuments'
   | 'getKnowledgeDocument'
@@ -150,6 +157,21 @@ function nextDocumentId(
   }
 
   return documents[0]?.id ?? null;
+}
+
+function createEmptyKnowledgeBaseStats(knowledgeBaseId: string): KnowledgeBaseStatsRecord {
+  return {
+    knowledgeBaseId,
+    documentCount: 0,
+    chunkCount: 0,
+    embeddingCount: 0,
+    sourceBytes: 0,
+    chunkBytes: 0,
+    embeddingBytes: 0,
+    storageBytes: 0,
+    latestIndexedModelId: null,
+    latestIndexedAt: null,
+  };
 }
 
 function mergeTaskSnapshot(
@@ -275,6 +297,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     knowledgeBases: [],
     currentKnowledgeBaseId: null,
     currentDocumentId: null,
+    knowledgeBaseStatsById: {},
     knowledgeDocumentsByKnowledgeBaseId: {},
     knowledgeDocumentDetailsById: {},
     knowledgeDocumentChunksById: {},
@@ -284,6 +307,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     reindexStatesByDocumentId: {},
 
     isLoadingKnowledgeBases: false,
+    isLoadingKnowledgeBaseStatsById: {},
     isLoadingKnowledgeDocumentsByKnowledgeBaseId: {},
     isLoadingKnowledgeDocumentDetailsById: {},
     isLoadingKnowledgeDocumentChunksById: {},
@@ -374,6 +398,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         knowledgeBases: [],
         currentKnowledgeBaseId: null,
         currentDocumentId: null,
+        knowledgeBaseStatsById: {},
         knowledgeDocumentsByKnowledgeBaseId: {},
         knowledgeDocumentDetailsById: {},
         knowledgeDocumentChunksById: {},
@@ -382,6 +407,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         latestTaskRequestIdByDocumentId: {},
         reindexStatesByDocumentId: {},
         isLoadingKnowledgeBases: false,
+        isLoadingKnowledgeBaseStatsById: {},
         isLoadingKnowledgeDocumentsByKnowledgeBaseId: {},
         isLoadingKnowledgeDocumentDetailsById: {},
         isLoadingKnowledgeDocumentChunksById: {},
@@ -423,6 +449,53 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
       }
     },
 
+    refreshKnowledgeBaseStats: async (knowledgeBaseId) => {
+      const targetKnowledgeBaseId = knowledgeBaseId ?? get().currentKnowledgeBaseId;
+      if (!targetKnowledgeBaseId) {
+        return null;
+      }
+
+      set((state) => ({
+        error: null,
+        isLoadingKnowledgeBaseStatsById: {
+          ...state.isLoadingKnowledgeBaseStatsById,
+          [targetKnowledgeBaseId]: true,
+        },
+      }));
+
+      try {
+        const stats = await service.getKnowledgeBaseStats(targetKnowledgeBaseId);
+        set((state) => {
+          const knowledgeBaseStatsById = { ...state.knowledgeBaseStatsById };
+          if (stats) {
+            knowledgeBaseStatsById[targetKnowledgeBaseId] = stats;
+          } else {
+            delete knowledgeBaseStatsById[targetKnowledgeBaseId];
+          }
+
+          return {
+            knowledgeBaseStatsById,
+            isLoadingKnowledgeBaseStatsById: {
+              ...state.isLoadingKnowledgeBaseStatsById,
+              [targetKnowledgeBaseId]: false,
+            },
+          };
+        });
+
+        return stats;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : '获取知识库统计失败';
+        set((state) => ({
+          error,
+          isLoadingKnowledgeBaseStatsById: {
+            ...state.isLoadingKnowledgeBaseStatsById,
+            [targetKnowledgeBaseId]: false,
+          },
+        }));
+        throw err;
+      }
+    },
+
     createKnowledgeBase: async (input) => {
       set({ error: null });
 
@@ -432,6 +505,10 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           knowledgeBases: [...state.knowledgeBases, knowledgeBase],
           currentKnowledgeBaseId: knowledgeBase.id,
           currentDocumentId: null,
+          knowledgeBaseStatsById: {
+            ...state.knowledgeBaseStatsById,
+            [knowledgeBase.id]: createEmptyKnowledgeBaseStats(knowledgeBase.id),
+          },
         }));
 
         return knowledgeBase;
@@ -460,6 +537,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           );
           const { [knowledgeBaseId]: _, ...knowledgeDocumentsByKnowledgeBaseId } =
             state.knowledgeDocumentsByKnowledgeBaseId;
+          const { [knowledgeBaseId]: __, ...knowledgeBaseStatsById } = state.knowledgeBaseStatsById;
           const isDeletingKnowledgeBaseById = { ...state.isDeletingKnowledgeBaseById };
           delete isDeletingKnowledgeBaseById[knowledgeBaseId];
 
@@ -497,6 +575,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
               deletedDocumentIds.has(state.currentDocumentId ?? '') ? null : state.currentDocumentId,
               currentDocuments,
             ),
+            knowledgeBaseStatsById,
             knowledgeDocumentsByKnowledgeBaseId,
             knowledgeDocumentDetailsById,
             knowledgeDocumentChunksById,
@@ -655,6 +734,14 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     },
 
     deleteKnowledgeDocument: async (documentId, knowledgeBaseId) => {
+      const resolvedKnowledgeBaseId =
+        knowledgeBaseId
+        ?? get().knowledgeDocumentDetailsById[documentId]?.knowledgeBaseId
+        ?? Object.entries(get().knowledgeDocumentsByKnowledgeBaseId).find(([, documents]) =>
+          documents.some((document) => document.id === documentId),
+        )?.[0]
+        ?? null;
+
       set((state) => ({
         error: null,
         isDeletingKnowledgeDocumentById: {
@@ -667,14 +754,6 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         await service.deleteKnowledgeDocument(documentId);
 
         set((state) => {
-          const resolvedKnowledgeBaseId =
-            knowledgeBaseId
-            ?? state.knowledgeDocumentDetailsById[documentId]?.knowledgeBaseId
-            ?? Object.entries(state.knowledgeDocumentsByKnowledgeBaseId).find(([, documents]) =>
-              documents.some((document) => document.id === documentId),
-            )?.[0]
-            ?? null;
-
           const knowledgeDocumentsByKnowledgeBaseId = { ...state.knowledgeDocumentsByKnowledgeBaseId };
           if (resolvedKnowledgeBaseId) {
             knowledgeDocumentsByKnowledgeBaseId[resolvedKnowledgeBaseId] = (
@@ -710,6 +789,10 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
             currentDocumentId: nextCurrentDocumentId,
           };
         });
+
+        if (resolvedKnowledgeBaseId) {
+          await get().refreshKnowledgeBaseStats(resolvedKnowledgeBaseId);
+        }
       } catch (err) {
         const error = err instanceof Error ? err.message : '删除知识库文档失败';
         set((state) => ({
@@ -811,6 +894,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         const completedTask = await get().refreshKnowledgeImportTask(requestId);
         await get().refreshKnowledgeBases();
+        await get().refreshKnowledgeBaseStats(result.document.knowledgeBaseId);
         await get().refreshKnowledgeDocuments(result.document.knowledgeBaseId);
         await get().refreshKnowledgeDocument(result.document.id);
         await get().refreshKnowledgeDocumentChunks(result.document.id);
@@ -877,6 +961,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         await get().refreshKnowledgeImportTasks(request.knowledgeBaseId, undefined, true);
         await get().refreshKnowledgeBases();
+        await get().refreshKnowledgeBaseStats(request.knowledgeBaseId);
         const refreshedDocuments = await get().refreshKnowledgeDocuments(request.knowledgeBaseId);
         const currentDocumentId = get().currentDocumentId;
         const shouldRefreshCurrentDocument = currentDocumentId
@@ -947,6 +1032,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         await get().refreshKnowledgeImportTasks(request.knowledgeBaseId, undefined, true);
         await get().refreshKnowledgeBases();
+        await get().refreshKnowledgeBaseStats(request.knowledgeBaseId);
         const refreshedDocuments = await get().refreshKnowledgeDocuments(request.knowledgeBaseId);
         const currentDocumentId = get().currentDocumentId;
         const shouldRefreshCurrentDocument = currentDocumentId
@@ -1016,6 +1102,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         );
 
         await get().refreshKnowledgeImportTask(requestId);
+        await get().refreshKnowledgeBaseStats(result.document.knowledgeBaseId);
         await get().refreshKnowledgeDocuments(result.document.knowledgeBaseId);
         await get().refreshKnowledgeDocument(result.document.id);
         await get().refreshKnowledgeDocumentChunks(result.document.id);

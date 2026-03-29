@@ -6,6 +6,37 @@ import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
 import { KnowledgeDocumentPreview } from './knowledge/KnowledgeDocumentPreview';
 
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) {
+    return '0 B';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatIndexedAt(timestamp: number | null): string {
+  if (!timestamp) {
+    return '暂无';
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp);
+}
+
 interface KnowledgeBasePanelProps {
   onBack: () => void;
 }
@@ -15,7 +46,9 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     knowledgeBases,
     currentKnowledgeBaseId,
     currentDocumentId,
+    knowledgeBaseStatsById,
     isLoadingKnowledgeBases,
+    isLoadingKnowledgeBaseStatsById,
     isLoadingKnowledgeDocumentDetailsById,
     isLoadingKnowledgeDocumentsByKnowledgeBaseId,
     isLoadingKnowledgeDocumentChunksById,
@@ -31,6 +64,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     reindexKnowledgeBase,
     retryKnowledgeBaseDocuments,
     refreshKnowledgeBases,
+    refreshKnowledgeBaseStats,
     refreshKnowledgeDocument,
     refreshKnowledgeDocumentChunks,
     refreshKnowledgeDocuments,
@@ -65,9 +99,16 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     () => (currentDocumentId ? knowledgeDocumentChunksById[currentDocumentId] ?? [] : []),
     [currentDocumentId, knowledgeDocumentChunksById],
   );
+  const currentKnowledgeBaseStats = useMemo(
+    () => (currentKnowledgeBaseId ? knowledgeBaseStatsById[currentKnowledgeBaseId] ?? null : null),
+    [currentKnowledgeBaseId, knowledgeBaseStatsById],
+  );
 
   const isLoadingDocuments = currentKnowledgeBaseId
     ? isLoadingKnowledgeDocumentsByKnowledgeBaseId[currentKnowledgeBaseId] ?? false
+    : false;
+  const isLoadingKnowledgeBaseStats = currentKnowledgeBaseId
+    ? isLoadingKnowledgeBaseStatsById[currentKnowledgeBaseId] ?? false
     : false;
   const isLoadingDocument = currentDocumentId
     ? isLoadingKnowledgeDocumentDetailsById[currentDocumentId] ?? false
@@ -93,6 +134,16 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
   useEffect(() => {
     setConfirmDeleteKnowledgeBaseId(null);
   }, [currentKnowledgeBaseId]);
+
+  useEffect(() => {
+    if (!currentKnowledgeBaseId) {
+      return;
+    }
+
+    void refreshKnowledgeBaseStats(currentKnowledgeBaseId).catch((refreshError) => {
+      console.error('Failed to load knowledge base stats:', refreshError);
+    });
+  }, [currentKnowledgeBaseId, refreshKnowledgeBaseStats]);
 
   useEffect(() => {
     if (!currentKnowledgeBaseId) {
@@ -132,6 +183,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           : refreshedKnowledgeBases[0]?.id ?? null;
 
         if (nextKnowledgeBaseId) {
+          await refreshKnowledgeBaseStats(nextKnowledgeBaseId);
           const refreshedDocuments = await refreshKnowledgeDocuments(nextKnowledgeBaseId);
           const nextDocumentId = currentDocumentId && refreshedDocuments.some(
             (document) => document.id === currentDocumentId,
@@ -247,10 +299,12 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-amber-500">Knowledge Base</p>
                 <h2 className="mt-2 text-xl font-semibold text-amber-950">
-                  知识库管理面板已拆分
+                  {currentKnowledgeBase ? currentKnowledgeBase.name : '知识库管理'}
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表、文档预览、导入状态区，以及删除和重建索引操作。
+                  {currentKnowledgeBase
+                    ? '当前面板已经接入知识库维度统计，可直接查看文档规模、索引体量、逻辑存储占用和最近一次索引模型。'
+                    : '选择一个知识库后，可以查看该知识库的聚合统计、文档列表、导入状态与索引操作。'}
                 </p>
               </div>
               <div className="min-w-28 rounded-2xl bg-amber-100 px-4 py-3 text-center">
@@ -258,6 +312,65 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                 <p className="mt-1 text-2xl font-semibold text-amber-900">{knowledgeBases.length}</p>
               </div>
             </div>
+
+            {currentKnowledgeBase && (
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {[
+                  {
+                    label: '总文档数',
+                    value: isLoadingKnowledgeBaseStats
+                      ? '...'
+                      : String(currentKnowledgeBaseStats?.documentCount ?? currentKnowledgeBase.documentCount ?? 0),
+                    helper: '当前知识库的文档总量',
+                  },
+                  {
+                    label: '总 Chunk 数',
+                    value: isLoadingKnowledgeBaseStats
+                      ? '...'
+                      : String(currentKnowledgeBaseStats?.chunkCount ?? 0),
+                    helper: '已持久化的文本分块数',
+                  },
+                  {
+                    label: '总 Embedding 数',
+                    value: isLoadingKnowledgeBaseStats
+                      ? '...'
+                      : String(currentKnowledgeBaseStats?.embeddingCount ?? 0),
+                    helper: '已写入的向量条数',
+                  },
+                  {
+                    label: '存储占用',
+                    value: isLoadingKnowledgeBaseStats
+                      ? '...'
+                      : formatBytes(currentKnowledgeBaseStats?.storageBytes ?? 0),
+                    helper: '源文件 + chunk 文本 + 向量逻辑体积',
+                  },
+                  {
+                    label: '最近索引模型',
+                    value: isLoadingKnowledgeBaseStats
+                      ? '...'
+                      : currentKnowledgeBaseStats?.latestIndexedModelId ?? '暂无',
+                    helper: isLoadingKnowledgeBaseStats
+                      ? '正在加载'
+                      : `最近索引时间：${formatIndexedAt(currentKnowledgeBaseStats?.latestIndexedAt ?? null)}`,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3"
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-amber-500">
+                      {item.label}
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-amber-950 break-all">
+                      {item.value}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-amber-700/80">
+                      {item.helper}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-sm">
@@ -270,7 +383,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                     : currentKnowledgeBase
                       ? `当前选中知识库：${currentKnowledgeBase.name}`
                       : knowledgeBases.length > 0
-                        ? '知识库列表已加载，但文档管理区还会在后续子任务接入。'
+                        ? '知识库列表已加载，选择任意知识库即可查看统计和文档详情。'
                         : '当前还没有可展示的知识库。'}
                 </p>
               </div>

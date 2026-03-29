@@ -7,6 +7,7 @@ import type {
   KnowledgeBaseImportProgress,
   KnowledgeBaseImportTaskSnapshot,
   KnowledgeBaseRecord,
+  KnowledgeBaseStatsRecord,
   KnowledgeChunkRecord,
   KnowledgeDocumentRecord,
   RagStats,
@@ -22,6 +23,25 @@ function createKnowledgeBase(id: string, name: string): KnowledgeBaseRecord {
     documentCount: 1,
     createdAt: 1,
     updatedAt: 2,
+  };
+}
+
+function createKnowledgeBaseStats(
+  knowledgeBaseId: string,
+  overrides: Partial<KnowledgeBaseStatsRecord> = {},
+): KnowledgeBaseStatsRecord {
+  return {
+    knowledgeBaseId,
+    documentCount: 1,
+    chunkCount: 2,
+    embeddingCount: 2,
+    sourceBytes: 128,
+    chunkBytes: 32,
+    embeddingBytes: 24,
+    storageBytes: 184,
+    latestIndexedModelId: 'mock-kb-model',
+    latestIndexedAt: 42,
+    ...overrides,
   };
 }
 
@@ -146,6 +166,7 @@ function createMockService(overrides: Partial<Parameters<typeof createRagState>[
     getStats: vi.fn().mockResolvedValue(stats),
     createKnowledgeBase: vi.fn(),
     listKnowledgeBases: vi.fn().mockResolvedValue([]),
+    getKnowledgeBaseStats: vi.fn().mockResolvedValue(null),
     deleteKnowledgeBase: vi.fn().mockResolvedValue(undefined),
     listKnowledgeDocuments: vi.fn().mockResolvedValue([]),
     getKnowledgeDocument: vi.fn().mockResolvedValue(null),
@@ -202,6 +223,30 @@ describe('useRagStore state', () => {
     expect(store.getState().knowledgeDocumentsByKnowledgeBaseId['kb-1']).toHaveLength(1);
     expect(store.getState().knowledgeDocumentDetailsById['doc-1']).toEqual(document);
     expect(store.getState().knowledgeDocumentChunksById['doc-1'][0]?.documentId).toBe('doc-1');
+  });
+
+  it('stores knowledge-base aggregate stats for the selected knowledge base', async () => {
+    const stats = createKnowledgeBaseStats('kb-1', {
+      documentCount: 3,
+      chunkCount: 12,
+      embeddingCount: 12,
+      storageBytes: 4096,
+      latestIndexedModelId: 'text-embedding-3-large',
+    });
+    const service = createMockService({
+      getKnowledgeBaseStats: vi.fn().mockResolvedValue(stats),
+    });
+    const store = createStore<RagState>(createRagState(service));
+    store.setState({
+      ...store.getState(),
+      currentKnowledgeBaseId: 'kb-1',
+    });
+
+    const result = await store.getState().refreshKnowledgeBaseStats();
+
+    expect(result).toEqual(stats);
+    expect(store.getState().knowledgeBaseStatsById['kb-1']).toEqual(stats);
+    expect(store.getState().isLoadingKnowledgeBaseStatsById['kb-1']).toBe(false);
   });
 
   it('stores backend task snapshots and exposes reindex state by document', async () => {
@@ -304,6 +349,13 @@ describe('useRagStore state', () => {
       }),
       listKnowledgeImportTasks: vi.fn().mockResolvedValue([completedTask]),
       listKnowledgeBases: vi.fn().mockResolvedValue([createKnowledgeBase('kb-1', 'Algorithms')]),
+      getKnowledgeBaseStats: vi.fn().mockResolvedValue(
+        createKnowledgeBaseStats('kb-1', {
+          documentCount: 2,
+          chunkCount: 4,
+          embeddingCount: 4,
+        }),
+      ),
       listKnowledgeDocuments: vi.fn().mockResolvedValue([firstDocument, secondDocument]),
       getKnowledgeDocument: vi.fn().mockResolvedValue(firstDocument),
       listKnowledgeDocumentChunks: vi.fn().mockResolvedValue([createChunk(firstDocument.id)]),
@@ -325,6 +377,11 @@ describe('useRagStore state', () => {
     expect(store.getState().reindexStatesByDocumentId['doc-1']).toMatchObject({
       requestId: 'batch-1:doc-1',
       status: 'completed',
+    });
+    expect(store.getState().knowledgeBaseStatsById['kb-1']).toMatchObject({
+      documentCount: 2,
+      chunkCount: 4,
+      embeddingCount: 4,
     });
     expect(store.getState().error).toContain('1 个文档失败');
   });

@@ -229,6 +229,7 @@ pub fn run() {
             commands::rag_get_knowledge_import_task,
             commands::rag_create_knowledge_base,
             commands::rag_list_knowledge_bases,
+            commands::rag_get_knowledge_base_stats,
             commands::rag_delete_knowledge_base,
             commands::rag_list_knowledge_documents,
             commands::rag_get_knowledge_document,
