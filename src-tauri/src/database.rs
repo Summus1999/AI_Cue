@@ -1415,6 +1415,29 @@ pub fn get_knowledge_document(
         .map_err(|e| e.to_string())
 }
 
+/// 按知识库和源文件路径获取单个知识库文档
+pub fn get_knowledge_document_by_source_path(
+    db: &Database,
+    knowledge_base_id: &str,
+    source_path: &str,
+) -> Result<Option<KnowledgeDocumentRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, knowledge_base_id, title, file_name, file_extension, document_type,
+                    source_path, source_byte_size, source_modified_at, content_hash, fingerprint,
+                    index_state, last_error, chunk_count, embedding_count, created_at, updated_at, indexed_at
+             FROM kb_documents
+             WHERE knowledge_base_id = ?1 AND source_path = ?2
+             LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    stmt.query_row(params![knowledge_base_id, source_path], map_knowledge_document_row)
+        .optional()
+        .map_err(|e| e.to_string())
+}
+
 /// 列出单个知识库文档的分块明细，供预览界面使用
 pub fn list_knowledge_document_chunks(
     db: &Database,
@@ -1446,6 +1469,56 @@ pub fn list_knowledge_document_chunks(
 
     let rows = stmt
         .query_map(params![document_id], map_knowledge_chunk_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
+}
+
+/// 列出单个知识库文档的 embedding 明细，供导入跳过与测试使用
+pub fn list_knowledge_document_embeddings(
+    db: &Database,
+    document_id: &str,
+) -> Result<Vec<KnowledgeEmbeddingRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let document_exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM kb_documents WHERE id = ?1)",
+            params![document_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        != 0;
+
+    if !document_exists {
+        return Err(format!("知识库文档不存在: {document_id}"));
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, knowledge_base_id, document_id, chunk_id, embedding_dim, model_id, created_at
+             FROM kb_embeddings
+             WHERE document_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![document_id], |row| {
+            Ok(KnowledgeEmbeddingRecord {
+                id: row.get(0)?,
+                knowledge_base_id: row.get(1)?,
+                document_id: row.get(2)?,
+                chunk_id: row.get(3)?,
+                embedding_dim: row.get::<_, i64>(4)? as usize,
+                model_id: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
         .map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();

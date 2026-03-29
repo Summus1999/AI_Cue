@@ -6,10 +6,10 @@
 - `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断。
 - `src-tauri/src/rag/ocr.rs` - OCR 抽象、错误模型、Windows OCR 运行时实现与默认引擎工厂。
 - `src-tauri/Cargo.toml` - Rust 后端依赖声明，启用 Windows OCR / PDF / Imaging 所需 WinRT feature。
-- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建编排、OCR 解析接线、分块持久化、embedding 入库、阶段进度事件与失败收口。
-- `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入等 Rust 集成测试。
+- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建编排、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件与失败收口。
+- `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
-- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、chunk/embedding 写入，以及文档预览所需的 chunk 明细查询。
+- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入，以及文档预览/跳过导入所需的明细查询。
 - `src-tauri/src/commands.rs` - Tauri RAG 命令入口、知识库导入/重建进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
 - `src-tauri/src/lib.rs` - Tauri 命令注册。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/重建进度监听封装、后台任务状态查询、文档 chunk 明细查询与类型定义。
@@ -124,7 +124,7 @@
   - ✅️ 7.8 `SettingsPanel.tsx` 已增加 RAG 配置区块和知识库入口
 
 - ❌️ 8.0 做增量索引、后台重试与运维加固
-  - ❌️ 8.1 尚未基于 fingerprint 做 unchanged file 跳过策略
+  - ✅️ 8.1 已基于 fingerprint 对同路径未变化且模型一致的 ready 文档做 unchanged file 跳过策略
   - ❌️ 8.2 尚未提供单文档或整库级别的真实重建索引逻辑
   - ❌️ 8.3 尚未提供后台扫描 / 重试命令来处理 `pending` 或 `failed` 文档
   - ❌️ 8.4 尚未为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
@@ -135,7 +135,7 @@
   - ✅️ 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
   - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
-  - ❌️ 9.4 尚未补齐围绕真实导入命令、真实重建索引命令、fingerprint 跳过、启动恢复的集成测试
+  - ❌️ 9.4 尚未补齐围绕真实导入命令、真实重建索引命令和启动恢复的集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
   - ❌️ 9.5 知识库 UI 的前端测试仍缺失；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
   - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
   - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度

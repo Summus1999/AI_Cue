@@ -1,10 +1,12 @@
 use super::{
     chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig, ChunkType,
-    DocumentChunk, EmbeddingProvider, OcrEngine, ParseOptions, ParsedDocument,
+    DocumentChunk, DocumentType, EmbeddingProvider, OcrEngine, ParseOptions, ParsedDocument,
+    ParsedDocumentMetadata,
 };
 use crate::database::{
-    create_knowledge_document, get_knowledge_document, insert_knowledge_chunks,
-    insert_knowledge_embeddings, reset_knowledge_document_for_reindex,
+    create_knowledge_document, get_knowledge_document, get_knowledge_document_by_source_path,
+    insert_knowledge_chunks, insert_knowledge_embeddings, list_knowledge_document_chunks,
+    list_knowledge_document_embeddings, reset_knowledge_document_for_reindex,
     update_knowledge_document_index_state, CreateKnowledgeChunkInput, CreateKnowledgeDocumentInput,
     CreateKnowledgeEmbeddingInput, Database, KnowledgeChunkRecord, KnowledgeDocumentIndexState,
     KnowledgeDocumentRecord, KnowledgeEmbeddingRecord,
@@ -312,6 +314,53 @@ impl KnowledgeBaseImportOrchestrator {
         embedder: Arc<dyn EmbeddingProvider>,
         progress_callback: Option<KnowledgeBaseImportProgressCallback>,
     ) -> Result<CompletedKnowledgeBaseImport, String> {
+        let snapshot = SourceDocumentSnapshot::from_path(&request.path)?;
+        if let Some(existing_document) = get_knowledge_document_by_source_path(
+            &self.db,
+            &request.knowledge_base_id,
+            &snapshot.source_path,
+        )? {
+            if existing_document.fingerprint == snapshot.fingerprint {
+                if existing_document.index_state == KnowledgeDocumentIndexState::Ready {
+                    if !self.document_embeddings_match_model(&existing_document.id, embedder.model_id())? {
+                        return Err(format!(
+                            "该文件未发生变化，但当前 embedding 模型 {} 与现有索引不一致，请改用重建索引",
+                            embedder.model_id()
+                        ));
+                    }
+
+                    let progress_context = KnowledgeBaseImportProgressContext::new(
+                        request.progress_event_id.clone(),
+                        KnowledgeBaseImportOperation::Import,
+                        existing_document.knowledge_base_id.clone(),
+                        Some(existing_document.id.clone()),
+                        Some(existing_document.file_name.clone()),
+                        Some(existing_document.source_path.clone()),
+                    );
+
+                    self.report_progress(
+                        progress_callback.as_ref(),
+                        progress_context.event(
+                            KnowledgeBaseImportStage::Finalize,
+                            KnowledgeBaseImportProgressStatus::Completed,
+                            "文件未发生变化，跳过导入并复用现有索引".to_string(),
+                            Some(existing_document.chunk_count),
+                            Some(existing_document.embedding_count),
+                        ),
+                    );
+
+                    return self.load_completed_import_from_existing_document(&existing_document.id);
+                }
+
+                return Err(format!(
+                    "该文件未发生变化，但当前索引状态为 {}，请改用重建索引或处理失败文档",
+                    existing_document.index_state.as_str()
+                ));
+            }
+
+            return Err("该知识库中已存在同一路径且文件内容已变化的文档，请改用重建索引而不是重复导入".to_string());
+        }
+
         let prepared = self
             .prepare_import_with_progress(request, progress_callback.as_ref())
             .await?;
@@ -1076,6 +1125,55 @@ impl KnowledgeBaseImportOrchestrator {
             .ok_or_else(|| format!("知识库文档不存在: {document_id}"))
     }
 
+    fn document_embeddings_match_model(
+        &self,
+        document_id: &str,
+        expected_model_id: &str,
+    ) -> Result<bool, String> {
+        let embeddings = list_knowledge_document_embeddings(&self.db, document_id)?;
+        Ok(embeddings.is_empty()
+            || embeddings
+                .iter()
+                .all(|embedding| embedding.model_id == expected_model_id))
+    }
+
+    fn load_completed_import_from_existing_document(
+        &self,
+        document_id: &str,
+    ) -> Result<CompletedKnowledgeBaseImport, String> {
+        let document = self.load_document(document_id)?;
+        let persisted_chunks = list_knowledge_document_chunks(&self.db, document_id)?;
+        let persisted_embeddings = list_knowledge_document_embeddings(&self.db, document_id)?;
+        let chunks = persisted_chunks
+            .iter()
+            .map(|chunk| persisted_chunk_to_document_chunk(chunk, &document))
+            .collect::<Vec<_>>();
+        let total_chars = chunks.iter().map(|chunk| chunk.text.chars().count()).sum();
+        let total_pages = chunks.iter().filter_map(|chunk| chunk.page_number).max();
+        let parsed_document = ParsedDocument {
+            metadata: ParsedDocumentMetadata {
+                source_path: document.source_path.clone(),
+                file_name: document.file_name.clone(),
+                extension: document.file_extension.clone(),
+                title: document.title.clone(),
+                document_type: document_type_from_key(&document.document_type),
+                byte_size: document.source_byte_size,
+                language: chunks.iter().find_map(|chunk| chunk.language.clone()),
+            },
+            blocks: Vec::new(),
+            total_chars,
+            total_pages,
+        };
+
+        Ok(CompletedKnowledgeBaseImport {
+            document,
+            parsed_document,
+            chunks,
+            persisted_chunks,
+            persisted_embeddings,
+        })
+    }
+
     fn report_progress(
         &self,
         progress_callback: Option<&KnowledgeBaseImportProgressCallback>,
@@ -1101,11 +1199,49 @@ fn document_chunk_to_create_input(chunk: &DocumentChunk) -> CreateKnowledgeChunk
     }
 }
 
+fn persisted_chunk_to_document_chunk(
+    chunk: &KnowledgeChunkRecord,
+    document: &KnowledgeDocumentRecord,
+) -> DocumentChunk {
+    DocumentChunk {
+        chunk_index: chunk.chunk_index,
+        text: chunk.text.clone(),
+        chunk_type: chunk_type_from_key(&chunk.chunk_type, chunk.language.clone()),
+        source_path: document.source_path.clone(),
+        file_name: document.file_name.clone(),
+        title: document.title.clone(),
+        document_type: document_type_from_key(&document.document_type),
+        heading_path: chunk.heading_path.clone(),
+        page_number: chunk.page_number,
+        language: chunk.language.clone(),
+        start_offset: chunk.start_offset,
+        end_offset: chunk.end_offset,
+        block_count: chunk.block_count,
+    }
+}
+
 fn chunk_type_key(chunk_type: &ChunkType) -> &'static str {
     match chunk_type {
         ChunkType::Text => "text",
         ChunkType::Code { .. } => "code",
         ChunkType::QaPair => "qa_pair",
+    }
+}
+
+fn chunk_type_from_key(chunk_type: &str, language: Option<String>) -> ChunkType {
+    match chunk_type {
+        "code" => ChunkType::Code { language },
+        "qa_pair" => ChunkType::QaPair,
+        _ => ChunkType::Text,
+    }
+}
+
+fn document_type_from_key(document_type: &str) -> DocumentType {
+    match document_type {
+        "markdown" => DocumentType::Markdown,
+        "pdf" => DocumentType::Pdf,
+        "code" => DocumentType::Code,
+        _ => DocumentType::PlainText,
     }
 }
 
@@ -1982,6 +2118,81 @@ mod tests {
         assert_eq!(
             events.last().and_then(|event| event.embedding_count),
             Some(completed.persisted_embeddings.len())
+        );
+    }
+
+    #[tokio::test]
+    async fn import_document_with_embeddings_emits_completed_progress_when_fingerprint_is_unchanged()
+    {
+        let db = create_test_db();
+        let knowledge_base_id = create_test_knowledge_base(&db);
+        let path = create_test_file(
+            "progress-import-unchanged.md",
+            "# Rust\n\nThis file should be reused without re-import when unchanged.\n",
+        );
+        let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+        let provider = Arc::new(RecordingEmbeddingProvider::repeat(
+            "progress-unchanged-model",
+            vec![0.2, 0.4, 0.6],
+        ));
+
+        let first = orchestrator
+            .import_document_with_embeddings(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id,
+                    path: path.clone(),
+                    parse_options: None,
+                    chunk_config: Some(ChunkConfig {
+                        max_chunk_size: 80,
+                        overlap_size: 0,
+                        min_chunk_size: 20,
+                        prefer_structure_boundary: true,
+                    }),
+                    progress_event_id: None,
+                },
+                provider.clone(),
+            )
+            .await
+            .unwrap();
+
+        let progress_event_id = "progress-import-unchanged-1".to_string();
+        let (recorded, callback) = create_progress_recorder();
+
+        let second = orchestrator
+            .import_document_with_embeddings_and_progress(
+                &KnowledgeBaseImportRequest {
+                    knowledge_base_id: first.document.knowledge_base_id.clone(),
+                    path,
+                    parse_options: None,
+                    chunk_config: Some(ChunkConfig {
+                        max_chunk_size: 80,
+                        overlap_size: 0,
+                        min_chunk_size: 20,
+                        prefer_structure_boundary: true,
+                    }),
+                    progress_event_id: Some(progress_event_id.clone()),
+                },
+                provider,
+                Some(callback),
+            )
+            .await
+            .unwrap();
+
+        let events = recorded.lock().unwrap().clone();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].stage, KnowledgeBaseImportStage::Finalize);
+        assert_eq!(
+            events[0].status,
+            KnowledgeBaseImportProgressStatus::Completed
+        );
+        assert_eq!(events[0].request_id.as_deref(), Some(progress_event_id.as_str()));
+        assert_eq!(events[0].document_id.as_deref(), Some(first.document.id.as_str()));
+        assert!(events[0].message.contains("跳过导入"));
+        assert_eq!(second.document.id, first.document.id);
+        assert_eq!(second.persisted_chunks.len(), first.persisted_chunks.len());
+        assert_eq!(
+            second.persisted_embeddings.len(),
+            first.persisted_embeddings.len()
         );
     }
 

@@ -165,7 +165,7 @@ async fn import_document_with_embeddings_indexes_document_on_first_import() {
 }
 
 #[tokio::test]
-async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows() {
+async fn duplicate_import_of_unchanged_file_is_skipped_and_reuses_existing_rows() {
     let db = create_test_db();
     let knowledge_base_id = create_test_knowledge_base(&db);
     let path = create_test_file(
@@ -192,6 +192,78 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
         .await
         .unwrap();
 
+    let second = orchestrator
+        .import_document_with_embeddings(
+            &KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            },
+            provider,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second.document.id, first.document.id);
+    assert_eq!(second.document.fingerprint, first.document.fingerprint);
+    assert_eq!(second.persisted_chunks.len(), first.persisted_chunks.len());
+    assert_eq!(
+        second.persisted_embeddings.len(),
+        first.persisted_embeddings.len()
+    );
+
+    let documents = list_knowledge_documents(&db, &knowledge_base_id).unwrap();
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, first.document.id);
+    assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
+    assert_eq!(
+        documents[0].embedding_count,
+        first.persisted_embeddings.len()
+    );
+    assert_eq!(count_rows(&db, "kb_documents"), 1);
+    assert_eq!(count_rows(&db, "kb_chunks"), first.persisted_chunks.len());
+    assert_eq!(
+        count_rows(&db, "kb_embeddings"),
+        first.persisted_embeddings.len()
+    );
+}
+
+#[tokio::test]
+async fn duplicate_import_of_changed_file_is_rejected_without_creating_dirty_rows() {
+    let db = create_test_db();
+    let knowledge_base_id = create_test_knowledge_base(&db);
+    let path = create_test_file(
+        "duplicate-import-changed.md",
+        "# Duplicate\n\nThe original version is already indexed.\n",
+    );
+    let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+    let provider = Arc::new(StaticEmbeddingProvider::new(
+        "duplicate-check-model",
+        vec![0.1, 0.2, 0.3],
+    ));
+
+    let first = orchestrator
+        .import_document_with_embeddings(
+            &KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            },
+            provider.clone(),
+        )
+        .await
+        .unwrap();
+
+    std::fs::write(
+        &path,
+        "# Duplicate\n\nThe file changed on disk and should now require reindex.\n",
+    )
+    .unwrap();
+
     let error = orchestrator
         .import_document_with_embeddings(
             &KnowledgeBaseImportRequest {
@@ -206,7 +278,7 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
         .await
         .unwrap_err();
 
-    assert!(error.contains("已存在同一路径的文档"));
+    assert!(error.contains("文件内容已变化"));
     assert!(error.contains("重建索引"));
 
     let documents = list_knowledge_documents(&db, &knowledge_base_id).unwrap();
@@ -214,11 +286,66 @@ async fn duplicate_import_of_same_file_is_rejected_without_creating_dirty_rows()
     assert_eq!(documents[0].id, first.document.id);
     assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
     assert_eq!(
-        documents[0].embedding_count,
+        count_rows(&db, "kb_chunks"),
+        first.persisted_chunks.len()
+    );
+    assert_eq!(
+        count_rows(&db, "kb_embeddings"),
         first.persisted_embeddings.len()
     );
-    assert_eq!(count_rows(&db, "kb_documents"), 1);
-    assert_eq!(count_rows(&db, "kb_chunks"), first.persisted_chunks.len());
+}
+
+#[tokio::test]
+async fn duplicate_import_of_unchanged_file_requires_reindex_when_embedding_model_changes() {
+    let db = create_test_db();
+    let knowledge_base_id = create_test_knowledge_base(&db);
+    let path = create_test_file(
+        "duplicate-import-model-change.md",
+        "# Duplicate\n\nThe file did not change, but the embedding model did.\n",
+    );
+    let orchestrator = KnowledgeBaseImportOrchestrator::new(db.clone());
+
+    let first = orchestrator
+        .import_document_with_embeddings(
+            &KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path: path.clone(),
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            },
+            Arc::new(StaticEmbeddingProvider::new(
+                "duplicate-model-v1",
+                vec![0.1, 0.2, 0.3],
+            )),
+        )
+        .await
+        .unwrap();
+
+    let error = orchestrator
+        .import_document_with_embeddings(
+            &KnowledgeBaseImportRequest {
+                knowledge_base_id: knowledge_base_id.clone(),
+                path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: None,
+            },
+            Arc::new(StaticEmbeddingProvider::new(
+                "duplicate-model-v2",
+                vec![0.4, 0.5, 0.6],
+            )),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("embedding 模型"));
+    assert!(error.contains("重建索引"));
+
+    let documents = list_knowledge_documents(&db, &knowledge_base_id).unwrap();
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].id, first.document.id);
+    assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
     assert_eq!(
         count_rows(&db, "kb_embeddings"),
         first.persisted_embeddings.len()
