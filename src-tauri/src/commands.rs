@@ -1091,10 +1091,9 @@ use crate::rag::{
     chunk_document, create_default_ocr_engine, parse_document_with_ocr, ChunkConfig,
     CompletedKnowledgeBaseImport, CompletedKnowledgeBaseReindex, ContextConfig, DocumentChunk,
     EmbeddingProviderConfig, KnowledgeBaseImportProgress, KnowledgeBaseImportProgressCallback,
-    KnowledgeBaseImportRequest, KnowledgeBaseImportTaskRegistry,
-    KnowledgeBaseImportTaskSnapshot, ParseOptions, ParsedDocument, RagContextBundle, RagEngine,
-    ReindexKnowledgeBaseRequest, ReindexKnowledgeDocumentRequest,
-    RetryKnowledgeBaseDocumentsRequest,
+    KnowledgeBaseImportRequest, KnowledgeBaseImportTaskRegistry, KnowledgeBaseImportTaskSnapshot,
+    ParseOptions, ParsedDocument, RagContextBundle, RagEngine, ReindexKnowledgeBaseRequest,
+    ReindexKnowledgeDocumentRequest, RetryKnowledgeBaseDocumentsRequest,
 };
 
 const RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT: &str = "rag-import-progress";
@@ -1113,15 +1112,66 @@ fn normalize_rag_import_request_id(request_id: Option<&str>) -> String {
         })
 }
 
-fn create_rag_import_progress_callback(
-    app: &AppHandle,
+fn create_rag_import_progress_callback_with_emitter<F>(
+    task_registry: Arc<KnowledgeBaseImportTaskRegistry>,
+    emit_progress: F,
+) -> KnowledgeBaseImportProgressCallback
+where
+    F: Fn(&KnowledgeBaseImportProgress) + Send + Sync + 'static,
+{
+    Arc::new(move |progress: KnowledgeBaseImportProgress| {
+        task_registry.upsert(progress.clone());
+        emit_progress(&progress);
+    })
+}
+
+fn create_rag_import_progress_callback<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     task_registry: Arc<KnowledgeBaseImportTaskRegistry>,
 ) -> KnowledgeBaseImportProgressCallback {
     let app = app.clone();
-    Arc::new(move |progress: KnowledgeBaseImportProgress| {
-        task_registry.upsert(progress.clone());
-        let _ = app.emit(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, &progress);
-    })
+    create_rag_import_progress_callback_with_emitter(
+        task_registry,
+        move |progress: &KnowledgeBaseImportProgress| {
+            let _ = app.emit(RAG_KNOWLEDGE_IMPORT_PROGRESS_EVENT, progress);
+        },
+    )
+}
+
+async fn execute_rag_import_knowledge_document(
+    engine: &Arc<RagEngine>,
+    progress_callback: KnowledgeBaseImportProgressCallback,
+    request: KnowledgeBaseImportRequest,
+) -> Result<CompletedKnowledgeBaseImport, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
+    engine
+        .import_knowledge_document_with_progress(&request, Some(progress_callback))
+        .await
+}
+
+async fn execute_rag_reindex_knowledge_document(
+    engine: &Arc<RagEngine>,
+    progress_callback: KnowledgeBaseImportProgressCallback,
+    request: ReindexKnowledgeDocumentRequest,
+) -> Result<CompletedKnowledgeBaseImport, String> {
+    let mut request = request;
+    request.progress_event_id = Some(normalize_rag_import_request_id(
+        request.progress_event_id.as_deref(),
+    ));
+
+    engine
+        .reindex_knowledge_document_with_progress(&request, Some(progress_callback))
+        .await
+}
+
+fn execute_rag_recover_stuck_knowledge_documents(
+    db: &crate::database::Database,
+) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
+    crate::database::recover_stuck_knowledge_documents(db)
 }
 
 /// 向量检索
@@ -1133,7 +1183,9 @@ pub async fn rag_search(
     session_id: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let limit = limit.unwrap_or(10);
-    let results = engine.search(&query, limit, session_id.as_deref(), None).await?;
+    let results = engine
+        .search(&query, limit, session_id.as_deref(), None)
+        .await?;
 
     Ok(results
         .into_iter()
@@ -1221,7 +1273,12 @@ pub async fn rag_retrieve_with_citations(
     };
 
     engine
-        .retrieve_context_bundle(&query, &config, session_id.as_deref(), source_kinds.as_deref())
+        .retrieve_context_bundle(
+            &query,
+            &config,
+            session_id.as_deref(),
+            source_kinds.as_deref(),
+        )
         .await
 }
 
@@ -1280,20 +1337,12 @@ pub async fn rag_import_knowledge_document(
     task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
     request: KnowledgeBaseImportRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
-    let mut request = request;
-    request.progress_event_id = Some(normalize_rag_import_request_id(
-        request.progress_event_id.as_deref(),
-    ));
-
-    engine
-        .import_knowledge_document_with_progress(
-            &request,
-            Some(create_rag_import_progress_callback(
-                &app,
-                task_registry.inner().clone(),
-            )),
-        )
-        .await
+    execute_rag_import_knowledge_document(
+        engine.inner(),
+        create_rag_import_progress_callback(&app, task_registry.inner().clone()),
+        request,
+    )
+    .await
 }
 
 /// 重建单个知识库文档索引
@@ -1304,20 +1353,12 @@ pub async fn rag_reindex_knowledge_document(
     task_registry: State<'_, Arc<KnowledgeBaseImportTaskRegistry>>,
     request: ReindexKnowledgeDocumentRequest,
 ) -> Result<CompletedKnowledgeBaseImport, String> {
-    let mut request = request;
-    request.progress_event_id = Some(normalize_rag_import_request_id(
-        request.progress_event_id.as_deref(),
-    ));
-
-    engine
-        .reindex_knowledge_document_with_progress(
-            &request,
-            Some(create_rag_import_progress_callback(
-                &app,
-                task_registry.inner().clone(),
-            )),
-        )
-        .await
+    execute_rag_reindex_knowledge_document(
+        engine.inner(),
+        create_rag_import_progress_callback(&app, task_registry.inner().clone()),
+        request,
+    )
+    .await
 }
 
 /// 重建整个知识库中的所有文档索引
@@ -1423,7 +1464,7 @@ pub fn rag_get_knowledge_base_stats(
 pub fn rag_recover_stuck_knowledge_documents(
     db: State<'_, crate::database::Database>,
 ) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
-    crate::database::recover_stuck_knowledge_documents(&db)
+    execute_rag_recover_stuck_knowledge_documents(&db)
 }
 
 /// 删除知识库
@@ -1469,4 +1510,358 @@ pub fn rag_delete_knowledge_document(
     document_id: String,
 ) -> Result<(), String> {
     crate::database::delete_knowledge_document(&db, &document_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+
+    struct StaticEmbeddingProvider {
+        model_id: String,
+        embedding: Vec<f32>,
+    }
+
+    impl StaticEmbeddingProvider {
+        fn new(model_id: &str, embedding: Vec<f32>) -> Self {
+            Self {
+                model_id: model_id.to_string(),
+                embedding,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::rag::EmbeddingProvider for StaticEmbeddingProvider {
+        async fn embed(&self, _text: &str) -> Result<Vec<f32>, crate::rag::EmbedError> {
+            Ok(self.embedding.clone())
+        }
+
+        async fn embed_batch(
+            &self,
+            texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, crate::rag::EmbedError> {
+            Ok(texts.iter().map(|_| self.embedding.clone()).collect())
+        }
+
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+
+        fn dimension(&self) -> usize {
+            self.embedding.len()
+        }
+    }
+
+    struct CommandTestContext {
+        db: Arc<crate::database::Database>,
+        engine: Arc<crate::rag::RagEngine>,
+        task_registry: Arc<crate::rag::KnowledgeBaseImportTaskRegistry>,
+    }
+
+    fn create_test_command_context() -> CommandTestContext {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rag_command_integration_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = Arc::new(crate::database::init_database(&temp_dir).unwrap());
+        let engine = Arc::new(crate::rag::RagEngine::new(db.clone()));
+        let task_registry = Arc::new(crate::rag::KnowledgeBaseImportTaskRegistry::new());
+
+        CommandTestContext {
+            db,
+            engine,
+            task_registry,
+        }
+    }
+
+    fn create_test_knowledge_base(db: &Arc<crate::database::Database>) -> String {
+        crate::database::create_knowledge_base(
+            db,
+            crate::database::CreateKnowledgeBaseInput {
+                name: "Command Test KB".to_string(),
+                description: Some("command integration".to_string()),
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn create_test_file(name: &str, content: &str) -> String {
+        let temp_dir =
+            std::env::temp_dir().join(format!("rag_command_source_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn create_test_progress_callback(
+        task_registry: Arc<crate::rag::KnowledgeBaseImportTaskRegistry>,
+    ) -> (
+        KnowledgeBaseImportProgressCallback,
+        Arc<Mutex<Vec<KnowledgeBaseImportProgress>>>,
+    ) {
+        let emitted_progress = Arc::new(Mutex::new(Vec::new()));
+        let emitted_progress_for_callback = emitted_progress.clone();
+        let callback = create_rag_import_progress_callback_with_emitter(
+            task_registry,
+            move |progress: &KnowledgeBaseImportProgress| {
+                emitted_progress_for_callback
+                    .lock()
+                    .unwrap()
+                    .push(progress.clone());
+            },
+        );
+
+        (callback, emitted_progress)
+    }
+
+    #[tokio::test]
+    async fn rag_import_knowledge_document_command_indexes_document_and_tracks_task_snapshot() {
+        let context = create_test_command_context();
+        let knowledge_base_id = create_test_knowledge_base(&context.db);
+        let path = create_test_file(
+            "command-import.md",
+            "# Rust\n\nCommand-level import should index this document.\n",
+        );
+        let (progress_callback, emitted_progress) =
+            create_test_progress_callback(context.task_registry.clone());
+
+        context
+            .engine
+            .set_embedding_provider(Arc::new(StaticEmbeddingProvider::new(
+                "command-import-model",
+                vec![0.1, 0.2, 0.3],
+            )))
+            .unwrap();
+
+        let imported = execute_rag_import_knowledge_document(
+            &context.engine,
+            progress_callback,
+            crate::rag::KnowledgeBaseImportRequest {
+                knowledge_base_id,
+                path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: Some("   ".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            imported.document.index_state,
+            crate::database::KnowledgeDocumentIndexState::Ready
+        );
+        assert!(!imported.persisted_chunks.is_empty());
+        assert_eq!(
+            imported.document.embedding_count,
+            imported.persisted_embeddings.len()
+        );
+        assert!(imported
+            .persisted_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "command-import-model"));
+
+        let tasks = context.task_registry.list(
+            Some(&imported.document.knowledge_base_id),
+            Some(&imported.document.id),
+            true,
+        );
+        assert_eq!(tasks.len(), 1);
+        let task = &tasks[0];
+        assert!(task.request_id.starts_with("kb-import-"));
+        assert_eq!(
+            task.status,
+            crate::rag::KnowledgeBaseImportProgressStatus::Completed
+        );
+        assert_eq!(
+            task.document_id.as_deref(),
+            Some(imported.document.id.as_str())
+        );
+        assert_eq!(task.stage, crate::rag::KnowledgeBaseImportStage::Finalize);
+
+        let emitted_progress = emitted_progress.lock().unwrap();
+        assert!(!emitted_progress.is_empty());
+        assert!(emitted_progress
+            .iter()
+            .all(|progress| { progress.request_id.as_deref() == Some(task.request_id.as_str()) }));
+        assert_eq!(
+            emitted_progress.last().map(|progress| progress.status),
+            Some(crate::rag::KnowledgeBaseImportProgressStatus::Completed)
+        );
+        assert_eq!(
+            crate::database::get_knowledge_document(&context.db, &imported.document.id)
+                .unwrap()
+                .unwrap()
+                .index_state,
+            crate::database::KnowledgeDocumentIndexState::Ready
+        );
+    }
+
+    #[tokio::test]
+    async fn rag_reindex_knowledge_document_command_reuses_document_id_and_updates_task_snapshot() {
+        let context = create_test_command_context();
+        let knowledge_base_id = create_test_knowledge_base(&context.db);
+        let path = create_test_file("command-reindex.md", "# Rust\n\nInitial content.\n");
+
+        context
+            .engine
+            .set_embedding_provider(Arc::new(StaticEmbeddingProvider::new(
+                "command-reindex-model-v1",
+                vec![1.0, 0.0],
+            )))
+            .unwrap();
+
+        let (import_progress_callback, _) =
+            create_test_progress_callback(context.task_registry.clone());
+        let imported = execute_rag_import_knowledge_document(
+            &context.engine,
+            import_progress_callback,
+            crate::rag::KnowledgeBaseImportRequest {
+                knowledge_base_id,
+                path,
+                parse_options: None,
+                chunk_config: None,
+                progress_event_id: Some("cmd-import-before-reindex".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        std::fs::write(
+            &imported.document.source_path,
+            "# Rust\n\nInitial content.\n\n## Reindexed\n\nUpdated through command reindex.\n",
+        )
+        .unwrap();
+
+        context
+            .engine
+            .set_embedding_provider(Arc::new(StaticEmbeddingProvider::new(
+                "command-reindex-model-v2",
+                vec![0.0, 1.0, 0.0],
+            )))
+            .unwrap();
+
+        let (reindex_progress_callback, emitted_progress) =
+            create_test_progress_callback(context.task_registry.clone());
+        let reindexed = execute_rag_reindex_knowledge_document(
+            &context.engine,
+            reindex_progress_callback,
+            crate::rag::ReindexKnowledgeDocumentRequest {
+                document_id: imported.document.id.clone(),
+                parse_options: None,
+                chunk_config: Some(crate::rag::ChunkConfig {
+                    max_chunk_size: 70,
+                    overlap_size: 0,
+                    min_chunk_size: 18,
+                    prefer_structure_boundary: true,
+                }),
+                progress_event_id: Some("cmd-reindex".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reindexed.document.id, imported.document.id);
+        assert_ne!(
+            reindexed.document.content_hash,
+            imported.document.content_hash
+        );
+        assert_eq!(
+            reindexed.document.index_state,
+            crate::database::KnowledgeDocumentIndexState::Ready
+        );
+        assert!(reindexed
+            .persisted_embeddings
+            .iter()
+            .all(|embedding| embedding.model_id == "command-reindex-model-v2"));
+
+        let task = context.task_registry.get("cmd-reindex").unwrap();
+        assert_eq!(
+            task.status,
+            crate::rag::KnowledgeBaseImportProgressStatus::Completed
+        );
+        assert_eq!(
+            task.document_id.as_deref(),
+            Some(reindexed.document.id.as_str())
+        );
+        assert_eq!(
+            task.operation,
+            crate::rag::KnowledgeBaseImportOperation::Reindex
+        );
+
+        let emitted_progress = emitted_progress.lock().unwrap();
+        assert!(!emitted_progress.is_empty());
+        assert!(emitted_progress
+            .iter()
+            .all(|progress| { progress.request_id.as_deref() == Some("cmd-reindex") }));
+        assert_eq!(
+            emitted_progress.last().map(|progress| progress.operation),
+            Some(crate::rag::KnowledgeBaseImportOperation::Reindex)
+        );
+
+        let stored_documents = crate::database::list_knowledge_documents(
+            &context.db,
+            &reindexed.document.knowledge_base_id,
+        )
+        .unwrap();
+        assert_eq!(stored_documents.len(), 1);
+        assert_eq!(stored_documents[0].id, reindexed.document.id);
+    }
+
+    #[test]
+    fn rag_recover_stuck_knowledge_documents_command_marks_indexing_documents_failed() {
+        let context = create_test_command_context();
+        let knowledge_base_id = create_test_knowledge_base(&context.db);
+        let indexing_document = crate::database::create_knowledge_document(
+            &context.db,
+            crate::database::CreateKnowledgeDocumentInput {
+                knowledge_base_id,
+                title: "stuck".to_string(),
+                file_name: "stuck.md".to_string(),
+                file_extension: Some("md".to_string()),
+                document_type: "markdown".to_string(),
+                source_path: "C:\\docs\\stuck.md".to_string(),
+                source_byte_size: 512,
+                source_modified_at: 1_710_000_000_000,
+                content_hash: "sha1:stuck".to_string(),
+                fingerprint: "fp:C:\\docs\\stuck.md:512:1710000000000:stuck".to_string(),
+                index_state: Some(crate::database::KnowledgeDocumentIndexState::Indexing),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let recovered = execute_rag_recover_stuck_knowledge_documents(&context.db).unwrap();
+
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, indexing_document.id);
+        assert_eq!(
+            recovered[0].index_state,
+            crate::database::KnowledgeDocumentIndexState::Failed
+        );
+        assert!(recovered[0]
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("应用重启后恢复"));
+
+        let persisted = crate::database::get_knowledge_document(&context.db, &indexing_document.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted.index_state,
+            crate::database::KnowledgeDocumentIndexState::Failed
+        );
+        assert!(persisted
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("应用重启后恢复"));
+    }
 }

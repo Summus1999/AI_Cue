@@ -10,7 +10,7 @@
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计，以及应用重启后 `indexing` 卡死文档恢复。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及 parse/chunk 路径 OCR 引擎接线。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及命令层集成测试。
 - `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复与知识库统计入口。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与类型定义。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
@@ -136,7 +136,7 @@
   - ✅️ 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
   - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
-  - ❌️ 9.4 尚未补齐围绕真实导入命令、真实重建索引命令和启动恢复的集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
+  - ✅️ 9.4 已补齐围绕真实导入命令、真实重建索引命令和启动恢复的命令层集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
   - ❌️ 9.5 知识库 UI 的前端测试仍缺失；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
   - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
   - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
