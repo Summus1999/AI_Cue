@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Database, RefreshCw } from 'lucide-react';
 import { useRagStore } from '../store/rag';
+import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
 import { KnowledgeDocumentPreview } from './knowledge/KnowledgeDocumentPreview';
 
@@ -166,7 +167,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   知识库管理面板已拆分
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表与文档预览。后续会继续补上导入交互和状态行。
+                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表、文档预览和导入状态区。后续会继续补上删除和重建索引操作。
                 </p>
               </div>
               <div className="min-w-28 rounded-2xl bg-amber-100 px-4 py-3 text-center">
@@ -230,6 +231,11 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
               </div>
             )}
           </div>
+
+          <KnowledgeImportPanel
+            knowledgeBaseId={currentKnowledgeBaseId}
+            knowledgeBaseName={currentKnowledgeBase?.name ?? null}
+          />
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.9fr)]">
             <KnowledgeDocumentList

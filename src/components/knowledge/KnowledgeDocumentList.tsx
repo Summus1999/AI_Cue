@@ -97,7 +97,7 @@ export function KnowledgeDocumentList({
 
       {!isLoading && documents.length === 0 && (
         <div className="mt-4 rounded-2xl border border-dashed border-amber-300 bg-amber-50/80 px-5 py-8 text-center text-sm text-amber-700/80">
-          当前知识库还没有文档。后续步骤会在这里接入导入入口和导入进度。
+          当前知识库还没有文档。你可以先在上方导入区选择文件并开始导入。
         </div>
       )}
 
