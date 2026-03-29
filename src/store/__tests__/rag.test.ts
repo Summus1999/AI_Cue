@@ -205,6 +205,22 @@ describe('useRagStore state', () => {
     expect(store.getState().isLoadingKnowledgeBases).toBe(false);
   });
 
+  it('keeps the real knowledge-base list error message instead of collapsing to a generic fallback', async () => {
+    const service = createMockService({
+      listKnowledgeBases: vi.fn().mockRejectedValue('invoke failed: no such table: knowledge_bases'),
+    });
+    const store = createStore<RagState>(createRagState(service));
+
+    await expect(store.getState().refreshKnowledgeBases()).rejects.toBe(
+      'invoke failed: no such table: knowledge_bases',
+    );
+
+    expect(store.getState().knowledgeBaseListError).toBe(
+      'invoke failed: no such table: knowledge_bases',
+    );
+    expect(store.getState().error).toBeNull();
+  });
+
   it('stores knowledge documents, document detail, and chunk preview', async () => {
     const document = createDocument('doc-1', 'kb-1');
     const service = createMockService({

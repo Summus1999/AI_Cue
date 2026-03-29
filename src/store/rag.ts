@@ -41,6 +41,7 @@ export interface RagState {
   embeddingProgress: number;
   stats: RagStats | null;
   error: string | null;
+  knowledgeBaseListError: string | null;
 
   // 知识库 UI 状态
   knowledgeBases: KnowledgeBaseRecord[];
@@ -133,6 +134,28 @@ type RagStoreService = Pick<
   | 'getKnowledgeImportTask'
   | 'createKnowledgeBaseImportProgressId'
 >;
+
+function resolveErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message.trim()) {
+    return err.message;
+  }
+
+  if (typeof err === 'string' && err.trim()) {
+    return err;
+  }
+
+  if (
+    err
+    && typeof err === 'object'
+    && 'message' in err
+    && typeof err.message === 'string'
+    && err.message.trim()
+  ) {
+    return err.message;
+  }
+
+  return fallback;
+}
 
 function nextKnowledgeBaseId(
   currentKnowledgeBaseId: string | null,
@@ -292,6 +315,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     embeddingProgress: 0,
     stats: null,
     error: null,
+    knowledgeBaseListError: null,
 
     // 知识库初始状态
     knowledgeBases: [],
@@ -330,7 +354,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         const results = await service.search(query, limit, sessionId);
         set({ searchResults: results, isSearching: false });
       } catch (err) {
-        const error = err instanceof Error ? err.message : '搜索失败';
+        const error = resolveErrorMessage(err, '搜索失败');
         set({ error, isSearching: false });
       }
     },
@@ -339,7 +363,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
       try {
         return await service.getContext(query, maxTokens);
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取上下文失败';
+        const error = resolveErrorMessage(err, '获取上下文失败');
         set({ error });
         throw new Error(error);
       }
@@ -353,7 +377,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         set({ isEmbedding: false, embeddingProgress: 100 });
         void get().getStats();
       } catch (err) {
-        const error = err instanceof Error ? err.message : '向量化失败';
+        const error = resolveErrorMessage(err, '向量化失败');
         set({ error, isEmbedding: false });
       }
     },
@@ -376,7 +400,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     },
 
     clearError: () => {
-      set({ error: null });
+      set({ error: null, knowledgeBaseListError: null });
     },
 
     setCurrentKnowledgeBase: (knowledgeBaseId) => {
@@ -418,11 +442,12 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         isDeletingKnowledgeBaseById: {},
         isDeletingKnowledgeDocumentById: {},
         error: null,
+        knowledgeBaseListError: null,
       });
     },
 
     refreshKnowledgeBases: async () => {
-      set({ isLoadingKnowledgeBases: true, error: null });
+      set({ isLoadingKnowledgeBases: true, knowledgeBaseListError: null });
 
       try {
         const knowledgeBases = await service.listKnowledgeBases();
@@ -439,12 +464,13 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           currentKnowledgeBaseId,
           currentDocumentId: nextDocumentId(get().currentDocumentId, currentDocuments),
           isLoadingKnowledgeBases: false,
+          knowledgeBaseListError: null,
         });
 
         return knowledgeBases;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取知识库列表失败';
-        set({ error, isLoadingKnowledgeBases: false });
+        const knowledgeBaseListError = resolveErrorMessage(err, '获取知识库列表失败');
+        set({ knowledgeBaseListError, isLoadingKnowledgeBases: false });
         throw err;
       }
     },
@@ -484,7 +510,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return stats;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取知识库统计失败';
+        const error = resolveErrorMessage(err, '获取知识库统计失败');
         set((state) => ({
           error,
           isLoadingKnowledgeBaseStatsById: {
@@ -497,7 +523,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
     },
 
     createKnowledgeBase: async (input) => {
-      set({ error: null });
+      set({ error: null, knowledgeBaseListError: null });
 
       try {
         const knowledgeBase = await service.createKnowledgeBase(input);
@@ -513,7 +539,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return knowledgeBase;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '创建知识库失败';
+        const error = resolveErrorMessage(err, '创建知识库失败');
         set({ error });
         throw err;
       }
@@ -587,7 +613,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           };
         });
       } catch (err) {
-        const error = err instanceof Error ? err.message : '删除知识库失败';
+        const error = resolveErrorMessage(err, '删除知识库失败');
         set((state) => ({
           error,
           isDeletingKnowledgeBaseById: {
@@ -634,7 +660,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return documents;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取知识库文档列表失败';
+        const error = resolveErrorMessage(err, '获取知识库文档列表失败');
         set((state) => ({
           error,
           isLoadingKnowledgeDocumentsByKnowledgeBaseId: {
@@ -680,7 +706,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return document;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取文档详情失败';
+        const error = resolveErrorMessage(err, '获取文档详情失败');
         set((state) => ({
           error,
           isLoadingKnowledgeDocumentDetailsById: {
@@ -721,7 +747,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return chunks;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取文档分块失败';
+        const error = resolveErrorMessage(err, '获取文档分块失败');
         set((state) => ({
           error,
           isLoadingKnowledgeDocumentChunksById: {
@@ -794,7 +820,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
           await get().refreshKnowledgeBaseStats(resolvedKnowledgeBaseId);
         }
       } catch (err) {
-        const error = err instanceof Error ? err.message : '删除知识库文档失败';
+        const error = resolveErrorMessage(err, '删除知识库文档失败');
         set((state) => ({
           error,
           isDeletingKnowledgeDocumentById: {
@@ -840,7 +866,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return tasks;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取知识库任务列表失败';
+        const error = resolveErrorMessage(err, '获取知识库任务列表失败');
         set({ error });
         throw err;
       }
@@ -854,7 +880,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         }
         return task;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '获取知识库任务详情失败';
+        const error = resolveErrorMessage(err, '获取知识库任务详情失败');
         set({ error });
         throw err;
       }
@@ -915,7 +941,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return result;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '导入知识库文档失败';
+        const error = resolveErrorMessage(err, '导入知识库文档失败');
         set((state) => ({
           error,
           isImportingByKnowledgeBaseId: {
@@ -986,7 +1012,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return result;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '重建知识库索引失败';
+        const error = resolveErrorMessage(err, '重建知识库索引失败');
         set((state) => ({
           error,
           isReindexingKnowledgeBaseById: {
@@ -1057,7 +1083,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return result;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '后台重试知识库文档失败';
+        const error = resolveErrorMessage(err, '后台重试知识库文档失败');
         set((state) => ({
           error,
           isRetryingKnowledgeBaseById: {
@@ -1118,7 +1144,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
 
         return result;
       } catch (err) {
-        const error = err instanceof Error ? err.message : '重建知识库文档索引失败';
+        const error = resolveErrorMessage(err, '重建知识库文档索引失败');
         set((state) => ({
           error,
           isReindexingByDocumentId: {

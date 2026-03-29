@@ -107,6 +107,7 @@ function createPanelStore() {
     knowledgeBaseStatsById: {
       'kb-1': createKnowledgeBaseStats('kb-1'),
     },
+    knowledgeBaseListError: null,
     isLoadingKnowledgeBases: false,
     isLoadingKnowledgeBaseStatsById: {
       'kb-1': false,
@@ -155,6 +156,7 @@ function createPanelStore() {
     },
     error: null,
     clearError: vi.fn(),
+    createKnowledgeBase: vi.fn().mockResolvedValue(createKnowledgeBase('kb-3', 'Behavioral', 0)),
     deleteKnowledgeBase: vi.fn().mockResolvedValue(undefined),
     reindexKnowledgeBase: vi.fn().mockResolvedValue({
       knowledgeBaseId: 'kb-1',
@@ -223,6 +225,45 @@ describe('KnowledgeBasePanel', () => {
 
     fireEvent.click(screen.getByText('System Design'));
     expect(store.setCurrentKnowledgeBase).toHaveBeenCalledWith('kb-2');
+  });
+
+  it('renders the empty state without a false failure banner and allows creating the first knowledge base', async () => {
+    const store = {
+      ...createPanelStore(),
+      knowledgeBases: [],
+      currentKnowledgeBaseId: null,
+      currentDocumentId: null,
+      knowledgeBaseStatsById: {},
+      knowledgeDocumentsByKnowledgeBaseId: {},
+      knowledgeDocumentDetailsById: {},
+      knowledgeDocumentChunksById: {},
+      createKnowledgeBase: vi.fn().mockResolvedValue(createKnowledgeBase('kb-new', '面试题库', 0)),
+      refreshKnowledgeBaseStats: vi.fn().mockResolvedValue(null),
+      refreshKnowledgeDocuments: vi.fn().mockResolvedValue([]),
+    };
+    mockUseRagStore.mockReturnValue(store);
+
+    render(<KnowledgeBasePanel onBack={vi.fn()} />);
+
+    expect(screen.getByText('当前还没有可展示的知识库。')).toBeTruthy();
+    expect(screen.queryByText(/知识库列表加载失败/)).toBeNull();
+    expect(screen.getByRole('heading', { level: 4, name: '新建知识库' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('知识库名称'), {
+      target: { value: '  面试题库  ' },
+    });
+    fireEvent.change(screen.getByLabelText('描述（可选）'), {
+      target: { value: '用于导入面试资料' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '创建知识库' }));
+
+    await waitFor(() => {
+      expect(store.createKnowledgeBase).toHaveBeenCalledWith({
+        name: '面试题库',
+        description: '用于导入面试资料',
+      });
+    });
   });
 
   it('handles retry, reindex, and confirmed delete actions for the current knowledge base', async () => {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Database, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { ArrowLeft, Database, PlusCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { useRagStore } from '../store/rag';
 import { loadConfig } from '../store/config';
 import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
@@ -58,8 +58,10 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     knowledgeDocumentDetailsById,
     knowledgeDocumentsByKnowledgeBaseId,
     knowledgeDocumentChunksById,
+    knowledgeBaseListError,
     error,
     clearError,
+    createKnowledgeBase,
     deleteKnowledgeBase,
     reindexKnowledgeBase,
     retryKnowledgeBaseDocuments,
@@ -126,10 +128,14 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     ? isRetryingKnowledgeBaseById[currentKnowledgeBaseId] ?? false
     : false;
   const [confirmDeleteKnowledgeBaseId, setConfirmDeleteKnowledgeBaseId] = useState<string | null>(null);
+  const [newKnowledgeBaseName, setNewKnowledgeBaseName] = useState('');
+  const [newKnowledgeBaseDescription, setNewKnowledgeBaseDescription] = useState('');
+  const [isCreatingKnowledgeBase, setIsCreatingKnowledgeBase] = useState(false);
   const retryableDocumentCount = useMemo(
     () => currentDocuments.filter((document) => document.indexState === 'pending' || document.indexState === 'failed').length,
     [currentDocuments],
   );
+  const normalizedKnowledgeBaseName = newKnowledgeBaseName.trim();
 
   useEffect(() => {
     setConfirmDeleteKnowledgeBaseId(null);
@@ -206,6 +212,30 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
 
   const handleSelectKnowledgeBase = (knowledgeBaseId: string) => {
     setCurrentKnowledgeBase(knowledgeBaseId);
+  };
+
+  const handleCreateKnowledgeBase = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!normalizedKnowledgeBaseName || isCreatingKnowledgeBase) {
+      return;
+    }
+
+    clearError();
+    setIsCreatingKnowledgeBase(true);
+
+    try {
+      await createKnowledgeBase({
+        name: normalizedKnowledgeBaseName,
+        description: newKnowledgeBaseDescription.trim() || null,
+      });
+      setNewKnowledgeBaseName('');
+      setNewKnowledgeBaseDescription('');
+    } catch (createError) {
+      console.error('Failed to create knowledge base:', createError);
+    } finally {
+      setIsCreatingKnowledgeBase(false);
+    }
   };
 
   const handleDeleteKnowledgeBase = async () => {
@@ -382,6 +412,8 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                     ? '正在加载知识库列表...'
                     : currentKnowledgeBase
                       ? `当前选中知识库：${currentKnowledgeBase.name}`
+                      : knowledgeBaseListError
+                        ? '知识库列表加载失败，请刷新后重试。'
                       : knowledgeBases.length > 0
                         ? '知识库列表已加载，选择任意知识库即可查看统计和文档详情。'
                         : '当前还没有可展示的知识库。'}
@@ -448,9 +480,15 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
               )}
             </div>
 
-            {error && (
+            {knowledgeBaseListError && (
               <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                知识库状态加载失败：{error}
+                知识库列表加载失败：{knowledgeBaseListError}
+              </div>
+            )}
+
+            {!knowledgeBaseListError && error && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                最近一次知识库操作失败：{error}
               </div>
             )}
 
@@ -486,6 +524,58 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   );
                 })}
               </div>
+            )}
+
+            {!isLoadingKnowledgeBases && knowledgeBases.length === 0 && (
+              <form
+                onSubmit={handleCreateKnowledgeBase}
+                className="mt-4 rounded-2xl border border-dashed border-amber-300 bg-amber-50/70 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-amber-900">新建知识库</h4>
+                    <p className="mt-1 text-sm text-amber-700/80">
+                      当前还没有知识库。先创建一个知识库，随后就可以立即导入文档。
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-white px-2 py-1 text-[11px] text-amber-700/80">
+                    创建后自动选中
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto]">
+                  <label className="block">
+                    <span className="text-xs font-medium text-amber-700">知识库名称</span>
+                    <input
+                      type="text"
+                      value={newKnowledgeBaseName}
+                      onChange={(event) => setNewKnowledgeBaseName(event.target.value)}
+                      placeholder="例如：面试题库 / 项目文档 / 算法笔记"
+                      className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm text-amber-900 placeholder:text-amber-400 focus:border-amber-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs font-medium text-amber-700">描述（可选）</span>
+                    <input
+                      type="text"
+                      value={newKnowledgeBaseDescription}
+                      onChange={(event) => setNewKnowledgeBaseDescription(event.target.value)}
+                      placeholder="说明这个知识库主要放什么资料，便于后续区分"
+                      className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm text-amber-900 placeholder:text-amber-400 focus:border-amber-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={!normalizedKnowledgeBaseName || isCreatingKnowledgeBase}
+                    className="flex items-center justify-center gap-2 self-end rounded-xl border border-amber-700 bg-amber-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    {isCreatingKnowledgeBase ? '创建中...' : '创建知识库'}
+                  </button>
+                </div>
+              </form>
             )}
           </div>
 

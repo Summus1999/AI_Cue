@@ -376,7 +376,7 @@ export function KnowledgeImportPanel({
 
       {isDisabled && (
         <div className="mt-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 px-4 py-4 text-sm text-amber-700/80">
-          当前没有可用的目标知识库。后续步骤会补齐完整的知识库管理入口。
+          当前没有可用的目标知识库。请先在上方新建一个知识库，再选择文件开始导入。
         </div>
       )}
 
