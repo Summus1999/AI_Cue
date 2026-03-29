@@ -24,9 +24,13 @@
 - `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、知识库统计、文档详情/分块、任务快照、单文档/整库重建索引以及异常文档重试状态同步。
 - `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口，并将知识库页面切换到独立面板组件。
 - `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、知识库统计、导入区、整库重建索引、异常文档重试、删除知识库操作、文档列表与文档预览挂载点。
+- `src/components/KnowledgeBasePanel.test.tsx` - 知识库页面容器回归测试，覆盖库切换、统计展示、整库重建、异常文档重试与删除确认。
 - `src/components/knowledge/KnowledgeDocumentList.tsx` - 当前知识库的文档列表组件，负责文档状态展示与当前文档选择。
+- `src/components/knowledge/KnowledgeDocumentList.test.tsx` - 文档列表组件回归测试，覆盖状态徽标、错误可见性、空态/加载态与文档选择交互。
 - `src/components/knowledge/KnowledgeImportPanel.tsx` - 文档导入面板组件，负责文件选择、发起导入、乐观状态行、阶段进度与失败展示。
+- `src/components/knowledge/KnowledgeImportPanel.test.tsx` - 导入面板回归测试，覆盖文件选择、顺序导入、乐观状态行、后端任务快照渲染与失败保留。
 - `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
+- `src/components/knowledge/KnowledgeDocumentPreview.test.tsx` - 文档预览回归测试，覆盖空态、重建索引、删除确认、最近重建状态与 chunk 预览。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置，并按 `on_startup` 策略恢复中断的知识库索引状态。
 - `src/bootstrap/bootstrapCoordinator.test.ts` - 启动恢复策略回归测试，覆盖 `on_startup` 触发与非触发分支。
@@ -34,7 +38,7 @@
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
-- `package.json` - 新增 `npm test` 脚本，并引入前端回归测试所需的 `vitest`。
+- `package.json` - 前端测试脚本与依赖声明，现已包含 `vitest`、`@testing-library/react` 与 `jsdom`。
 - `package-lock.json` - 同步前端测试依赖锁文件。
 - `README.md` - 项目说明，当前尚未同步 RAG 真实状态。
 - `TODO.md` - 进度文档，当前与 RAG 真实状态存在偏差。
@@ -137,7 +141,7 @@
   - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
   - ✅️ 9.4 已补齐围绕真实导入命令、真实重建索引命令和启动恢复的命令层集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
-  - ❌️ 9.5 知识库 UI 的前端测试仍缺失；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
+  - ✅️ 9.5 已补齐知识库 UI 的前端测试，覆盖知识库面板、导入面板、文档列表与文档预览；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
   - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
   - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
 
