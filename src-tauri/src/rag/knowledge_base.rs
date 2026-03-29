@@ -16,6 +16,7 @@ use sha1::{Digest, Sha1};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,7 +364,10 @@ impl KnowledgeBaseImportOrchestrator {
         )? {
             if existing_document.fingerprint == snapshot.fingerprint {
                 if existing_document.index_state == KnowledgeDocumentIndexState::Ready {
-                    if !self.document_embeddings_match_model(&existing_document.id, embedder.model_id())? {
+                    if !self.document_embeddings_match_model(
+                        &existing_document.id,
+                        embedder.model_id(),
+                    )? {
                         return Err(format!(
                             "该文件未发生变化，但当前 embedding 模型 {} 与现有索引不一致，请改用重建索引",
                             embedder.model_id()
@@ -390,7 +394,8 @@ impl KnowledgeBaseImportOrchestrator {
                         ),
                     );
 
-                    return self.load_completed_import_from_existing_document(&existing_document.id);
+                    return self
+                        .load_completed_import_from_existing_document(&existing_document.id);
                 }
 
                 return Err(format!(
@@ -399,7 +404,10 @@ impl KnowledgeBaseImportOrchestrator {
                 ));
             }
 
-            return Err("该知识库中已存在同一路径且文件内容已变化的文档，请改用重建索引而不是重复导入".to_string());
+            return Err(
+                "该知识库中已存在同一路径且文件内容已变化的文档，请改用重建索引而不是重复导入"
+                    .to_string(),
+            );
         }
 
         let prepared = self
@@ -1038,15 +1046,68 @@ impl KnowledgeBaseImportOrchestrator {
         prepared: &PreparedKnowledgeBaseImport,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Result<Vec<PreparedKnowledgeChunkEmbedding>, String> {
+        let timer = Instant::now();
+        let model_id = embedder.model_id().to_string();
+        let expected_dimension = embedder.dimension();
+
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "embed_knowledge_document",
+            status = "started",
+            knowledge_base_id = %prepared.document.knowledge_base_id,
+            document_id = %prepared.document.id,
+            source_path = %prepared.document.source_path,
+            model_id = %model_id,
+            embedding_dimension = expected_dimension,
+            chunk_count = prepared.chunks.len(),
+            persisted_chunk_count = prepared.persisted_chunks.len(),
+            input_chars = prepared
+                .chunks
+                .iter()
+                .map(|chunk| chunk.text.chars().count())
+                .sum::<usize>(),
+            "RAG knowledge embedding started"
+        );
+
         if prepared.chunks.len() != prepared.persisted_chunks.len() {
-            return Err(format!(
+            let error = format!(
                 "知识库分块数量不一致，无法执行 embedding: chunks={}, persisted_chunks={}",
                 prepared.chunks.len(),
                 prepared.persisted_chunks.len()
-            ));
+            );
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "embed_knowledge_document",
+                status = "failed",
+                knowledge_base_id = %prepared.document.knowledge_base_id,
+                document_id = %prepared.document.id,
+                source_path = %prepared.document.source_path,
+                model_id = %model_id,
+                embedding_dimension = expected_dimension,
+                chunk_count = prepared.chunks.len(),
+                persisted_chunk_count = prepared.persisted_chunks.len(),
+                elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                error = %error,
+                "RAG knowledge embedding failed"
+            );
+            return Err(error);
         }
 
         if prepared.chunks.is_empty() {
+            tracing::info!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "embed_knowledge_document",
+                status = "completed",
+                knowledge_base_id = %prepared.document.knowledge_base_id,
+                document_id = %prepared.document.id,
+                source_path = %prepared.document.source_path,
+                model_id = %model_id,
+                embedding_dimension = expected_dimension,
+                chunk_count = 0,
+                prepared_embedding_count = 0,
+                elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                "RAG knowledge embedding completed"
+            );
             return Ok(Vec::new());
         }
 
@@ -1055,19 +1116,47 @@ impl KnowledgeBaseImportOrchestrator {
             .iter()
             .map(|chunk| chunk.text.clone())
             .collect::<Vec<_>>();
-        let model_id = embedder.model_id().to_string();
-        let expected_dimension = embedder.dimension();
-        let embeddings = embedder
-            .embed_batch(&texts)
-            .await
-            .map_err(|e| e.to_string())?;
+        let embeddings = embedder.embed_batch(&texts).await.map_err(|e| {
+            let error = e.to_string();
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "embed_knowledge_document",
+                status = "failed",
+                knowledge_base_id = %prepared.document.knowledge_base_id,
+                document_id = %prepared.document.id,
+                source_path = %prepared.document.source_path,
+                model_id = %model_id,
+                embedding_dimension = expected_dimension,
+                chunk_count = prepared.chunks.len(),
+                elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                error = %error,
+                "RAG knowledge embedding failed"
+            );
+            error
+        })?;
 
         if embeddings.len() != texts.len() {
-            return Err(format!(
+            let error = format!(
                 "Embedding 返回数量与文档分块数量不一致: expected {}, got {}",
                 texts.len(),
                 embeddings.len()
-            ));
+            );
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "embed_knowledge_document",
+                status = "failed",
+                knowledge_base_id = %prepared.document.knowledge_base_id,
+                document_id = %prepared.document.id,
+                source_path = %prepared.document.source_path,
+                model_id = %model_id,
+                embedding_dimension = expected_dimension,
+                chunk_count = prepared.chunks.len(),
+                returned_embedding_count = embeddings.len(),
+                elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                error = %error,
+                "RAG knowledge embedding failed"
+            );
+            return Err(error);
         }
 
         let mut prepared_embeddings = Vec::with_capacity(embeddings.len());
@@ -1079,12 +1168,28 @@ impl KnowledgeBaseImportOrchestrator {
             .zip(embeddings.into_iter())
         {
             if embedding.len() != expected_dimension {
-                return Err(format!(
+                let error = format!(
                     "Embedding 维度不匹配: chunk_index={}, expected={}, got={}",
                     chunk.chunk_index,
                     expected_dimension,
                     embedding.len()
-                ));
+                );
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "embed_knowledge_document",
+                    status = "failed",
+                    knowledge_base_id = %prepared.document.knowledge_base_id,
+                    document_id = %prepared.document.id,
+                    source_path = %prepared.document.source_path,
+                    model_id = %model_id,
+                    embedding_dimension = expected_dimension,
+                    chunk_index = chunk.chunk_index,
+                    returned_dimension = embedding.len(),
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG knowledge embedding failed"
+                );
+                return Err(error);
             }
 
             prepared_embeddings.push(PreparedKnowledgeChunkEmbedding {
@@ -1098,6 +1203,21 @@ impl KnowledgeBaseImportOrchestrator {
                 embedding,
             });
         }
+
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "embed_knowledge_document",
+            status = "completed",
+            knowledge_base_id = %prepared.document.knowledge_base_id,
+            document_id = %prepared.document.id,
+            source_path = %prepared.document.source_path,
+            model_id = %model_id,
+            embedding_dimension = expected_dimension,
+            chunk_count = prepared.chunks.len(),
+            prepared_embedding_count = prepared_embeddings.len(),
+            elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+            "RAG knowledge embedding completed"
+        );
 
         Ok(prepared_embeddings)
     }
@@ -2163,8 +2283,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn import_document_with_embeddings_emits_completed_progress_when_fingerprint_is_unchanged()
-    {
+    async fn import_document_with_embeddings_emits_completed_progress_when_fingerprint_is_unchanged(
+    ) {
         let db = create_test_db();
         let knowledge_base_id = create_test_knowledge_base(&db);
         let path = create_test_file(
@@ -2226,8 +2346,14 @@ mod tests {
             events[0].status,
             KnowledgeBaseImportProgressStatus::Completed
         );
-        assert_eq!(events[0].request_id.as_deref(), Some(progress_event_id.as_str()));
-        assert_eq!(events[0].document_id.as_deref(), Some(first.document.id.as_str()));
+        assert_eq!(
+            events[0].request_id.as_deref(),
+            Some(progress_event_id.as_str())
+        );
+        assert_eq!(
+            events[0].document_id.as_deref(),
+            Some(first.document.id.as_str())
+        );
         assert!(events[0].message.contains("跳过导入"));
         assert_eq!(second.document.id, first.document.id);
         assert_eq!(second.persisted_chunks.len(), first.persisted_chunks.len());

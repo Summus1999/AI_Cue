@@ -1,12 +1,12 @@
 ## Relevant Files
 
-- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及单文档/整库级知识库导入、重建与异常文档重试进度透传。
+- `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及单文档/整库级知识库导入、重建、异常文档重试与 retrieve 链路结构化日志/耗时记录。
 - `src-tauri/src/rag/retriever.rs` - 消息向量检索、知识库向量检索、结果融合与结构化返回。
 - `src-tauri/src/rag/context_builder.rs` - Prompt context 构建与 citation 元信息生成。
-- `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断。
+- `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断，以及 parse / OCR 结构化日志与耗时记录。
 - `src-tauri/src/rag/ocr.rs` - OCR 抽象、错误模型、Windows OCR 运行时实现与默认引擎工厂。
 - `src-tauri/Cargo.toml` - Rust 后端依赖声明，启用 Windows OCR / PDF / Imaging 所需 WinRT feature。
-- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建/异常文档重试请求模型、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件与失败收口。
+- `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建/异常文档重试请求模型、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件、embedding 结构化日志与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入，以及文档预览/跳过导入所需的明细查询。
@@ -127,7 +127,7 @@
   - ✅️ 8.1 已基于 fingerprint 对同路径未变化且模型一致的 ready 文档做 unchanged file 跳过策略
   - ✅️ 8.2 已补齐整库级别的真实重建索引逻辑，并复用现有单文档重建链路顺序处理全部文档
   - ✅️ 8.3 已提供知识库维度的后台重试命令，可批量处理 `pending` 或 `failed` 文档并透传进度到前端
-  - ❌️ 8.4 尚未为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
+  - ✅️ 8.4 已为 parse / OCR / embed / retrieve 全链路补齐结构化日志与耗时记录
   - ❌️ 8.5 尚未提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
   - ❌️ 8.6 尚未处理应用重启后 `indexing` 状态卡死恢复
 

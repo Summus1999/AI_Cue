@@ -2,6 +2,7 @@ use super::{OcrContentFormat, OcrEngine, OcrPageInput, OcrPageResult};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -14,6 +15,17 @@ pub enum DocumentType {
     Pdf,
     PlainText,
     Code,
+}
+
+impl DocumentType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::Pdf => "pdf",
+            Self::PlainText => "plain_text",
+            Self::Code => "code",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +125,7 @@ struct ResolvedPdfPageContent {
     text_source: PdfPageTextSource,
     normalized_text: String,
     blocks: Vec<ParsedBlock>,
+    ocr_elapsed_ms: Option<f64>,
 }
 
 static CODE_SYMBOL_PATTERNS: Lazy<Vec<(Regex, usize)>> = Lazy::new(|| {
@@ -131,41 +144,88 @@ static CODE_SYMBOL_PATTERNS: Lazy<Vec<(Regex, usize)>> = Lazy::new(|| {
     ]
 });
 
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
 pub fn parse_document(path: &str, options: Option<ParseOptions>) -> Result<ParsedDocument, String> {
+    let timer = Instant::now();
     let options = options.unwrap_or_default();
-    let source_path = Path::new(path);
+    tracing::info!(
+        target: "ai_cue::rag::telemetry",
+        rag_operation = "parse_document",
+        status = "started",
+        source_path = %path,
+        requested_ocr = options.enable_ocr,
+        max_file_size_bytes = options.max_file_size_bytes,
+        "RAG parse started"
+    );
 
-    if !source_path.exists() {
-        return Err(format!("文件不存在: {}", path));
-    }
+    let result = (|| {
+        let source_path = Path::new(path);
 
-    if !source_path.is_file() {
-        return Err(format!("不是文件: {}", path));
-    }
-
-    let metadata = fs::metadata(source_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
-    if metadata.len() > options.max_file_size_bytes {
-        return Err(format!(
-            "文件过大: {} bytes，超过限制 {} bytes",
-            metadata.len(),
-            options.max_file_size_bytes
-        ));
-    }
-
-    let extension = source_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase());
-
-    let document_type = detect_document_type(source_path, extension.as_deref())?;
-    match document_type {
-        DocumentType::Markdown => parse_markdown_document(source_path, metadata.len(), extension),
-        DocumentType::Pdf => parse_pdf_document(source_path, metadata.len(), extension),
-        DocumentType::PlainText => {
-            parse_plain_text_document(source_path, metadata.len(), extension)
+        if !source_path.exists() {
+            return Err(format!("文件不存在: {}", path));
         }
-        DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
+
+        if !source_path.is_file() {
+            return Err(format!("不是文件: {}", path));
+        }
+
+        let metadata = fs::metadata(source_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
+        if metadata.len() > options.max_file_size_bytes {
+            return Err(format!(
+                "文件过大: {} bytes，超过限制 {} bytes",
+                metadata.len(),
+                options.max_file_size_bytes
+            ));
+        }
+
+        let extension = source_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
+
+        let document_type = detect_document_type(source_path, extension.as_deref())?;
+        match document_type {
+            DocumentType::Markdown => {
+                parse_markdown_document(source_path, metadata.len(), extension)
+            }
+            DocumentType::Pdf => parse_pdf_document(source_path, metadata.len(), extension),
+            DocumentType::PlainText => {
+                parse_plain_text_document(source_path, metadata.len(), extension)
+            }
+            DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
+        }
+    })();
+
+    match &result {
+        Ok(document) => tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "parse_document",
+            status = "completed",
+            source_path = %path,
+            requested_ocr = options.enable_ocr,
+            document_type = document.metadata.document_type.as_str(),
+            block_count = document.blocks.len(),
+            total_chars = document.total_chars,
+            total_pages = document.total_pages.unwrap_or_default(),
+            elapsed_ms = elapsed_ms(timer),
+            "RAG parse completed"
+        ),
+        Err(error) => tracing::error!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "parse_document",
+            status = "failed",
+            source_path = %path,
+            requested_ocr = options.enable_ocr,
+            elapsed_ms = elapsed_ms(timer),
+            error = %error,
+            "RAG parse failed"
+        ),
     }
+
+    result
 }
 
 pub async fn parse_document_with_ocr(
@@ -173,45 +233,105 @@ pub async fn parse_document_with_ocr(
     options: Option<ParseOptions>,
     ocr_engine: Option<Arc<dyn OcrEngine>>,
 ) -> Result<ParsedDocument, String> {
+    let timer = Instant::now();
     let options = options.unwrap_or_default();
     if !options.enable_ocr {
         return parse_document(path, Some(options));
     }
-    let source_path = Path::new(path);
+    let ocr_engine_available = ocr_engine
+        .as_ref()
+        .map(|engine| engine.is_available())
+        .unwrap_or(false);
+    let ocr_engine_id = ocr_engine
+        .as_ref()
+        .map(|engine| engine.engine_id().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
 
-    if !source_path.exists() {
-        return Err(format!("文件不存在: {}", path));
-    }
+    tracing::info!(
+        target: "ai_cue::rag::telemetry",
+        rag_operation = "parse_document_with_ocr",
+        status = "started",
+        source_path = %path,
+        requested_ocr = true,
+        max_file_size_bytes = options.max_file_size_bytes,
+        ocr_available = ocr_engine_available,
+        ocr_engine_id = %ocr_engine_id,
+        "RAG parse with OCR started"
+    );
 
-    if !source_path.is_file() {
-        return Err(format!("不是文件: {}", path));
-    }
+    let result = async {
+        let source_path = Path::new(path);
 
-    let metadata = fs::metadata(source_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
-    if metadata.len() > options.max_file_size_bytes {
-        return Err(format!(
-            "文件过大: {} bytes，超过限制 {} bytes",
-            metadata.len(),
-            options.max_file_size_bytes
-        ));
-    }
-
-    let extension = source_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase());
-
-    let document_type = detect_document_type(source_path, extension.as_deref())?;
-    match document_type {
-        DocumentType::Markdown => parse_markdown_document(source_path, metadata.len(), extension),
-        DocumentType::Pdf => {
-            parse_pdf_document_with_ocr(source_path, metadata.len(), extension, ocr_engine).await
+        if !source_path.exists() {
+            return Err(format!("文件不存在: {}", path));
         }
-        DocumentType::PlainText => {
-            parse_plain_text_document(source_path, metadata.len(), extension)
+
+        if !source_path.is_file() {
+            return Err(format!("不是文件: {}", path));
         }
-        DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
+
+        let metadata = fs::metadata(source_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
+        if metadata.len() > options.max_file_size_bytes {
+            return Err(format!(
+                "文件过大: {} bytes，超过限制 {} bytes",
+                metadata.len(),
+                options.max_file_size_bytes
+            ));
+        }
+
+        let extension = source_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
+
+        let document_type = detect_document_type(source_path, extension.as_deref())?;
+        match document_type {
+            DocumentType::Markdown => {
+                parse_markdown_document(source_path, metadata.len(), extension)
+            }
+            DocumentType::Pdf => {
+                parse_pdf_document_with_ocr(source_path, metadata.len(), extension, ocr_engine)
+                    .await
+            }
+            DocumentType::PlainText => {
+                parse_plain_text_document(source_path, metadata.len(), extension)
+            }
+            DocumentType::Code => parse_code_document(source_path, metadata.len(), extension),
+        }
     }
+    .await;
+
+    match &result {
+        Ok(document) => tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "parse_document_with_ocr",
+            status = "completed",
+            source_path = %path,
+            requested_ocr = true,
+            ocr_available = ocr_engine_available,
+            ocr_engine_id = %ocr_engine_id,
+            document_type = document.metadata.document_type.as_str(),
+            block_count = document.blocks.len(),
+            total_chars = document.total_chars,
+            total_pages = document.total_pages.unwrap_or_default(),
+            elapsed_ms = elapsed_ms(timer),
+            "RAG parse with OCR completed"
+        ),
+        Err(error) => tracing::error!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "parse_document_with_ocr",
+            status = "failed",
+            source_path = %path,
+            requested_ocr = true,
+            ocr_available = ocr_engine_available,
+            ocr_engine_id = %ocr_engine_id,
+            elapsed_ms = elapsed_ms(timer),
+            error = %error,
+            "RAG parse with OCR failed"
+        ),
+    }
+
+    result
 }
 
 fn detect_document_type(path: &Path, extension: Option<&str>) -> Result<DocumentType, String> {
@@ -577,33 +697,134 @@ async fn parse_pdf_document_with_ocr(
     extension: Option<String>,
     ocr_engine: Option<Arc<dyn OcrEngine>>,
 ) -> Result<ParsedDocument, String> {
-    let document = lopdf::Document::load(path).map_err(|e| format!("打开 PDF 失败: {}", e))?;
+    let timer = Instant::now();
+    let ocr_available = ocr_engine
+        .as_ref()
+        .map(|engine| engine.is_available())
+        .unwrap_or(false);
+    let ocr_engine_id = ocr_engine
+        .as_ref()
+        .map(|engine| engine.engine_id().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+
+    tracing::info!(
+        target: "ai_cue::rag::telemetry",
+        rag_operation = "parse_pdf_with_ocr",
+        status = "started",
+        source_path = %path.display(),
+        ocr_available = ocr_available,
+        ocr_engine_id = %ocr_engine_id,
+        "RAG PDF OCR parse started"
+    );
+
+    let document = match lopdf::Document::load(path) {
+        Ok(document) => document,
+        Err(error) => {
+            let error = format!("打开 PDF 失败: {}", error);
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "parse_pdf_with_ocr",
+                status = "failed",
+                source_path = %path.display(),
+                ocr_available = ocr_available,
+                ocr_engine_id = %ocr_engine_id,
+                elapsed_ms = elapsed_ms(timer),
+                error = %error,
+                "RAG PDF OCR parse failed"
+            );
+            return Err(error);
+        }
+    };
     let pages = document.get_pages();
     let total_pages = pages.len() as u32;
     let mut blocks = Vec::new();
     let mut total_chars = 0usize;
+    let mut native_text_pages = 0usize;
+    let mut ocr_fallback_pages = 0usize;
+    let mut ocr_total_elapsed_ms = 0.0f64;
 
     let ocr_source_bytes = if ocr_engine
         .as_ref()
         .map(|engine| engine.is_available())
         .unwrap_or(false)
     {
-        Some(fs::read(path).map_err(|e| format!("读取 PDF 文件失败: {}", e))?)
+        match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                let error = format!("读取 PDF 文件失败: {}", error);
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "parse_pdf_with_ocr",
+                    status = "failed",
+                    source_path = %path.display(),
+                    ocr_available = ocr_available,
+                    ocr_engine_id = %ocr_engine_id,
+                    total_pages = total_pages,
+                    elapsed_ms = elapsed_ms(timer),
+                    error = %error,
+                    "RAG PDF OCR parse failed"
+                );
+                return Err(error);
+            }
+        }
     } else {
         None
     };
 
     for page_number in pages.keys() {
-        let extracted_text = extract_pdf_page_text(&document, *page_number)?;
-        let resolved_page = resolve_pdf_page_content_with_ocr(
+        let extracted_text = match extract_pdf_page_text(&document, *page_number) {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "parse_pdf_with_ocr",
+                    status = "failed",
+                    source_path = %path.display(),
+                    page_number = *page_number,
+                    ocr_available = ocr_available,
+                    ocr_engine_id = %ocr_engine_id,
+                    total_pages = total_pages,
+                    elapsed_ms = elapsed_ms(timer),
+                    error = %error,
+                    "RAG PDF OCR parse failed"
+                );
+                return Err(error);
+            }
+        };
+        let resolved_page = match resolve_pdf_page_content_with_ocr(
             path,
             *page_number,
             &extracted_text,
             ocr_engine.as_ref().map(|engine| engine.as_ref()),
             ocr_source_bytes.as_deref(),
         )
-        .await?;
-        let _ = resolved_page.text_source;
+        .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "parse_pdf_with_ocr",
+                    status = "failed",
+                    source_path = %path.display(),
+                    page_number = *page_number,
+                    ocr_available = ocr_available,
+                    ocr_engine_id = %ocr_engine_id,
+                    total_pages = total_pages,
+                    elapsed_ms = elapsed_ms(timer),
+                    error = %error,
+                    "RAG PDF OCR parse failed"
+                );
+                return Err(error);
+            }
+        };
+        match resolved_page.text_source {
+            PdfPageTextSource::ExtractedText => native_text_pages += 1,
+            PdfPageTextSource::OcrFallback => {
+                ocr_fallback_pages += 1;
+                ocr_total_elapsed_ms += resolved_page.ocr_elapsed_ms.unwrap_or_default();
+            }
+        }
         total_chars += resolved_page.normalized_text.chars().count();
 
         for mut block in resolved_page.blocks {
@@ -612,7 +833,7 @@ async fn parse_pdf_document_with_ocr(
         }
     }
 
-    Ok(ParsedDocument {
+    let parsed_document = ParsedDocument {
         metadata: ParsedDocumentMetadata {
             source_path: path.to_string_lossy().to_string(),
             file_name: file_name(path),
@@ -625,7 +846,26 @@ async fn parse_pdf_document_with_ocr(
         total_chars,
         total_pages: Some(total_pages),
         blocks,
-    })
+    };
+
+    tracing::info!(
+        target: "ai_cue::rag::telemetry",
+        rag_operation = "parse_pdf_with_ocr",
+        status = "completed",
+        source_path = %path.display(),
+        total_pages = total_pages,
+        native_text_pages = native_text_pages,
+        ocr_fallback_pages = ocr_fallback_pages,
+        ocr_elapsed_ms = ocr_total_elapsed_ms,
+        ocr_available = ocr_available,
+        ocr_engine_id = %ocr_engine_id,
+        block_count = parsed_document.blocks.len(),
+        total_chars = parsed_document.total_chars,
+        elapsed_ms = elapsed_ms(timer),
+        "RAG PDF OCR parse completed"
+    );
+
+    Ok(parsed_document)
 }
 
 async fn resolve_pdf_page_text_with_ocr(
@@ -662,6 +902,15 @@ async fn resolve_pdf_page_content_with_ocr(
     }
 
     let Some(engine) = ocr_engine else {
+        tracing::warn!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "ocr_fallback",
+            status = "skipped",
+            source_path = %path.display(),
+            page_number = page_number,
+            reason = "missing_engine",
+            "RAG OCR fallback skipped"
+        );
         return Ok(text_to_pdf_page_content(
             PdfPageTextSource::ExtractedText,
             extracted_text,
@@ -670,6 +919,16 @@ async fn resolve_pdf_page_content_with_ocr(
     };
 
     if !engine.is_available() {
+        tracing::warn!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "ocr_fallback",
+            status = "skipped",
+            source_path = %path.display(),
+            page_number = page_number,
+            reason = "engine_unavailable",
+            ocr_engine_id = engine.engine_id(),
+            "RAG OCR fallback skipped"
+        );
         return Ok(text_to_pdf_page_content(
             PdfPageTextSource::ExtractedText,
             extracted_text,
@@ -678,6 +937,16 @@ async fn resolve_pdf_page_content_with_ocr(
     }
 
     let Some(content_bytes) = source_bytes else {
+        tracing::warn!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "ocr_fallback",
+            status = "skipped",
+            source_path = %path.display(),
+            page_number = page_number,
+            reason = "missing_source_bytes",
+            ocr_engine_id = engine.engine_id(),
+            "RAG OCR fallback skipped"
+        );
         return Ok(text_to_pdf_page_content(
             PdfPageTextSource::ExtractedText,
             extracted_text,
@@ -685,6 +954,7 @@ async fn resolve_pdf_page_content_with_ocr(
         ));
     };
 
+    let ocr_timer = Instant::now();
     let ocr_result = engine
         .recognize_page(OcrPageInput {
             source_path: path.to_string_lossy().to_string(),
@@ -694,9 +964,37 @@ async fn resolve_pdf_page_content_with_ocr(
             language_hints: Vec::new(),
         })
         .await
-        .map_err(|e| format!("OCR 处理 PDF 第 {} 页失败: {}", page_number, e))?;
+        .map_err(|e| {
+            let error = format!("OCR 处理 PDF 第 {} 页失败: {}", page_number, e);
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "ocr_fallback",
+                status = "failed",
+                source_path = %path.display(),
+                page_number = page_number,
+                ocr_engine_id = engine.engine_id(),
+                elapsed_ms = elapsed_ms(ocr_timer),
+                error = %error,
+                "RAG OCR fallback failed"
+            );
+            error
+        })?;
 
-    Ok(ocr_page_result_to_page_content(&ocr_result))
+    let ocr_elapsed_ms = elapsed_ms(ocr_timer);
+    tracing::info!(
+        target: "ai_cue::rag::telemetry",
+        rag_operation = "ocr_fallback",
+        status = "completed",
+        source_path = %path.display(),
+        page_number = page_number,
+        ocr_engine_id = %ocr_result.engine_id,
+        line_count = ocr_result.lines.len(),
+        average_confidence = ocr_result.average_confidence.unwrap_or_default(),
+        elapsed_ms = ocr_elapsed_ms,
+        "RAG OCR fallback completed"
+    );
+
+    Ok(ocr_page_result_to_page_content(&ocr_result, ocr_elapsed_ms))
 }
 
 fn extract_pdf_page_text(document: &lopdf::Document, page_number: u32) -> Result<String, String> {
@@ -739,6 +1037,7 @@ fn text_to_pdf_page_content(
         text_source,
         normalized_text,
         blocks,
+        ocr_elapsed_ms: None,
     }
 }
 
@@ -785,7 +1084,10 @@ fn ocr_page_result_to_blocks(result: &OcrPageResult) -> Vec<ParsedBlock> {
     text_to_pdf_page_blocks(&normalized_text, result.page_number)
 }
 
-fn ocr_page_result_to_page_content(result: &OcrPageResult) -> ResolvedPdfPageContent {
+fn ocr_page_result_to_page_content(
+    result: &OcrPageResult,
+    ocr_elapsed_ms: f64,
+) -> ResolvedPdfPageContent {
     let normalized_text = normalize_ocr_page_text(result);
     let blocks = text_to_pdf_page_blocks(&normalized_text, result.page_number);
 
@@ -793,6 +1095,7 @@ fn ocr_page_result_to_page_content(result: &OcrPageResult) -> ResolvedPdfPageCon
         text_source: PdfPageTextSource::OcrFallback,
         normalized_text,
         blocks,
+        ocr_elapsed_ms: Some(ocr_elapsed_ms),
     }
 }
 
@@ -1501,8 +1804,9 @@ mod tests {
             "recording-ocr",
         );
 
-        let resolved_page = ocr_page_result_to_page_content(&page_result);
+        let resolved_page = ocr_page_result_to_page_content(&page_result, 42.0);
         assert_eq!(resolved_page.text_source, PdfPageTextSource::OcrFallback);
+        assert_eq!(resolved_page.ocr_elapsed_ms, Some(42.0));
         assert!(resolved_page
             .blocks
             .iter()

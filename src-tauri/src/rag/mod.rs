@@ -45,6 +45,7 @@ pub use self::vector_store::{MessageEmbeddingEntry, MessageVectorStore, VectorSt
 
 use crate::database::Database;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 /// Main RAG engine.
 pub struct RagEngine {
@@ -124,20 +125,78 @@ impl RagEngine {
     }
 
     pub async fn embed_message(&self, message_id: &str, content: &str) -> Result<(), String> {
-        let embedder = self.configured_embedder()?;
+        let timer = Instant::now();
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "embed_message",
+            status = "started",
+            message_id = %message_id,
+            content_chars = content.chars().count(),
+            "RAG message embedding started"
+        );
+
+        let embedder = match self.configured_embedder() {
+            Ok(embedder) => embedder,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "embed_message",
+                    status = "failed",
+                    message_id = %message_id,
+                    content_chars = content.chars().count(),
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG message embedding failed"
+                );
+                return Err(error);
+            }
+        };
 
         let chunks = chunker::chunk_message(content, &ChunkConfig::default());
         let texts: Vec<String> = chunks.iter().map(|chunk| chunk.text.clone()).collect();
-        let embeddings = embedder
-            .embed_batch(&texts)
-            .await
-            .map_err(|e| e.to_string())?;
+        let embeddings = match embedder.embed_batch(&texts).await {
+            Ok(embeddings) => embeddings,
+            Err(error) => {
+                let error = error.to_string();
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "embed_message",
+                    status = "failed",
+                    message_id = %message_id,
+                    content_chars = content.chars().count(),
+                    chunk_count = chunks.len(),
+                    model_id = %embedder.model_id(),
+                    embedding_dimension = embedder.dimension(),
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG message embedding failed"
+                );
+                return Err(error);
+            }
+        };
+        let embedding_count = embeddings.len();
 
         // Re-embedding a message should replace previous rows instead of duplicating them.
-        self.message_store.delete_by_message_id(message_id)?;
+        if let Err(error) = self.message_store.delete_by_message_id(message_id) {
+            tracing::error!(
+                target: "ai_cue::rag::telemetry",
+                rag_operation = "embed_message",
+                status = "failed",
+                message_id = %message_id,
+                content_chars = content.chars().count(),
+                chunk_count = chunks.len(),
+                model_id = %embedder.model_id(),
+                embedding_dimension = embedder.dimension(),
+                elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                error = %error,
+                "RAG message embedding failed"
+            );
+            return Err(error);
+        }
 
         for (idx, chunk) in chunks.iter().enumerate() {
-            self.message_store
+            if let Err(error) = self
+                .message_store
                 .insert_embedding(
                     message_id,
                     idx,
@@ -146,8 +205,39 @@ impl RagEngine {
                     embedder.model_id(),
                     embedder.dimension(),
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())
+            {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "embed_message",
+                    status = "failed",
+                    message_id = %message_id,
+                    content_chars = content.chars().count(),
+                    chunk_count = chunks.len(),
+                    chunk_index = idx,
+                    model_id = %embedder.model_id(),
+                    embedding_dimension = embedder.dimension(),
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG message embedding failed"
+                );
+                return Err(error);
+            }
         }
+
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "embed_message",
+            status = "completed",
+            message_id = %message_id,
+            content_chars = content.chars().count(),
+            chunk_count = chunks.len(),
+            embedding_count = embedding_count,
+            model_id = %embedder.model_id(),
+            embedding_dimension = embedder.dimension(),
+            elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+            "RAG message embedding completed"
+        );
 
         Ok(())
     }
@@ -196,7 +286,8 @@ impl RagEngine {
         &self,
         request: &knowledge_base::ReindexKnowledgeBaseRequest,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
-        self.reindex_knowledge_base_with_progress(request, None).await
+        self.reindex_knowledge_base_with_progress(request, None)
+            .await
     }
 
     pub async fn reindex_knowledge_base_with_progress(
@@ -204,7 +295,8 @@ impl RagEngine {
         request: &knowledge_base::ReindexKnowledgeBaseRequest,
         progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
-        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?;
+        let documents =
+            crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?;
         self.process_knowledge_base_document_retries(
             &request.knowledge_base_id,
             documents,
@@ -229,16 +321,17 @@ impl RagEngine {
         request: &knowledge_base::RetryKnowledgeBaseDocumentsRequest,
         progress_callback: Option<knowledge_base::KnowledgeBaseImportProgressCallback>,
     ) -> Result<knowledge_base::CompletedKnowledgeBaseReindex, String> {
-        let documents = crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?
-            .into_iter()
-            .filter(|document| {
-                matches!(
-                    document.index_state,
-                    crate::database::KnowledgeDocumentIndexState::Pending
-                        | crate::database::KnowledgeDocumentIndexState::Failed
-                )
-            })
-            .collect::<Vec<_>>();
+        let documents =
+            crate::database::list_knowledge_documents(&self.db, &request.knowledge_base_id)?
+                .into_iter()
+                .filter(|document| {
+                    matches!(
+                        document.index_state,
+                        crate::database::KnowledgeDocumentIndexState::Pending
+                            | crate::database::KnowledgeDocumentIndexState::Failed
+                    )
+                })
+                .collect::<Vec<_>>();
 
         self.process_knowledge_base_document_retries(
             &request.knowledge_base_id,
@@ -309,11 +402,64 @@ impl RagEngine {
         session_filter: Option<&str>,
         source_kind_filter: Option<&[SearchSourceKind]>,
     ) -> Result<Vec<retriever::SearchResult>, String> {
-        let embedder = self.configured_embedder()?;
-        let model_id = embedder.model_id().to_string();
-        let query_embedding = embedder.embed(query).await.map_err(|e| e.to_string())?;
+        let timer = Instant::now();
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "retrieve_search",
+            status = "started",
+            query_chars = query.chars().count(),
+            limit = limit,
+            session_filter_present = session_filter.is_some(),
+            source_kind_filter = ?source_kind_filter,
+            "RAG retrieve started"
+        );
 
-        let vector_results = retriever::combined_vector_search_for_model(
+        let embedder = match self.configured_embedder() {
+            Ok(embedder) => embedder,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "retrieve_search",
+                    status = "failed",
+                    query_chars = query.chars().count(),
+                    limit = limit,
+                    session_filter_present = session_filter.is_some(),
+                    source_kind_filter = ?source_kind_filter,
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG retrieve failed"
+                );
+                return Err(error);
+            }
+        };
+        let model_id = embedder.model_id().to_string();
+        let query_embedding_timer = Instant::now();
+        let query_embedding = match embedder.embed(query).await {
+            Ok(embedding) => embedding,
+            Err(error) => {
+                let error = error.to_string();
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "retrieve_search",
+                    status = "failed",
+                    stage = "query_embedding",
+                    query_chars = query.chars().count(),
+                    limit = limit,
+                    session_filter_present = session_filter.is_some(),
+                    source_kind_filter = ?source_kind_filter,
+                    model_id = %model_id,
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    stage_elapsed_ms = query_embedding_timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG retrieve failed"
+                );
+                return Err(error);
+            }
+        };
+        let query_embedding_ms = query_embedding_timer.elapsed().as_secs_f64() * 1000.0;
+
+        let vector_timer = Instant::now();
+        let vector_results = match retriever::combined_vector_search_for_model(
             &self.message_store,
             self.db.as_ref(),
             &query_embedding,
@@ -322,21 +468,90 @@ impl RagEngine {
             session_filter,
             Some(model_id.as_str()),
             source_kind_filter,
-        )?;
+        ) {
+            Ok(results) => results,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "retrieve_search",
+                    status = "failed",
+                    stage = "vector_search",
+                    query_chars = query.chars().count(),
+                    limit = limit,
+                    session_filter_present = session_filter.is_some(),
+                    source_kind_filter = ?source_kind_filter,
+                    model_id = %model_id,
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    stage_elapsed_ms = vector_timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG retrieve failed"
+                );
+                return Err(error);
+            }
+        };
+        let vector_search_ms = vector_timer.elapsed().as_secs_f64() * 1000.0;
+        let vector_result_count = vector_results.len();
 
-        let keyword_results =
-            if retriever::source_kind_allowed(source_kind_filter, &SearchSourceKind::Message) {
-                retriever::keyword_search(&self.message_store, query, limit)?
-            } else {
-                Vec::new()
-            };
+        let keyword_search_enabled =
+            retriever::source_kind_allowed(source_kind_filter, &SearchSourceKind::Message);
+        let keyword_timer = Instant::now();
+        let keyword_results = if keyword_search_enabled {
+            match retriever::keyword_search(&self.message_store, query, limit) {
+                Ok(results) => results,
+                Err(error) => {
+                    tracing::error!(
+                        target: "ai_cue::rag::telemetry",
+                        rag_operation = "retrieve_search",
+                        status = "failed",
+                        stage = "keyword_search",
+                        query_chars = query.chars().count(),
+                        limit = limit,
+                        session_filter_present = session_filter.is_some(),
+                        source_kind_filter = ?source_kind_filter,
+                        model_id = %model_id,
+                        elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                        stage_elapsed_ms = keyword_timer.elapsed().as_secs_f64() * 1000.0,
+                        error = %error,
+                        "RAG retrieve failed"
+                    );
+                    return Err(error);
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let keyword_search_ms = keyword_timer.elapsed().as_secs_f64() * 1000.0;
+        let keyword_result_count = keyword_results.len();
         let fused = retriever::reciprocal_rank_fusion(vector_results, keyword_results, 60);
+        let fused_result_count = fused.len();
+        let hydrate_timer = Instant::now();
+        let hydrated_results = self.hydrate_results(fused);
+        let hydrate_ms = hydrate_timer.elapsed().as_secs_f64() * 1000.0;
+        let final_results = hydrated_results.into_iter().take(limit).collect::<Vec<_>>();
 
-        Ok(self
-            .hydrate_results(fused)
-            .into_iter()
-            .take(limit)
-            .collect())
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "retrieve_search",
+            status = "completed",
+            query_chars = query.chars().count(),
+            limit = limit,
+            session_filter_present = session_filter.is_some(),
+            source_kind_filter = ?source_kind_filter,
+            model_id = %model_id,
+            keyword_search_enabled = keyword_search_enabled,
+            query_embedding_ms = query_embedding_ms,
+            vector_search_ms = vector_search_ms,
+            keyword_search_ms = keyword_search_ms,
+            hydrate_ms = hydrate_ms,
+            vector_result_count = vector_result_count,
+            keyword_result_count = keyword_result_count,
+            fused_result_count = fused_result_count,
+            returned_result_count = final_results.len(),
+            elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+            "RAG retrieve completed"
+        );
+
+        Ok(final_results)
     }
 
     pub async fn build_context(
@@ -357,10 +572,76 @@ impl RagEngine {
         session_filter: Option<&str>,
         source_kind_filter: Option<&[SearchSourceKind]>,
     ) -> Result<context_builder::RagContextBundle, String> {
-        let results = self
-            .search(query, config.max_results, session_filter, source_kind_filter)
-            .await?;
-        Ok(context_builder::build_rag_context_bundle(&results, config))
+        let timer = Instant::now();
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "retrieve_context_bundle",
+            status = "started",
+            query_chars = query.chars().count(),
+            max_results = config.max_results,
+            max_tokens = config.max_tokens,
+            include_source = config.include_source,
+            session_filter_present = session_filter.is_some(),
+            source_kind_filter = ?source_kind_filter,
+            "RAG context bundle started"
+        );
+
+        let search_timer = Instant::now();
+        let results = match self
+            .search(
+                query,
+                config.max_results,
+                session_filter,
+                source_kind_filter,
+            )
+            .await
+        {
+            Ok(results) => results,
+            Err(error) => {
+                tracing::error!(
+                    target: "ai_cue::rag::telemetry",
+                    rag_operation = "retrieve_context_bundle",
+                    status = "failed",
+                    query_chars = query.chars().count(),
+                    max_results = config.max_results,
+                    max_tokens = config.max_tokens,
+                    include_source = config.include_source,
+                    session_filter_present = session_filter.is_some(),
+                    source_kind_filter = ?source_kind_filter,
+                    elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+                    stage_elapsed_ms = search_timer.elapsed().as_secs_f64() * 1000.0,
+                    error = %error,
+                    "RAG context bundle failed"
+                );
+                return Err(error);
+            }
+        };
+        let search_ms = search_timer.elapsed().as_secs_f64() * 1000.0;
+
+        let build_timer = Instant::now();
+        let bundle = context_builder::build_rag_context_bundle(&results, config);
+        let context_build_ms = build_timer.elapsed().as_secs_f64() * 1000.0;
+
+        tracing::info!(
+            target: "ai_cue::rag::telemetry",
+            rag_operation = "retrieve_context_bundle",
+            status = "completed",
+            query_chars = query.chars().count(),
+            max_results = config.max_results,
+            max_tokens = config.max_tokens,
+            include_source = config.include_source,
+            session_filter_present = session_filter.is_some(),
+            source_kind_filter = ?source_kind_filter,
+            search_ms = search_ms,
+            context_build_ms = context_build_ms,
+            result_count = results.len(),
+            citation_count = bundle.citations.len(),
+            prompt_chars = bundle.prompt_context.chars().count(),
+            elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0,
+            "RAG context bundle completed"
+        );
+
+        Ok(bundle)
     }
 
     pub fn get_stats(&self) -> Result<RagStats, String> {
@@ -522,7 +803,10 @@ mod tests {
             .await
             .unwrap();
 
-        let results = engine.search("Tauri commands", 10, None, None).await.unwrap();
+        let results = engine
+            .search("Tauri commands", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].message_id.as_deref(),
@@ -919,14 +1203,12 @@ mod tests {
         assert!(reindexed
             .documents
             .iter()
-            .all(|result| result.document.index_state == crate::database::KnowledgeDocumentIndexState::Ready));
-        assert!(reindexed
-            .documents
+            .all(|result| result.document.index_state
+                == crate::database::KnowledgeDocumentIndexState::Ready));
+        assert!(reindexed.documents.iter().all(|result| result
+            .persisted_embeddings
             .iter()
-            .all(|result| result
-                .persisted_embeddings
-                .iter()
-                .all(|embedding| embedding.model_id == "mock-kb-model-v2")));
+            .all(|embedding| embedding.model_id == "mock-kb-model-v2")));
 
         let reindexed_ids = reindexed
             .documents
@@ -953,7 +1235,8 @@ mod tests {
         let engine = RagEngine::new(db.clone());
         let knowledge_base_id = create_test_knowledge_base(&db, "Engine Retry Pending Failed");
         let failed_path = create_temp_document("engine-retry-failed.md", "# Rust\n\nFailed doc.\n");
-        let pending_path = create_temp_document("engine-retry-pending.md", "# Rust\n\nPending doc.\n");
+        let pending_path =
+            create_temp_document("engine-retry-pending.md", "# Rust\n\nPending doc.\n");
         let ready_path = create_temp_document("engine-retry-ready.md", "# Rust\n\nReady doc.\n");
 
         engine
@@ -1061,11 +1344,14 @@ mod tests {
         assert!(!retried_ids.contains(&ready_import.document.id));
 
         let failed_embeddings =
-            crate::database::list_knowledge_document_embeddings(&db, &failed_import.document.id).unwrap();
+            crate::database::list_knowledge_document_embeddings(&db, &failed_import.document.id)
+                .unwrap();
         let pending_embeddings =
-            crate::database::list_knowledge_document_embeddings(&db, &pending_import.document.id).unwrap();
+            crate::database::list_knowledge_document_embeddings(&db, &pending_import.document.id)
+                .unwrap();
         let ready_embeddings =
-            crate::database::list_knowledge_document_embeddings(&db, &ready_import.document.id).unwrap();
+            crate::database::list_knowledge_document_embeddings(&db, &ready_import.document.id)
+                .unwrap();
 
         assert!(failed_embeddings
             .iter()
