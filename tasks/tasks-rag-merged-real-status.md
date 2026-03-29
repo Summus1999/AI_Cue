@@ -29,7 +29,7 @@
 - `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置。
-- `src/components/SettingsPanel.tsx` - 当前设置面板，当前会在保存配置后同步 RAG runtime 配置。
+- `src/components/SettingsPanel.tsx` - 当前设置面板，已增加 RAG 配置区块和知识库入口，并会在保存配置后同步 RAG runtime 配置。
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
@@ -113,7 +113,7 @@
   - ✅️ 6.7 继续生成、重试消息等路径已纳入 retrieval / citation 逻辑
   - ✅️ 6.8 已补齐 retrieval off / on / empty result / failure fallback / continue generate 的前端回归验证
 
-- ❌️ 7.0 构建知识库管理 UI
+- ✅️ 7.0 构建知识库管理 UI
   - ✅️ 7.1 `src/store/rag.ts` 已补齐知识库列表、当前知识库、导入任务进度、文档详情、重建索引状态和错误状态
   - ✅️ 7.2 `App.tsx` 已增加知识库视图入口，`currentView` 也已支持知识库面板状态
   - ✅️ 7.3 已新增 `src/components/KnowledgeBasePanel.tsx`，并替换 `App.tsx` 内联占位页
@@ -121,7 +121,7 @@
   - ✅️ 7.5 已新增 `src/components/knowledge/KnowledgeDocumentPreview.tsx`，并接入文档详情与 chunk 预览
   - ✅️ 7.6 已接入文件选择、导入按钮、乐观状态行、阶段进度显示和失败可见性
   - ✅️ 7.7 已接入删除文档、重建索引、删除知识库操作，并依赖 store 即时刷新当前列表与选中状态
-  - ❌️ 7.8 `SettingsPanel.tsx` 尚未增加 RAG 配置区块和知识库入口
+  - ✅️ 7.8 `SettingsPanel.tsx` 已增加 RAG 配置区块和知识库入口
 
 - ❌️ 8.0 做增量索引、后台重试与运维加固
   - ❌️ 8.1 尚未基于 fingerprint 做 unchanged file 跳过策略

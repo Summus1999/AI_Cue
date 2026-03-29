@@ -1991,6 +1991,7 @@ function App() {
         <div className="absolute inset-0 z-50">
           <SettingsPanel
             isOpen={true}
+            onOpenKnowledgeBase={handleOpenKnowledgeBases}
             onClose={async () => {
               setCurrentView('main');
               const config = await loadConfig();

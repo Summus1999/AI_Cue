@@ -1,18 +1,36 @@
 // 设置面板组件 - 全页面进出式设计
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
 import { ProviderSelector } from './ProviderSelector';
-import { loadConfig, saveConfig, NLS_REGIONS, PROMPT_TEMPLATES, AppConfig, DEFAULT_CONFIG, validateConfig, ProviderType, ProviderConfig, PromptMode } from '../store/config';
+import {
+  loadConfig,
+  saveConfig,
+  NLS_REGIONS,
+  PROMPT_TEMPLATES,
+  RAG_AUTO_REINDEX_POLICY_OPTIONS,
+  RAG_EMBEDDING_MODELS,
+  RAG_EMBEDDING_PROVIDERS,
+  RAG_RETRIEVAL_SCOPE_OPTIONS,
+  getDefaultRagEmbeddingModel,
+  AppConfig,
+  DEFAULT_CONFIG,
+  validateConfig,
+  ProviderType,
+  ProviderConfig,
+  PromptMode,
+  type RagEmbeddingProviderType,
+} from '../store/config';
 
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenKnowledgeBase?: () => void | Promise<void>;
 }
 
-export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase }: SettingsPanelProps) {
   // 配置状态
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(false);
@@ -84,6 +102,41 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     if (errorMessage) setErrorMessage('');
   };
 
+  const selectedRagScope = RAG_RETRIEVAL_SCOPE_OPTIONS.find(
+    (option) => option.id === config.rag.retrievalScope,
+  );
+  const selectedEmbeddingProvider = RAG_EMBEDDING_PROVIDERS.find(
+    (option) => option.id === config.rag.embeddingProvider,
+  );
+  const selectedEmbeddingModel = RAG_EMBEDDING_MODELS[config.rag.embeddingProvider].find(
+    (option) => option.id === config.rag.embeddingModel,
+  );
+  const selectedAutoReindexPolicy = RAG_AUTO_REINDEX_POLICY_OPTIONS.find(
+    (option) => option.id === config.rag.autoReindexPolicy,
+  );
+  const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
+  const isRagProviderConfigured = Boolean(ragProviderConfig?.apiKey?.trim());
+
+  const updateRagConfig = (updates: Partial<AppConfig['rag']>) => {
+    setConfig((prev) => ({
+      ...prev,
+      rag: {
+        ...prev.rag,
+        ...updates,
+      },
+    }));
+    if (errorMessage) {
+      setErrorMessage('');
+    }
+  };
+
+  const handleRagEmbeddingProviderChange = (provider: RagEmbeddingProviderType) => {
+    updateRagConfig({
+      embeddingProvider: provider,
+      embeddingModel: getDefaultRagEmbeddingModel(provider),
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -121,6 +174,174 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               onProviderChange={handleProviderChange}
               onConfigChange={handleProviderConfigChange}
             />
+
+            {/* 分隔线 */}
+            <div className="border-t border-amber-200" />
+
+            {/* RAG 设置 */}
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                    RAG 检索与知识库
+                  </label>
+                  <p className="mt-1 text-xs text-amber-600 leading-relaxed">
+                    控制聊天检索来源、PDF OCR、embedding 模型，以及知识库管理入口。
+                  </p>
+                </div>
+                {onOpenKnowledgeBase && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void onOpenKnowledgeBase();
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200"
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    打开知识库
+                  </button>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-white/70 p-3 space-y-4">
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div>
+                    <div className="text-sm font-medium text-amber-900">启用 RAG 增强检索</div>
+                    <p className="mt-1 text-xs text-amber-600">
+                      关闭后，聊天不会注入 retrieval context，但知识库页面仍可继续管理文档。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateRagConfig({ enabled: !config.rag.enabled })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ease-in-out ${
+                      config.rag.enabled ? 'bg-amber-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-md ${
+                        config.rag.enabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                      style={{
+                        transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+                      }}
+                    />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-amber-700">检索范围</label>
+                  <select
+                    value={config.rag.retrievalScope}
+                    onChange={(e) => updateRagConfig({ retrievalScope: e.target.value as AppConfig['rag']['retrievalScope'] })}
+                    className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 focus:outline-none focus:border-amber-500"
+                  >
+                    {RAG_RETRIEVAL_SCOPE_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-amber-600">
+                    {selectedRagScope?.description}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div>
+                    <div className="text-sm font-medium text-amber-900">导入时启用 OCR fallback</div>
+                    <p className="mt-1 text-xs text-amber-600">
+                      适用于扫描版 PDF 或文本提取不足的页面；开启后重建索引也会复用这个设置。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateRagConfig({ enableOcr: !config.rag.enableOcr })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ease-in-out ${
+                      config.rag.enableOcr ? 'bg-amber-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-md ${
+                        config.rag.enableOcr ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                      style={{
+                        transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+                      }}
+                    />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-amber-700">Embedding Provider</label>
+                  <select
+                    value={config.rag.embeddingProvider}
+                    onChange={(e) => handleRagEmbeddingProviderChange(e.target.value as RagEmbeddingProviderType)}
+                    className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 focus:outline-none focus:border-amber-500"
+                  >
+                    {RAG_EMBEDDING_PROVIDERS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-amber-600">
+                    {selectedEmbeddingProvider?.description}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-amber-700">Embedding 模型</label>
+                  <select
+                    value={config.rag.embeddingModel}
+                    onChange={(e) => updateRagConfig({ embeddingModel: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 focus:outline-none focus:border-amber-500"
+                  >
+                    {RAG_EMBEDDING_MODELS[config.rag.embeddingProvider].map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-amber-600">
+                    {selectedEmbeddingModel?.description}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-amber-700">自动重建策略</label>
+                  <select
+                    value={config.rag.autoReindexPolicy}
+                    onChange={(e) => updateRagConfig({ autoReindexPolicy: e.target.value as AppConfig['rag']['autoReindexPolicy'] })}
+                    className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 focus:outline-none focus:border-amber-500"
+                  >
+                    {RAG_AUTO_REINDEX_POLICY_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-amber-600">
+                    {selectedAutoReindexPolicy?.description}
+                  </p>
+                </div>
+
+                {!isRagProviderConfigured && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-700">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>
+                      当前 embedding provider 尚未配置 API Key。保存后会保留设置，但 RAG runtime 不会同步到后端。
+                    </span>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-amber-600">
+                  这里的修改会在保存设置后写入持久化配置，并同步到聊天发送、导入和重建索引前使用的 RAG runtime。
+                </p>
+              </div>
+            </div>
 
             {/* 分隔线 */}
             <div className="border-t border-amber-200" />
