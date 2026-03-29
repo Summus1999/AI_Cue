@@ -40,7 +40,7 @@
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
 - `package.json` - 前端测试脚本与依赖声明，现已包含 `vitest`、`@testing-library/react` 与 `jsdom`。
 - `package-lock.json` - 同步前端测试依赖锁文件。
-- `README.md` - 项目说明，当前尚未同步 RAG 真实状态。
+- `README.md` - 项目说明，现已同步当前 RAG 架构、使用方式、能力边界与已知限制。
 - `TODO.md` - 进度文档，当前与 RAG 真实状态存在偏差。
 
 ### Notes
@@ -142,7 +142,7 @@
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
   - ✅️ 9.4 已补齐围绕真实导入命令、真实重建索引命令和启动恢复的命令层集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
   - ✅️ 9.5 已补齐知识库 UI 的前端测试，覆盖知识库面板、导入面板、文档列表与文档预览；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
-  - ❌️ 9.6 `README.md` 尚未同步 RAG 架构、限制和使用方式
+  - ✅️ 9.6 `README.md` 已同步当前 RAG 架构、限制和使用方式
   - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
 
 - ✅️ 10.0 强化 Agent Harness 的 skills 与提交流程约束

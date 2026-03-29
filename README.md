@@ -41,10 +41,10 @@
 ### 📚 RAG 知识库
 
 - 支持导入 Markdown、PDF、纯文本、代码文件
-- Windows OCR 自动识别扫描版 PDF
-- 千问、OpenAI 兼容 Embedding 模型向量化
-- 对话时自动检索相关文档片段
-- 回答附带引用来源标注（文档名、页码、相关片段）
+- Windows OCR fallback 可处理扫描版 PDF 或文本提取不足的页面
+- 支持千问、OpenAI 兼容 Embedding 模型向量化
+- 普通发送、继续生成、重试消息都会接入 retrieval / citation 链路
+- 回答附带引用来源标注（文档名、页码、标题路径、相关片段）
 
 ### 📊 面试复盘
 
@@ -143,6 +143,58 @@ npm run build
 
 - 支持调节语音识别控制阈值
 - WebSocket断开自动重连
+
+### RAG 设置
+
+在设置面板中可配置：
+
+| 参数 | 说明 |
+| --- | --- |
+| 启用 RAG 增强检索 | 控制聊天主链路是否注入 retrieval context |
+| 检索范围 | `hybrid` / `knowledge_base` / `current_session` |
+| 导入时启用 OCR fallback | 控制导入、重建索引时是否对 PDF 页面启用 OCR |
+| Embedding Provider | 当前支持 `qwen` 与 `openai_compat` |
+| Embedding 模型 | 例如 `text-embedding-v2`、`text-embedding-3-small` |
+| 自动重建策略 | `manual` / `changed_files` / `on_startup` |
+
+---
+
+## 📚 RAG 当前实现
+
+### 已接入的链路
+
+- **运行时配置**：前端会在启动、设置保存、聊天发送、文档导入与重建索引前，把当前 RAG provider / model 配置同步到后端 `RagEngine`。
+- **文档导入**：已接入真实导入链路，包含源文件快照、解析、OCR fallback、分块、embedding、`kb_documents` / `kb_chunks` / `kb_embeddings` 持久化。
+- **任务进度**：导入、单文档重建、整库重建、异常文档重试都会产出阶段进度，并在前端展示解析 / 分块 / 向量化 / 收尾状态。
+- **聊天检索**：主聊天链路会先做 retrieval，再把 `prompt context + citations` 注入对话请求；如果 RAG 不可用，会显式降级到普通聊天。
+- **引用展示**：回答消息下方会展示 citation 列表，包含标题、片段、页码、标题路径和相似度来源。
+- **运维补强**：支持同路径未变化文档跳过重复导入、单文档重建、整库重建、批量重试 `pending` / `failed` 文档，以及启动恢复卡在 `indexing` 的文档。
+
+### 使用方式
+
+1. 在设置面板的 `RAG 检索与知识库` 区块中，配置 Embedding Provider、Embedding 模型、检索范围、OCR 开关和自动重建策略。
+2. 确保为当前选中的 Embedding Provider 配置了有效的 API Key；如果没有，聊天会自动降级为普通模式，知识库导入/重建也不会真正完成 embedding。
+3. 在设置面板点击 `打开知识库`，进入知识库页面并选择一个现有知识库。
+4. 在 `导入文档` 区块选择文件后开始导入；界面会先显示乐观状态行，再逐步切换到真实任务快照。
+5. 文档进入 `ready` 后才会参与聊天检索；失败文档可以在知识库页直接执行单文档重建、整库重建或批量重试。
+6. 回到聊天主界面后，普通发送、继续生成、重试消息都会尝试检索知识库，并在回答下方展示引用来源。
+
+### 架构概览
+
+- **配置层**：`SettingsPanel` 保存 `rag.enabled`、`retrievalScope`、`enableOcr`、`embeddingProvider`、`embeddingModel`、`autoReindexPolicy`，然后由前端 runtime 配置同步逻辑下发到后端。
+- **导入层**：`rag_import_knowledge_document` / `rag_reindex_knowledge_document` 会调用真实解析与 embedding 链路；PDF 会在文本不足时走 OCR fallback。
+- **检索层**：`rag_retrieve_with_citations` 会返回 `promptContext + citations`，聊天主流程只消费结构化结果，不再由前端二次查库拼引用。
+- **状态层**：后端维护知识库任务注册表，前端通过任务快照同步导入、重建索引、异常重试的最新状态。
+- **启动恢复**：当自动重建策略为 `on_startup` 时，启动编排会把上次异常中断、仍停留在 `indexing` 的文档统一恢复为 `failed`，避免状态长期卡死。
+
+### 当前限制
+
+- **知识库创建入口**：当前桌面 UI 主要覆盖“已有知识库”的管理、导入和运维；`createKnowledgeBase` 虽然后端与前端 store 已具备，但界面里还没有单独的新建知识库按钮。
+- **Embedding Provider 范围**：聊天 Provider 可以选 Qwen / OpenAI Compatible / Claude，但 RAG 的 Embedding Provider 目前只支持 `qwen` 与 `openai_compat`，不支持 Claude embedding。
+- **OCR 生效范围**：OCR 仅运行在 Windows 侧的导入 / 重建索引链路中；切换 OCR 开关不会回溯已导入文档，已有文档需要重新索引后才会生效。
+- **自动重建策略现状**：`on_startup` 已真实接入启动恢复；`changed_files` 选项当前会被持久化，但还没有独立的后台扫描器去自动巡检所有知识库文件变化。
+- **聊天降级策略**：当 RAG 被关闭、Embedding Provider 没有 API Key、当前没有 `ready` 文档、`current_session` 模式缺少可用 `sessionId`，或者 retrieval 失败时，聊天会继续工作，但不会注入 RAG 上下文。
+- **检索来源差异**：`interviewer` 模式自带最近问答历史，因此混合检索下会更偏向知识库文档补充，不会重复消费会话消息检索结果。
 
 ---
 
