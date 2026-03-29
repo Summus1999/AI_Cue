@@ -79,7 +79,7 @@ export function KnowledgeDocumentList({
         <div>
           <h3 className="text-sm font-semibold text-amber-900">文档列表</h3>
           <p className="mt-1 text-sm text-amber-700/80">
-            当前知识库下共有 {documents.length} 个文档，可先选择目标文档，后续预览区会接入 chunk 明细。
+            当前知识库下共有 {documents.length} 个文档，选择后会在右侧显示文档详情和 chunk 预览。
           </p>
         </div>
         <div className="rounded-xl bg-amber-100 px-3 py-2 text-center">

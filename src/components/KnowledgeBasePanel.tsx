@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Database, RefreshCw } from 'lucide-react';
 import { useRagStore } from '../store/rag';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
+import { KnowledgeDocumentPreview } from './knowledge/KnowledgeDocumentPreview';
 
 interface KnowledgeBasePanelProps {
   onBack: () => void;
@@ -13,10 +14,16 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     currentKnowledgeBaseId,
     currentDocumentId,
     isLoadingKnowledgeBases,
+    isLoadingKnowledgeDocumentDetailsById,
     isLoadingKnowledgeDocumentsByKnowledgeBaseId,
+    isLoadingKnowledgeDocumentChunksById,
+    knowledgeDocumentDetailsById,
     knowledgeDocumentsByKnowledgeBaseId,
+    knowledgeDocumentChunksById,
     error,
     refreshKnowledgeBases,
+    refreshKnowledgeDocument,
+    refreshKnowledgeDocumentChunks,
     refreshKnowledgeDocuments,
     setCurrentKnowledgeBase,
     setCurrentDocument,
@@ -32,8 +39,32 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     [knowledgeDocumentsByKnowledgeBaseId, currentKnowledgeBaseId],
   );
 
+  const currentDocument = useMemo(
+    () => {
+      if (!currentDocumentId) {
+        return null;
+      }
+
+      return knowledgeDocumentDetailsById[currentDocumentId]
+        ?? currentDocuments.find((document) => document.id === currentDocumentId)
+        ?? null;
+    },
+    [currentDocumentId, currentDocuments, knowledgeDocumentDetailsById],
+  );
+
+  const currentDocumentChunks = useMemo(
+    () => (currentDocumentId ? knowledgeDocumentChunksById[currentDocumentId] ?? [] : []),
+    [currentDocumentId, knowledgeDocumentChunksById],
+  );
+
   const isLoadingDocuments = currentKnowledgeBaseId
     ? isLoadingKnowledgeDocumentsByKnowledgeBaseId[currentKnowledgeBaseId] ?? false
+    : false;
+  const isLoadingDocument = currentDocumentId
+    ? isLoadingKnowledgeDocumentDetailsById[currentDocumentId] ?? false
+    : false;
+  const isLoadingDocumentChunks = currentDocumentId
+    ? isLoadingKnowledgeDocumentChunksById[currentDocumentId] ?? false
     : false;
 
   useEffect(() => {
@@ -46,6 +77,23 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     });
   }, [currentKnowledgeBaseId, refreshKnowledgeDocuments]);
 
+  useEffect(() => {
+    if (!currentDocumentId) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        await Promise.all([
+          refreshKnowledgeDocument(currentDocumentId),
+          refreshKnowledgeDocumentChunks(currentDocumentId),
+        ]);
+      } catch (refreshError) {
+        console.error('Failed to load knowledge document preview:', refreshError);
+      }
+    })();
+  }, [currentDocumentId, refreshKnowledgeDocument, refreshKnowledgeDocumentChunks]);
+
   const handleRefresh = () => {
     void (async () => {
       try {
@@ -57,7 +105,19 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           : refreshedKnowledgeBases[0]?.id ?? null;
 
         if (nextKnowledgeBaseId) {
-          await refreshKnowledgeDocuments(nextKnowledgeBaseId);
+          const refreshedDocuments = await refreshKnowledgeDocuments(nextKnowledgeBaseId);
+          const nextDocumentId = currentDocumentId && refreshedDocuments.some(
+            (document) => document.id === currentDocumentId,
+          )
+            ? currentDocumentId
+            : refreshedDocuments[0]?.id ?? null;
+
+          if (nextDocumentId) {
+            await Promise.all([
+              refreshKnowledgeDocument(nextDocumentId),
+              refreshKnowledgeDocumentChunks(nextDocumentId),
+            ]);
+          }
         }
       } catch (refreshError) {
         console.error('Failed to refresh knowledge bases:', refreshError);
@@ -97,7 +157,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
-        <div className="max-w-3xl mx-auto space-y-4">
+        <div className="max-w-7xl mx-auto space-y-4">
           <div className="rounded-2xl border border-amber-200 bg-white/70 p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -106,7 +166,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
                   知识库管理面板已拆分
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-amber-800/80">
-                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表。后续会继续补上文档预览和导入交互。
+                  当前步骤已经把知识库页面拆成独立组件，并接入当前知识库的文档列表与文档预览。后续会继续补上导入交互和状态行。
                 </p>
               </div>
               <div className="min-w-28 rounded-2xl bg-amber-100 px-4 py-3 text-center">
@@ -179,23 +239,12 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
               onSelectDocument={setCurrentDocument}
             />
 
-            <section className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-sm">
-              <h3 className="text-sm font-semibold text-amber-900">预览区占位</h3>
-              <p className="mt-2 text-sm leading-6 text-amber-700/80">
-                当前已可以浏览并选择文档。
-                {currentDocumentId
-                  ? ' 下一步会把选中文档的 chunk 预览和元数据明细接到这里。'
-                  : ' 下一步会把文档预览组件接到这里。'}
-              </p>
-              {currentKnowledgeBase && (
-                <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  <p>当前知识库：{currentKnowledgeBase.name}</p>
-                  <p className="mt-1 text-xs text-amber-700/80">
-                    已加载文档数：{currentDocuments.length}
-                  </p>
-                </div>
-              )}
-            </section>
+            <KnowledgeDocumentPreview
+              document={currentDocument}
+              chunks={currentDocumentChunks}
+              isLoadingDocument={isLoadingDocument}
+              isLoadingChunks={isLoadingDocumentChunks}
+            />
           </div>
         </div>
       </div>
