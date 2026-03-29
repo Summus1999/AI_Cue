@@ -118,10 +118,10 @@
 
 1.Rust 后端集成向量存储引擎（SQLite 扩展向量表 + Rust 原生余弦相似度计算）✅
 2.文档解析与分块引擎（支持 Markdown/PDF/纯文本/代码文件，智能分块）✅
-当前进度：已完成 Markdown、文本型 PDF、纯文本、代码文件解析，已完成结构化分块、Tauri 命令接口、前端服务调用接入；OCR、Embedding 入库、知识库管理界面、检索增强对话管道属于后续条目范围。
-3.Embedding 向量化引擎（模式：API 模式如千问 embedding）❌
-4.知识库管理界面（文档上传/预览/分类管理/删除）❌
-5.RAG 检索增强对话管道（用户提问自动检索知识库，注入上下文，引用来源标注）❌
+当前进度：已完成 Markdown、PDF、纯文本、代码文件解析，已完成 OCR fallback、结构化分块、导入/重建/重试命令、前端服务与知识库管理界面接入、聊天检索增强与 citation 渲染；详细拆分见 `tasks/tasks-rag-merged-real-status.md`。
+3.Embedding 向量化引擎（模式：API 模式如千问 embedding）✅
+4.知识库管理界面（文档上传/预览/分类管理/删除）✅
+5.RAG 检索增强对话管道（用户提问自动检索知识库，注入上下文，引用来源标注）✅
 
 ### P0 - Agent 核心框架
 
@@ -155,12 +155,9 @@
 
 19.自定义 Agent 工作流编排（可视化拖拽编辑器 + 社区市场）❌
 
-## RAG 知识库后续 TODO
+## RAG 知识库当前状态
 
-- 已完成：RAG 第一阶段基础稳固，包含 `SearchResult / VectorStore` 身份模型梳理、`vector_search()` 身份修正、消息向量存储边界澄清、`RagEngine` 可插拔 `EmbeddingProvider`、运行时 `rag_configure` 和对应回归测试。
-- 未完成：知识库持久化 Schema 与后端 CRUD，包括 `knowledge_bases`、`kb_documents`、`kb_chunks`、`kb_embeddings` 表、文档 fingerprint、索引状态字段、迁移与级联删除测试。
-- 未完成：文档导入与 Embedding 入库流水线，包括 import orchestrator、chunk 元数据落库、batch embedding、失败重试、阶段进度上报、导入/重建索引/详情/删除命令与集成测试。
-- 未完成：PDF OCR fallback，包括 `ocr.rs` 抽象、扫描页检测、OCR 结果归一化、页码与引用元数据保留、feature flag 或配置开关，以及 text/scanned/mixed PDF 测试。
-- 未完成：知识库管理 UI，包括 RAG 设置项扩展、`ragService`/前端 store 扩展、`KnowledgeBasePanel`、文档列表/筛选/预览、导入进度、删除与重建索引操作。
-- 未完成：检索增强对话接入，包括后端 retrieval 命令、`App.tsx` 发送前检索、`aiChat.ts` 上下文注入、检索失败非阻塞 fallback、回答下方引用渲染与回归测试。
-- 未完成：增量索引与运维加固，包括基于 fingerprint 的跳过策略、后台扫描/重试命令、parse/OCR/embed/retrieve 结构化日志、RAG 统计指标，以及 README/TODO/设计文档同步更新。
+- 已完成：RAG 主线能力已经落地，包含后端 Schema / CRUD、真实导入与重建索引、OCR fallback、citation retrieval、聊天主流程接入、知识库管理 UI、后台重试、启动恢复、增量跳过、统计查询、前后端回归测试，以及 README / TODO 同步。
+- 当前文档来源：`tasks/tasks-rag-merged-real-status.md` 是 RAG 真实状态的 source of truth，后续如果继续扩展 RAG 范围，应优先更新该文件。
+- 当前限制：RAG Embedding Provider 仍只支持 `qwen` 与 `openai_compat`；`changed_files` 选项已持久化，但尚未接入独立后台扫描器自动巡检所有知识库文件变化。
+- 当前剩余：3 期工程中未完成的内容主要集中在 Agent、Web 搜索、代码执行、多 Agent 协作等非 RAG 模块。

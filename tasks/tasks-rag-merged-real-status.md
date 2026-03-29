@@ -41,7 +41,7 @@
 - `package.json` - 前端测试脚本与依赖声明，现已包含 `vitest`、`@testing-library/react` 与 `jsdom`。
 - `package-lock.json` - 同步前端测试依赖锁文件。
 - `README.md` - 项目说明，现已同步当前 RAG 架构、使用方式、能力边界与已知限制。
-- `TODO.md` - 进度文档，当前与 RAG 真实状态存在偏差。
+- `TODO.md` - 进度文档，现已同步当前 RAG 主线完成情况、文档来源与剩余非 RAG 工作。
 
 ### Notes
 
@@ -136,14 +136,14 @@
   - ✅️ 8.5 已提供知识库维度的统计查询与展示，包括总文档数、总 chunk 数、总 embedding 数、存储占用和最近一次索引模型
   - ✅️ 8.6 已在启动阶段按 `on_startup` 策略恢复应用重启前卡在 `indexing` 的文档，统一转为 `failed` 并保留可重试错误信息
 
-- ❌️ 9.0 补齐测试、验收与文档同步
+- ✅️ 9.0 补齐测试、验收与文档同步
   - ✅️ 9.1 当前 Rust 侧已有较完整的 migration / CRUD / import / OCR parser / retrieval / context builder 测试覆盖
   - ✅️ 9.2 当前仓库已通过一次 `cargo test` 验证
   - ✅️ 9.3 当前仓库已通过一次 `npm run build` 验证
   - ✅️ 9.4 已补齐围绕真实导入命令、真实重建索引命令和启动恢复的命令层集成测试；fingerprint 跳过已有 Rust 集成测试覆盖
   - ✅️ 9.5 已补齐知识库 UI 的前端测试，覆盖知识库面板、导入面板、文档列表与文档预览；聊天 RAG 接入已补齐 retrieval fallback / continue generate 的前端回归 harness
   - ✅️ 9.6 `README.md` 已同步当前 RAG 架构、限制和使用方式
-  - ❌️ 9.7 `TODO.md` 尚未同步为当前真实进度
+  - ✅️ 9.7 `TODO.md` 已同步为当前真实进度
 
 - ✅️ 10.0 强化 Agent Harness 的 skills 与提交流程约束
   - ✅️ 10.1 `Agent.md` 已加入 skills 检查、`requesting-code-review` 审查闭环、`writing-guide` 文档时机与 `/clear` 规则
