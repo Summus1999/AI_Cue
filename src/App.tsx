@@ -562,8 +562,11 @@ function App() {
         }, degradedModels);
       };
 
+      // 用于在 catch 路径获取 sendStream 返回的路由信息
+      let streamResult: Awaited<ReturnType<typeof send>> = undefined;
+
       try {
-        const streamResult = await send();
+        streamResult = await send();
         // 智能路由：流失败时标记当前模型为降级，后续请求自动切换到备选模型
         if (streamResult && !streamResult.isComplete && streamResult.finishReason !== 'user_abort') {
           if (config?.smartRouting?.enabled && streamResult.usedProvider && streamResult.usedModel) {
@@ -574,6 +577,12 @@ function App() {
       } catch (error) {
         if (isLocallyCancelled()) {
           return;
+        }
+
+        // 智能路由：sendStream 异常抛出时也标记降级，防止下次请求再次选中故障模型
+        if (config?.smartRouting?.enabled && streamResult?.usedProvider && streamResult?.usedModel) {
+          const entryId = `${streamResult.usedProvider}:${streamResult.usedModel}`;
+          setDegradedModels((prev) => new Set([...prev, entryId]));
         }
 
         const friendlyError = errorClassifier.classify(

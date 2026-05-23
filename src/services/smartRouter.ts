@@ -2,6 +2,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { AppConfig, SmartRouteEntry, ProviderType } from '../store/config';
+import { PROVIDERS } from '../store/config';
 
 // 路由选择结果
 export interface RouteSelection {
@@ -52,10 +53,16 @@ function entriesToCandidates(
     })
     .map((entry) => {
       const pc = config.providerConfigs[entry.provider];
+      // 优先用户自定义 URL，否则使用 Provider 默认 Base URL（与 API 请求同源）
+      let baseUrl = pc.baseUrl?.trim() || null;
+      if (!baseUrl) {
+        const meta = PROVIDERS.find((x) => x.id === entry.provider);
+        baseUrl = meta?.defaultBaseUrl || null;
+      }
       return {
         id: entry.id,
         providerType: entry.provider,
-        baseUrl: pc.baseUrl?.trim() || null,
+        baseUrl,
       };
     });
 }

@@ -41,16 +41,24 @@ export function SmartRoutingSettings({
     onChange({ entries: config.entries.filter((e) => e.id !== id) });
   };
 
-  const handlePriorityChange = (id: string, delta: number) => {
-    const idx = config.entries.findIndex((e) => e.id === id);
-    if (idx === -1) return;
-    const newEntries = [...config.entries];
-    const swapIdx = idx + delta;
-    if (swapIdx < 0 || swapIdx >= newEntries.length) return;
-    const temp = newEntries[idx].priority;
-    newEntries[idx] = { ...newEntries[idx], priority: newEntries[swapIdx].priority };
-    newEntries[swapIdx] = { ...newEntries[swapIdx], priority: temp };
-    onChange({ entries: newEntries });
+  // 在按优先级排序后的列表中交换相邻项，确保上下移动符合视觉顺序
+  const handleMoveUp = (id: string) => {
+    const sorted = [...config.entries].sort((a, b) => a.priority - b.priority);
+    const sortedIdx = sorted.findIndex((e) => e.id === id);
+    if (sortedIdx <= 0) return;
+    const temp = sorted[sortedIdx].priority;
+    sorted[sortedIdx] = { ...sorted[sortedIdx], priority: sorted[sortedIdx - 1].priority };
+    sorted[sortedIdx - 1] = { ...sorted[sortedIdx - 1], priority: temp };
+    onChange({ entries: sorted });
+  };
+  const handleMoveDown = (id: string) => {
+    const sorted = [...config.entries].sort((a, b) => a.priority - b.priority);
+    const sortedIdx = sorted.findIndex((e) => e.id === id);
+    if (sortedIdx === -1 || sortedIdx >= sorted.length - 1) return;
+    const temp = sorted[sortedIdx].priority;
+    sorted[sortedIdx] = { ...sorted[sortedIdx], priority: sorted[sortedIdx + 1].priority };
+    sorted[sortedIdx + 1] = { ...sorted[sortedIdx + 1], priority: temp };
+    onChange({ entries: sorted });
   };
 
   // 一键添加所有已配 API Key 的 Provider 的全部模型
@@ -74,9 +82,6 @@ export function SmartRoutingSettings({
       ],
     });
   };
-
-  const handleMoveUp = (id: string) => handlePriorityChange(id, -1);
-  const handleMoveDown = (id: string) => handlePriorityChange(id, 1);
 
   const sortedEntries = [...config.entries].sort((a, b) => a.priority - b.priority);
 
