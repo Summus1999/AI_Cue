@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
 import { ensureRagRuntimeConfigured } from './ragRuntimeConfig';
+import { selectProvider } from './smartRouter';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -144,6 +145,10 @@ export interface StreamResult {
   isComplete: boolean;
   /** 完成原因 */
   finishReason?: string;
+  /** 智能路由反馈：实际使用的 provider */
+  usedProvider?: ProviderType;
+  /** 智能路由反馈：实际使用的 model */
+  usedModel?: string;
 }
 
 /** 流超时时间（毫秒）：2分钟 */
@@ -301,11 +306,26 @@ export async function sendStream(
   requestId: string,
   history: ChatMessage[] = [],
   options: ChatRequestOptions = {},
+  degradedModels: Set<string> = new Set(),
 ): Promise<StreamResult> {
   await ensureRagRuntimeConfigured(config, 'chat-send');
 
-  const provider = config.activeProvider;
-  const providerConfig = config.providerConfigs[provider];
+  // 智能路由：pre-flight 探测选择最优 Provider/模型
+  let routedProvider = config.activeProvider;
+  let routedModel: string | null = null;
+
+  if (config.smartRouting?.enabled && config.smartRouting.entries.length > 0) {
+    const routeResult = await selectProvider(config, degradedModels);
+    if (routeResult) {
+      routedProvider = routeResult.provider;
+      routedModel = routeResult.model;
+    }
+  }
+
+  const provider = routedProvider;
+  const providerConfig = config.providerConfigs[routedProvider];
+  // 使用路由选中的模型，否则沿用 provider 默认模型
+  const model = routedModel ?? providerConfig.model;
 
   if (!providerConfig.apiKey?.trim()) {
     throw new Error(`请先配置 ${provider} 的 API Key`);
@@ -318,7 +338,7 @@ export async function sendStream(
     { role: 'user', content: question },
   ];
 
-  return streamWithEvent(
+  const result = await streamWithEvent(
     'ai_chat_stream',
     {
       provider,
@@ -326,7 +346,7 @@ export async function sendStream(
         apiKey: providerConfig.apiKey,
         baseUrl: providerConfig.baseUrl || null,
       },
-      model: providerConfig.model,
+      model,
       messages,
       requestId,
     },
@@ -336,6 +356,13 @@ export async function sendStream(
       eventPrefix: 'ai-stream',
     },
   );
+
+  // 若使用了路由模型，反馈给调用方用于降级标记
+  if (routedModel) {
+    result.usedProvider = routedProvider;
+    result.usedModel = routedModel;
+  }
+  return result;
 }
 
 /**
