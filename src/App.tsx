@@ -273,6 +273,8 @@ function App() {
   // 使用 ref 同步存储状态，避免 React 异步更新导致的竞态问题
   const autoScrollEnabledRef = useRef(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  // 智能路由：session 级降级模型集合，key = `${provider}:${model}`
+  const [degradedModels, setDegradedModels] = useState<Set<string>>(new Set());
   const scrollCooldownRef = useRef<number>(0); // 冷却时间戳
   
   // 同步更新 ref 和 state
@@ -557,11 +559,18 @@ function App() {
         }
         return sendStream(requestText, config, onChunk, requestId, contextHistory, {
           retrievalContext: retrievalPayload?.promptContext,
-        });
+        }, degradedModels);
       };
 
       try {
-        await send();
+        const streamResult = await send();
+        // 智能路由：流失败时标记当前模型为降级，后续请求自动切换到备选模型
+        if (streamResult && !streamResult.isComplete && streamResult.finishReason !== 'user_abort') {
+          if (config?.smartRouting?.enabled && streamResult.usedProvider && streamResult.usedModel) {
+            const entryId = `${streamResult.usedProvider}:${streamResult.usedModel}`;
+            setDegradedModels((prev) => new Set([...prev, entryId]));
+          }
+        }
       } catch (error) {
         if (isLocallyCancelled()) {
           return;
@@ -649,6 +658,7 @@ function App() {
     updateAssistantCitations,
     updateAssistantMessage,
     currentSessionId,
+    degradedModels,
     networkResilience,
     codeEditor,
     messages,
@@ -691,6 +701,11 @@ function App() {
       return () => scrollElement.removeEventListener('wheel', handleWheel);
     }
   }, [handleWheel]);
+
+  // 会话切换时清空降级模型列表，确保新会话重新探测所有模型
+  useEffect(() => {
+    setDegradedModels(new Set());
+  }, [currentSessionId]);
 
   // 自动滚动到底部（使用 ref 检查，避免竞态）
   useEffect(() => {
