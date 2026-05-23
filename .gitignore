@@ -44,3 +44,6 @@ coverage
 *.tmp
 *.temp
 .cache
+
+# 工作树隔离
+.worktrees/
