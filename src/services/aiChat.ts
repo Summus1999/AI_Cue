@@ -56,6 +56,7 @@ interface StreamRequestOptions {
 
 export interface ChatRequestOptions {
   retrievalContext?: string;
+  templatePrompt?: string;
 }
 
 export const SCREENSHOT_ANALYSIS_PROMPT =
@@ -114,21 +115,33 @@ function appendRetrievalContext(systemPrompt: string, retrievalContext?: string)
   ].join('\n\n');
 }
 
-function getSystemPrompt(config: AppConfig, retrievalContext?: string): string {
-  // 1. 获取基础 Prompt（现有逻辑不变）
+// 构建发送给 AI 的 System Prompt。
+// 拼接顺序（优先级从高到低）：
+//   1. 面试模板 Prompt（来自 interviewTemplates.ts，用户主动选择，最高优先级）
+//   2. 基础 Prompt（来自设置页的 Prompt 模板，默认 "通用助手"）
+//   3. 面试背景信息（JD、简历、公司、岗位，来自面试设置弹窗）
+//   4. RAG 检索上下文（知识库中检索到的相关文档片段）
+// 模板 Prompt 放在最前面，确保 AI 优先遵循模板的角色设定。
+function getSystemPrompt(config: AppConfig, retrievalContext?: string, templatePrompt?: string): string {
+  // 1. 获取基础 Prompt
   let basePrompt: string;
   if (config.promptTemplateId === 'custom') {
     if (config.customPrompt?.trim()) {
       basePrompt = config.customPrompt;
     } else {
-      basePrompt = PROMPT_TEMPLATES[0].prompt;
+      basePrompt = PROMPT_TEMPLATES[0].prompt; // 兜底：使用数组第一项（通用助手）
     }
   } else {
     const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
     basePrompt = template?.prompt || PROMPT_TEMPLATES[0].prompt;
   }
 
-  // 2. 注入面试背景（新增）
+  // 2. 注入面试模板 Prompt（在基础 Prompt 之前，确保角色设定优先）
+  if (templatePrompt) {
+    basePrompt = `${templatePrompt}\n\n---\n\n${basePrompt}`;
+  }
+
+  // 3. 注入面试背景信息
   const bg = config.interviewBackground;
   if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
     console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
@@ -331,7 +344,7 @@ export async function sendStream(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config, options.retrievalContext);
+  const systemPrompt = getSystemPrompt(config, options.retrievalContext, options.templatePrompt);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -383,7 +396,7 @@ export async function sendChat(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config, options.retrievalContext);
+  const systemPrompt = getSystemPrompt(config, options.retrievalContext, options.templatePrompt);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,

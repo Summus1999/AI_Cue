@@ -4,7 +4,8 @@ import { useReviewStore } from '../../store/review';
 import { loadConfig, QuestionTiming } from '../../store/config';
 import { ReviewReport as ReviewReportComponent } from './ReviewReport';
 import { TrendComparison } from './TrendComparison';
-import { getSessionReviewStatus } from '../../services/reviewService';
+import { ReviewHistoryList } from './ReviewHistoryList';
+import { getSessionReviewStatus, getReviewReport, deleteReview } from '../../services/reviewService';
 import { exportService } from '../../services/export/exportService';
 import type { TimingStats } from '../../types/review';
 
@@ -66,7 +67,9 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
   const [hasExistingReview, setHasExistingReview] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'report' | 'trend'>('report');
+  const [activeTab, setActiveTab] = useState<'report' | 'history' | 'trend'>('report');
+  const [viewHistorySessionId, setViewHistorySessionId] = useState<string | null>(null);
+  const [historyReport, setHistoryReport] = useState<typeof report>(null);
 
   // 打开时检查是否已有复盘
   useEffect(() => {
@@ -133,13 +136,38 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
 
   // 导出 PDF
   const handleExportPdf = useCallback(async () => {
-    if (!report) return;
+    const targetReport = historyReport || report;
+    if (!targetReport) return;
     try {
-      await exportService.exportReviewReport(report);
+      await exportService.exportReviewReport(targetReport);
     } catch (err) {
       console.error('导出复盘 PDF 失败:', err);
     }
-  }, [report]);
+  }, [report, historyReport]);
+
+  // 从历史列表选择报告
+  const handleSelectHistoryReport = useCallback(async (sessionId: string) => {
+    try {
+      setViewHistorySessionId(sessionId);
+      const reportData = await getReviewReport(sessionId);
+      setHistoryReport(reportData);
+    } catch (err) {
+      console.error('加载历史报告失败:', err);
+    }
+  }, []);
+
+  // 删除历史报告
+  const handleDeleteHistoryReport = useCallback(async (sessionId: string) => {
+    try {
+      await deleteReview(sessionId);
+      if (viewHistorySessionId === sessionId) {
+        setViewHistorySessionId(null);
+        setHistoryReport(null);
+      }
+    } catch (err) {
+      console.error('删除报告失败:', err);
+    }
+  }, [viewHistorySessionId]);
 
   // 关闭时重置
   const handleClose = useCallback(() => {
@@ -265,19 +293,31 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
           )}
 
           {/* 复盘完成 - 显示报告或趋势 */}
-          {!isLoading && reviewStatus === 'completed' && report && (
+          {!isLoading && (reviewStatus === 'completed' || activeTab === 'history' || activeTab === 'trend') && (
             <>
               {/* 选项卡 */}
               <div className="flex border-b border-amber-200/30 mb-4">
+                {reviewStatus === 'completed' && report && (
+                  <button
+                    onClick={() => setActiveTab('report')}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      activeTab === 'report'
+                        ? 'text-amber-900 border-b-2 border-amber-600'
+                        : 'text-amber-600/60 hover:text-amber-700'
+                    }`}
+                  >
+                    本次报告
+                  </button>
+                )}
                 <button
-                  onClick={() => setActiveTab('report')}
+                  onClick={() => setActiveTab('history')}
                   className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    activeTab === 'report'
+                    activeTab === 'history'
                       ? 'text-amber-900 border-b-2 border-amber-600'
                       : 'text-amber-600/60 hover:text-amber-700'
                   }`}
                 >
-                  本次报告
+                  历史报告
                 </button>
                 <button
                   onClick={() => {
@@ -294,10 +334,35 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
                 </button>
               </div>
 
+              {/* 历史报告列表 */}
+              {activeTab === 'history' && (
+                <ReviewHistoryList
+                  onSelectReport={handleSelectHistoryReport}
+                  onDeleteReport={handleDeleteHistoryReport}
+                  onViewTrend={() => {
+                    setActiveTab('trend');
+                    if (!trend) loadTrend();
+                  }}
+                  activeSessionId={viewHistorySessionId ?? undefined}
+                />
+              )}
+
+              {/* 从历史列表加载的报告详情 */}
+              {activeTab === 'history' && historyReport && (
+                <div className="mt-4">
+                  <div className="border-t border-amber-200 pt-4">
+                    <ReviewReportComponent
+                      report={historyReport}
+                      onExportPdf={handleExportPdf}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* 内容区域 */}
-              {activeTab === 'report' && (
-                <ReviewReportComponent 
-                  report={report} 
+              {activeTab === 'report' && report && (
+                <ReviewReportComponent
+                  report={report}
                   onExportPdf={handleExportPdf}
                   timingStats={computeTimingStats(questionTimings)}
                 />

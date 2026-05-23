@@ -906,6 +906,17 @@ pub async fn delete_review(
     Ok(())
 }
 
+/// 获取所有已完成复盘的会话列表
+///
+/// 用于复盘报告的历史列表展示。复用数据库层已有的 get_reviewed_sessions 查询，
+/// 返回会话标题、评分、完成时间等摘要信息，前端按完成时间倒序展示。
+#[tauri::command]
+pub async fn list_review_reports(
+    db: State<'_, crate::database::Database>,
+) -> Result<Vec<crate::database::ReviewedSession>, String> {
+    crate::database::get_reviewed_sessions(&db)
+}
+
 /// 辅助函数：获取会话的 interview_context
 fn get_interview_context(
     db: &crate::database::Database,
@@ -1605,6 +1616,32 @@ pub fn rag_delete_knowledge_document(
     document_id: String,
 ) -> Result<(), String> {
     crate::database::delete_knowledge_document(&db, &document_id)
+}
+
+/// 设置窗口是否显示在任务栏
+///
+/// 隐身模式控制：开启后窗口从任务栏隐藏，用于面试现场防检测。
+/// 关闭后窗口正常显示在任务栏，用户可最小化/恢复。
+///
+/// Tauri 2 原生支持运行时切换 skipTaskbar，无需重建窗口。
+#[tauri::command]
+pub async fn set_window_skip_taskbar(
+    window: tauri::Window,
+    skip: bool,
+) -> Result<(), String> {
+    window.set_skip_taskbar(skip).map_err(|e| e.to_string())
+}
+
+/// 设置窗口是否置顶
+///
+/// 隐身模式下窗口始终置顶，确保不被其他窗口遮挡，方便面试时快速查看。
+/// 普通模式下不置顶，行为与常规桌面应用一致。
+#[tauri::command]
+pub async fn set_window_always_on_top(
+    window: tauri::Window,
+    always_on_top: bool,
+) -> Result<(), String> {
+    window.set_always_on_top(always_on_top).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -139,3 +139,14 @@ export interface ReviewProgress {
  * 复盘状态
  */
 export type ReviewStatus = 'idle' | 'in_progress' | 'completed' | 'error';
+
+/**
+ * 已复盘的会话摘要（用于历史列表）
+ */
+export interface ReviewedSession {
+  session_id: string;
+  title: string;
+  overall_score: number;
+  completed_at: number;
+  review_status: string;
+}

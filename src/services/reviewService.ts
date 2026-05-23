@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { ReviewReport, TrendData, ReviewProgress } from '../types/review';
+import type { ReviewReport, TrendData, ReviewProgress, ReviewedSession } from '../types/review';
 
 /**
  * 启动复盘
@@ -35,6 +35,13 @@ export async function getReviewReport(sessionId: string): Promise<ReviewReport> 
  */
 export async function getReviewTrend(): Promise<TrendData> {
   return await invoke('get_review_trend');
+}
+
+/**
+ * 获取所有已完成复盘的会话列表
+ */
+export async function listReviewReports(): Promise<ReviewedSession[]> {
+  return invoke<ReviewedSession[]>('list_review_reports');
 }
 
 /**

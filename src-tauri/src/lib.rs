@@ -203,6 +203,7 @@ pub fn run() {
             commands::start_review,
             commands::get_review_report,
             commands::get_review_trend,
+            commands::list_review_reports,
             commands::delete_review,
             // 动态 Provider 和插件管理命令
             commands::ai_register_provider,
@@ -237,6 +238,9 @@ pub fn run() {
             commands::rag_get_knowledge_document,
             commands::rag_list_knowledge_document_chunks,
             commands::rag_delete_knowledge_document,
+            // 窗口控制命令
+            commands::set_window_skip_taskbar,
+            commands::set_window_always_on_top,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -175,10 +175,30 @@ export function getDefaultRagEmbeddingModel(provider: RagEmbeddingProviderType):
   return RAG_EMBEDDING_MODELS[provider][0]?.id || 'text-embedding-v2';
 }
 
-// 功能开关（灰度控制）
+// 功能开关：用户可在设置页独立控制各模块的启用/禁用
+// 注意：基础聊天和模型配置不受开关控制，始终可用
 export interface FeatureGates {
+  rag: boolean;        // RAG 知识库增强检索 + 知识库面板入口
+  review: boolean;     // 面试复盘报告 + 趋势对比
+  templates: boolean;  // 面试训练模板选择器
+  training: boolean;   // 7天训练计划面板入口
+  voice: boolean;      // 语音输入按钮 + 波形可视化
+  screenshot: boolean; // 截图题解按钮
+  export: boolean;     // 会话导出（Markdown/PDF）
   smartRouting: boolean; // 智能路由，默认 false
 }
+
+// 默认全部开启，智能路由默认关闭（新功能灰度）
+export const DEFAULT_FEATURE_GATES: FeatureGates = {
+  rag: true,
+  review: true,
+  templates: true,
+  training: true,
+  voice: true,
+  screenshot: true,
+  export: true,
+  smartRouting: false,
+};
 
 // 快捷键配置接口
 export interface ShortcutConfig {
@@ -234,11 +254,6 @@ export interface QuestionTiming {
   answeredAt: number;
   durationMs: number;
 }
-
-// 默认功能开关配置
-export const DEFAULT_FEATURE_GATES: FeatureGates = {
-  smartRouting: false,
-};
 
 // 默认快捷键配置
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
@@ -395,10 +410,18 @@ export interface AppConfig {
   fillerWordFilter: FillerWordFilterConfig;
   // RAG 配置
   rag: RagConfig;
-  // 功能开关
+  // 新手引导：首次启动时弹出5步引导，完成后置为 true，不再自动显示
+  onboardingCompleted: boolean;
+  // 面试训练模板：当前激活的模板ID，null 表示普通聊天模式（无模板注入）
+  activeTemplateId: string | null;
+  // 功能开关：控制各功能模块的显示/隐藏，关闭后 UI 入口自动隐藏
   featureGates: FeatureGates;
   // 智能路由配置
   smartRouting: SmartRoutingConfig;
+  // 隐身模式（面试防检测）：
+  // - true: 窗口不显示在任务栏 + 窗口置顶 + 最小化按钮禁用（只能关闭）
+  // - false: 正常显示在任务栏 + 可最小化到任务栏
+  stealthMode: boolean;
 }
 
 export const DEFAULT_RAG_CONFIG: RagConfig = {
@@ -471,8 +494,11 @@ export const DEFAULT_CONFIG: AppConfig = {
     customWords: [],
   },
   rag: DEFAULT_RAG_CONFIG,
-  featureGates: DEFAULT_FEATURE_GATES,
+  onboardingCompleted: false,
+  activeTemplateId: null,
+  featureGates: { ...DEFAULT_FEATURE_GATES },
   smartRouting: DEFAULT_SMART_ROUTING_CONFIG,
+  stealthMode: false,
 };
 
 // Store 实例（延迟初始化）
@@ -696,6 +722,9 @@ export async function loadConfig(): Promise<AppConfig> {
     const fillerWordFilter = await store.get<FillerWordFilterConfig>('fillerWordFilter');
     const featureGates = await store.get<FeatureGates>('featureGates');
     const smartRouting = await store.get<SmartRoutingConfig>('smartRouting');
+    const onboardingCompleted = await store.get<boolean>('onboardingCompleted');
+    const activeTemplateId = await store.get<string | null>('activeTemplateId');
+    const stealthMode = await store.get<boolean>('stealthMode');
 
     const customPromptMode = await store.get<PromptMode>('customPromptMode');
 
@@ -721,8 +750,11 @@ export async function loadConfig(): Promise<AppConfig> {
       interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
       fillerWordFilter: fillerWordFilter || DEFAULT_CONFIG.fillerWordFilter,
       rag: migrateRagConfig(rag),
+      onboardingCompleted: onboardingCompleted ?? false,
+      activeTemplateId: activeTemplateId ?? null,
       featureGates: featureGates || DEFAULT_FEATURE_GATES,
       smartRouting: smartRouting || DEFAULT_SMART_ROUTING_CONFIG,
+      stealthMode: stealthMode ?? false,
     };
 
     // 补充 customPromptMode 默认值
@@ -778,8 +810,11 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('interviewBackground', config.interviewBackground);
     await store.set('fillerWordFilter', config.fillerWordFilter);
     await store.set('rag', config.rag);
+    await store.set('onboardingCompleted', config.onboardingCompleted);
+    await store.set('activeTemplateId', config.activeTemplateId);
     await store.set('featureGates', config.featureGates);
     await store.set('smartRouting', config.smartRouting);
+    await store.set('stealthMode', config.stealthMode);
     await store.save();
   } catch (error) {
     console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);

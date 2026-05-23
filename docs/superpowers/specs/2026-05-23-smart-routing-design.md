@@ -22,11 +22,11 @@
 ### 新增类型
 
 ```typescript
-// 单个候选 Provider 条目
+// id = `${provider}:${model}`，如 "qwen:qwen-max"，用作复合键去重和 health check 结果匹配
 interface SmartRouteEntry {
-  id: string;               // 唯一标识，如 "qwen-max"
+  id: string;               // 复合键: "qwen:qwen-max"
   provider: ProviderType;   // 'qwen' | 'openai_compat' | 'claude'
-  model: string;            // 具体模型 ID
+  model: string;            // 具体模型 ID，如 "qwen-max"
   priority: number;         // 优先级 1=最高，数字越大优先级越低
 }
 
@@ -36,6 +36,10 @@ interface SmartRoutingConfig {
   latencyThreshold: number; // 延迟阈值 ms，默认 3000
   entries: SmartRouteEntry[];
 }
+
+// SmartRouteEntry → HealthCheckCandidate 映射：
+// 通过 entry.provider 查 config.providerConfigs[entry.provider] 获取 baseUrl + apiKey。
+// 若对应 Provider 的 apiKey 未配置，跳过该候选。
 ```
 
 ### AppConfig 新增字段
@@ -75,7 +79,7 @@ smartRouting: {
 用户发消息
     │
     ▼
-SmartRouter.selectProvider(config, sessionDegradedModels)
+SmartRouter.selectProvider(config, degradedModels)
     │
     ├─ enabled == false？ → 直接用 config.activeProvider
     ├─ entries 为空？     → 直接用 config.activeProvider
@@ -83,7 +87,7 @@ SmartRouter.selectProvider(config, sessionDegradedModels)
     │
     └─ 按 priority 分组 → 从最高优先级组开始
             │
-            ├─ sessionDegradedModels 中的模型跳过（本 session 已失败过）
+            ├─ degradedModels 中的模型跳过（本 session 已失败过）
             ├─ 调用 invoke('batch_health_check', candidates)
             ├─ 过滤 reachable && latency < threshold 的
             ├─ 选延迟最低的
@@ -220,7 +224,7 @@ smartRouting: boolean;  // 默认 false（新功能灰度关闭）
 | 兜底也失败 | 显示 FriendlyErrorCard，引导用户检查网络或设置 |
 | batch_health_check 超时 | 5 秒后返回部分结果，超时的标记为 unreachable |
 | 候选 Provider API Key 未配置 | 跳过该候选 |
-| 路由结果选择了一个模型但流返回失败 | 该模型加入 degradedModels，显示错误并提供"重试（自动选下一候选）"按钮 |
+| 路由结果选择了一个模型但流返回失败 | 该模型加入 degradedModels，显示错误并提供「重试」按钮。点击后重新调用 selectProvider（degradedModels 已包含失败模型，自动跳过），选中下一个可用候选发起新请求 |
 
 ---
 

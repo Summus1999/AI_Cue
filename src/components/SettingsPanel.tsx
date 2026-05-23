@@ -29,9 +29,10 @@ interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenKnowledgeBase?: () => void | Promise<void>;
+  onReopenOnboarding?: () => void;
 }
 
-export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase }: SettingsPanelProps) {
+export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onReopenOnboarding }: SettingsPanelProps) {
   // 配置状态
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(false);
@@ -716,6 +717,38 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase }: Settings
                 </div>
               </div>
 
+              {/* 隐身模式开关
+                  设计意图：面试现场使用时不希望监考/面试官在任务栏发现 AI 辅助工具。
+                  开启后：skipTaskbar=true + alwaysOnTop=true + 最小化按钮禁用。
+                  关闭后：正常桌面应用行为，显示在任务栏，可最小化/恢复。
+                  状态通过 Rust 后端命令动态设置，保存后立即生效，无需重启。 */}
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-amber-200/50">
+                <div>
+                  <label className="text-xs font-medium text-amber-700">隐身模式（面试防检测）</label>
+                  <p className="text-[10px] text-amber-500 mt-0.5">
+                    {config.stealthMode
+                      ? '窗口不显示在任务栏，最小化按钮禁用，仅可关闭'
+                      : '窗口正常显示在任务栏，可最小化到任务栏恢复'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newStealth = !config.stealthMode;
+                    setConfig((prev) => ({ ...prev, stealthMode: newStealth }));
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+                    config.stealthMode ? 'bg-red-500' : 'bg-amber-200'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      config.stealthMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
               {/* 悬停恢复开关 - iOS 风格 */}
               <div className="flex items-center justify-between mt-4">
                 <div>
@@ -834,10 +867,114 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase }: Settings
             </div>
           </>
         )}
+
+        {/* 分隔线 */}
+        <div className="border-t border-amber-200" />
+
+        {/* 面试模板设置 */}
+        {config.featureGates?.templates !== false && (
+          <div className="space-y-3">
+            <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+              面试训练模板
+            </label>
+            <p className="text-xs text-amber-600">
+              选择一个面试训练模板，AI 会自动调整对话策略。选择"普通聊天"则不使用模板。
+            </p>
+            <select
+              value={config.activeTemplateId ?? ''}
+              onChange={(e) => {
+                const value = e.target.value;
+                setConfig((prev) => ({
+                  ...prev,
+                  activeTemplateId: value || null,
+                }));
+              }}
+              className="w-full px-3 py-2.5 bg-white/80 border border-amber-300 rounded-lg text-sm text-amber-900 focus:border-amber-500 focus:outline-none"
+            >
+              <option value="">普通聊天（无模板）</option>
+              <option value="resume_deep_dive">简历深挖</option>
+              <option value="jd_match">JD 匹配</option>
+              <option value="project_story">项目经历包装</option>
+              <option value="tech_fundamentals">八股文问答</option>
+              <option value="algorithm_explain">算法题讲解</option>
+              <option value="behavioral_interview">行为面试</option>
+            </select>
+            {config.activeTemplateId && (
+              <p className="text-xs text-amber-500">
+                模板已激活，发送消息时会自动注入对应的面试策略提示
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* 分隔线 */}
+        <div className="border-t border-amber-200" />
+
+        {/* 功能开关
+            每个开关对应 FeatureGates 中的一个字段。
+            关闭后：对应的 UI 入口（按钮/菜单项）通过 FeatureGate 组件自动隐藏。
+            核心功能（基础聊天、模型配置）不受开关控制。 */}
+        <div className="space-y-3">
+          <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+            功能开关
+          </label>
+          <p className="text-xs text-amber-600">
+            控制各功能模块的启用状态。关闭的功能会在界面中隐藏。
+          </p>
+          {([
+            { key: 'rag' as const, label: 'RAG 增强检索', desc: '知识库检索增强聊天回答' },
+            { key: 'review' as const, label: '面试复盘', desc: '模拟面试后的复盘报告和趋势对比' },
+            { key: 'templates' as const, label: '面试模板', desc: '简历深挖、JD 匹配等面试训练模板' },
+            { key: 'training' as const, label: '训练计划', desc: '7 天结构化面试训练路径' },
+            { key: 'voice' as const, label: '语音输入', desc: '麦克风和系统音频录制转文字' },
+            { key: 'screenshot' as const, label: '截图题解', desc: '屏幕区域截取后 AI 分析作答' },
+            { key: 'export' as const, label: '会话导出', desc: '导出会话为 Markdown / PDF' },
+          ] as const).map(({ key, label, desc }) => (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <span className="text-sm text-amber-800">{label}</span>
+                <p className="text-xs text-amber-500">{desc}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    featureGates: {
+                      ...prev.featureGates,
+                      [key]: !prev.featureGates[key],
+                    },
+                  }));
+                }}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+                  config.featureGates[key] ? 'bg-amber-600' : 'bg-amber-200'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    config.featureGates[key] ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* 底部保存按钮 */}
-      <div className="flex-shrink-0 p-4 border-t border-amber-200 bg-amber-100/50">
+      {/* 底部操作按钮 */}
+      <div className="flex-shrink-0 p-4 border-t border-amber-200 bg-amber-100/50 space-y-2">
+        {onReopenOnboarding && (
+          <button
+            type="button"
+            onClick={() => {
+              onReopenOnboarding();
+              onClose();
+            }}
+            className="w-full py-2 rounded-lg text-sm font-medium text-amber-700 border border-amber-300 bg-white hover:bg-amber-50 transition-colors"
+          >
+            重新打开新手引导
+          </button>
+        )}
         <button
           onClick={handleSave}
           disabled={saveStatus === 'saving'}

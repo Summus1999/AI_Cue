@@ -131,6 +131,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
   const [newKnowledgeBaseName, setNewKnowledgeBaseName] = useState('');
   const [newKnowledgeBaseDescription, setNewKnowledgeBaseDescription] = useState('');
   const [isCreatingKnowledgeBase, setIsCreatingKnowledgeBase] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const retryableDocumentCount = useMemo(
     () => currentDocuments.filter((document) => document.indexState === 'pending' || document.indexState === 'failed').length,
     [currentDocuments],
@@ -312,6 +313,19 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           <Database className="w-4 h-4 text-amber-700" />
           <span className="text-xs font-medium text-amber-800 tracking-wide">知识库</span>
         </div>
+        <button
+          onClick={() => {
+            setNewKnowledgeBaseName('');
+            setNewKnowledgeBaseDescription('');
+            clearError();
+            setShowCreateDialog(true);
+          }}
+          className="flex items-center gap-1 px-2 h-6 rounded hover:bg-amber-200/60 text-xs text-amber-700 transition-colors"
+          title="新建知识库"
+        >
+          <PlusCircle className="w-3 h-3" />
+          新建
+        </button>
         <button
           onClick={handleRefresh}
           className="flex items-center gap-1 px-2 h-6 rounded hover:bg-amber-200/60 text-xs text-amber-700 transition-colors"
@@ -602,6 +616,97 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           </div>
         </div>
       </div>
+
+      {showCreateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-amber-900">新建知识库</h3>
+              <button
+                type="button"
+                onClick={() => setShowCreateDialog(false)}
+                className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-amber-100 text-amber-600 transition-colors"
+              >
+                <span className="text-lg leading-none">&times;</span>
+              </button>
+            </div>
+            <p className="mt-1 text-sm text-amber-700/80">
+              创建一个新的知识库，随后即可导入文档。
+            </p>
+
+            <form
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (!normalizedKnowledgeBaseName || isCreatingKnowledgeBase) return;
+
+                clearError();
+                setIsCreatingKnowledgeBase(true);
+                try {
+                  await createKnowledgeBase({
+                    name: normalizedKnowledgeBaseName,
+                    description: newKnowledgeBaseDescription.trim() || null,
+                  });
+                  setNewKnowledgeBaseName('');
+                  setNewKnowledgeBaseDescription('');
+                  setShowCreateDialog(false);
+                } catch {
+                  // error is already set by the store
+                } finally {
+                  setIsCreatingKnowledgeBase(false);
+                }
+              }}
+              className="mt-4 space-y-4"
+            >
+              <label className="block">
+                <span className="text-xs font-medium text-amber-700">知识库名称</span>
+                <input
+                  type="text"
+                  value={newKnowledgeBaseName}
+                  onChange={(event) => setNewKnowledgeBaseName(event.target.value)}
+                  placeholder="例如：面试题库 / 项目文档 / 算法笔记"
+                  autoFocus
+                  className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm text-amber-900 placeholder:text-amber-400 focus:border-amber-500 focus:outline-none"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-medium text-amber-700">描述（可选）</span>
+                <input
+                  type="text"
+                  value={newKnowledgeBaseDescription}
+                  onChange={(event) => setNewKnowledgeBaseDescription(event.target.value)}
+                  placeholder="说明这个知识库主要放什么资料，便于后续区分"
+                  className="mt-1 w-full rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm text-amber-900 placeholder:text-amber-400 focus:border-amber-500 focus:outline-none"
+                />
+              </label>
+
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  创建失败：{error}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateDialog(false)}
+                  className="rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={!normalizedKnowledgeBaseName || isCreatingKnowledgeBase}
+                  className="flex items-center gap-2 rounded-xl border border-amber-700 bg-amber-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  {isCreatingKnowledgeBase ? '创建中...' : '创建知识库'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
