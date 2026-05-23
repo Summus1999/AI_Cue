@@ -15,6 +15,36 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::timeout;
 
+// ==================== 批量健康检查类型 ====================
+
+// 批量健康检查 — 输入
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthCheckCandidate {
+    pub id: String,
+    pub provider_type: String,
+    pub base_url: Option<String>,
+    #[allow(dead_code)]
+    pub api_key: Option<String>, // 保留字段用于未来认证探测，当前 HEAD 请求不发送
+}
+
+// 批量健康检查 — 单个结果
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateHealthStatus {
+    pub id: String,
+    pub reachable: bool,
+    pub latency_ms: Option<u64>,
+    pub error_detail: Option<String>,
+}
+
+// 批量健康检查 — 输出
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchHealthCheckResult {
+    pub results: Vec<CandidateHealthStatus>,
+}
+
 // ==================== 音频命令 ====================
 
 // 开始录音
@@ -211,6 +241,71 @@ pub async fn check_network_health(
             })
         }
     }
+}
+
+/// 批量探测多个 Provider 的网络可达性和延迟
+/// 并行发起 HEAD 请求，每个候选独立超时
+#[tauri::command]
+pub async fn batch_health_check(
+    candidates: Vec<HealthCheckCandidate>,
+    timeout_ms: u64,
+) -> Result<BatchHealthCheckResult, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 并行探测所有候选
+    let futures: Vec<_> = candidates
+        .into_iter()
+        .map(|c| {
+            let client = client.clone();
+            let timeout_dur = Duration::from_millis(timeout_ms);
+            async move {
+                let start = Instant::now();
+                let target_url = c.base_url.unwrap_or_else(|| {
+                    match c.provider_type.as_str() {
+                        "qwen" => "https://dashscope.aliyuncs.com".to_string(),
+                        "openai_compat" => "https://api.openai.com".to_string(),
+                        "claude" => "https://api.anthropic.com".to_string(),
+                        _ => "https://www.google.com".to_string(),
+                    }
+                });
+
+                let result = timeout(timeout_dur, client.head(&target_url).send()).await;
+                let latency = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+
+                match result {
+                    Ok(Ok(response)) => {
+                        let status = response.status().as_u16();
+                        // 200-499 视为可达（与 check_network_health 逻辑一致）
+                        let reachable = !(500..=599).contains(&status);
+                        CandidateHealthStatus {
+                            id: c.id,
+                            reachable,
+                            latency_ms: Some(latency),
+                            error_detail: if reachable {
+                                None
+                            } else {
+                                Some(format!("HTTP {}", status))
+                            },
+                        }
+                    }
+                    _ => CandidateHealthStatus {
+                        id: c.id,
+                        reachable: false,
+                        latency_ms: None,
+                        error_detail: Some("连接超时或网络不可达".to_string()),
+                    },
+                }
+            }
+        })
+        .collect();
+
+    let results = futures_util::future::join_all(futures).await;
+
+    Ok(BatchHealthCheckResult { results })
 }
 
 // ==================== 向下兼容：保留原有千问命令（已弃用）====================

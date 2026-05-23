@@ -171,6 +171,7 @@ pub fn run() {
             commands::ai_list_providers,
             // 网络健康检查命令（新增）
             commands::check_network_health,
+            commands::batch_health_check,
             // 向下兼容：保留原有千问命令
             commands::qwen_chat,
             commands::qwen_chat_stream,
