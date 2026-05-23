@@ -20,6 +20,20 @@ export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
 
 export type PromptMode = 'assistant' | 'interviewer';
 
+// 智能路由候选条目，id = `${provider}:${model}`
+export interface SmartRouteEntry {
+  id: string;
+  provider: ProviderType;
+  model: string;
+  priority: number;
+}
+
+export interface SmartRoutingConfig {
+  enabled: boolean;
+  latencyThreshold: number;  // ms，默认 3000
+  entries: SmartRouteEntry[];
+}
+
 export type RagRetrievalScope = 'hybrid' | 'knowledge_base' | 'current_session';
 
 export type RagEmbeddingProviderType = 'qwen' | 'openai_compat';
@@ -161,6 +175,11 @@ export function getDefaultRagEmbeddingModel(provider: RagEmbeddingProviderType):
   return RAG_EMBEDDING_MODELS[provider][0]?.id || 'text-embedding-v2';
 }
 
+// 功能开关（灰度控制）
+export interface FeatureGates {
+  smartRouting: boolean; // 智能路由，默认 false
+}
+
 // 快捷键配置接口
 export interface ShortcutConfig {
   toggleRecording: string;  // 录制音频开始/停止
@@ -215,6 +234,11 @@ export interface QuestionTiming {
   answeredAt: number;
   durationMs: number;
 }
+
+// 默认功能开关配置
+export const DEFAULT_FEATURE_GATES: FeatureGates = {
+  smartRouting: false,
+};
 
 // 默认快捷键配置
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
@@ -371,6 +395,10 @@ export interface AppConfig {
   fillerWordFilter: FillerWordFilterConfig;
   // RAG 配置
   rag: RagConfig;
+  // 功能开关
+  featureGates: FeatureGates;
+  // 智能路由配置
+  smartRouting: SmartRoutingConfig;
 }
 
 export const DEFAULT_RAG_CONFIG: RagConfig = {
@@ -380,6 +408,12 @@ export const DEFAULT_RAG_CONFIG: RagConfig = {
   embeddingProvider: 'qwen',
   embeddingModel: getDefaultRagEmbeddingModel('qwen'),
   autoReindexPolicy: 'manual',
+};
+
+export const DEFAULT_SMART_ROUTING_CONFIG: SmartRoutingConfig = {
+  enabled: false,
+  latencyThreshold: 3000,
+  entries: [],
 };
 
 // 默认配置
@@ -437,6 +471,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     customWords: [],
   },
   rag: DEFAULT_RAG_CONFIG,
+  featureGates: DEFAULT_FEATURE_GATES,
+  smartRouting: DEFAULT_SMART_ROUTING_CONFIG,
 };
 
 // Store 实例（延迟初始化）
@@ -545,9 +581,11 @@ function migrateConfig(parsed: any): AppConfig {
       },
       window: parsed.window || DEFAULT_CONFIG.window,
       rag: migrateRagConfig(parsed.rag),
+      featureGates: parsed.featureGates || DEFAULT_FEATURE_GATES,
+      smartRouting: parsed.smartRouting || DEFAULT_SMART_ROUTING_CONFIG,
     };
   }
-  
+
   // 新配置格式，直接合并
   return {
     ...DEFAULT_CONFIG,
@@ -563,6 +601,8 @@ function migrateConfig(parsed: any): AppConfig {
     contextWindowSize: parsed.contextWindowSize ?? DEFAULT_CONFIG.contextWindowSize,
     interviewBackground: migrateInterviewBackground(parsed.interviewBackground),
     rag: migrateRagConfig(parsed.rag),
+    featureGates: parsed.featureGates || DEFAULT_FEATURE_GATES,
+    smartRouting: parsed.smartRouting || DEFAULT_SMART_ROUTING_CONFIG,
   };
 }
 
@@ -654,6 +694,8 @@ export async function loadConfig(): Promise<AppConfig> {
     const contextWindowSize = await store.get<number>('contextWindowSize');
     const interviewBackground = await store.get<InterviewBackground>('interviewBackground');
     const fillerWordFilter = await store.get<FillerWordFilterConfig>('fillerWordFilter');
+    const featureGates = await store.get<FeatureGates>('featureGates');
+    const smartRouting = await store.get<SmartRoutingConfig>('smartRouting');
 
     const customPromptMode = await store.get<PromptMode>('customPromptMode');
 
@@ -679,6 +721,8 @@ export async function loadConfig(): Promise<AppConfig> {
       interviewBackground: interviewBackground || DEFAULT_CONFIG.interviewBackground,
       fillerWordFilter: fillerWordFilter || DEFAULT_CONFIG.fillerWordFilter,
       rag: migrateRagConfig(rag),
+      featureGates: featureGates || DEFAULT_FEATURE_GATES,
+      smartRouting: smartRouting || DEFAULT_SMART_ROUTING_CONFIG,
     };
 
     // 补充 customPromptMode 默认值
@@ -734,6 +778,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('interviewBackground', config.interviewBackground);
     await store.set('fillerWordFilter', config.fillerWordFilter);
     await store.set('rag', config.rag);
+    await store.set('featureGates', config.featureGates);
+    await store.set('smartRouting', config.smartRouting);
     await store.save();
   } catch (error) {
     console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);
