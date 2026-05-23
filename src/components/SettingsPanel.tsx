@@ -5,6 +5,7 @@ import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database } from
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
 import { ProviderSelector } from './ProviderSelector';
+import { SmartRoutingSettings } from './SmartRoutingSettings';
 import {
   loadConfig,
   saveConfig,
@@ -749,6 +750,73 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase }: Settings
                     }}
                   />
                 </button>
+              </div>
+            </div>
+
+            {/* 分隔线 */}
+            <div className="border-t border-amber-200" />
+
+            {/* 智能路由设置 */}
+            {config.featureGates?.smartRouting !== false && (
+              <>
+                <SmartRoutingSettings
+                  config={config.smartRouting}
+                  configuredProviders={
+                    (Object.entries(config.providerConfigs) as [ProviderType, ProviderConfig][])
+                      .filter(([, cfg]) => cfg.apiKey?.trim())
+                      .map(([type]) => type)
+                  }
+                  onChange={(updates) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      smartRouting: { ...prev.smartRouting, ...updates },
+                    }))
+                  }
+                />
+              </>
+            )}
+
+            {/* 功能开关 */}
+            <div className="space-y-3 border-t border-amber-200 pt-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+                功能开关
+              </label>
+              <div className="space-y-2">
+                {([
+                  { key: 'smartRouting' as const, label: '智能路由', desc: '多模型之间根据网络自动切换' },
+                ] as const).map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-start justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                    <div>
+                      <div className="text-sm font-medium text-amber-900">{label}</div>
+                      <p className="mt-0.5 text-xs text-amber-600">{desc}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          featureGates: {
+                            ...prev.featureGates,
+                            [key]: !prev.featureGates[key],
+                          },
+                        }))
+                      }
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ease-in-out flex-shrink-0 ${
+                        config.featureGates[key] ? 'bg-amber-600' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-md ${
+                          config.featureGates[key] ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                        style={{
+                          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                          boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                        }}
+                      />
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
 
