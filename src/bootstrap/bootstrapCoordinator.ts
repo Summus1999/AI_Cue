@@ -62,6 +62,7 @@ export interface ShortcutHandlers {
   takeScreenshot?: () => void;
   togglePassthrough?: () => void;
   toggleCompactMode?: () => void;
+  panicHide?: () => void;
 }
 
 // 编排器状态

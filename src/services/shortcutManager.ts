@@ -12,6 +12,7 @@ interface ShortcutHandlers {
   takeScreenshot?: ShortcutCallback;
   togglePassthrough?: ShortcutCallback;
   toggleCompactMode?: ShortcutCallback;
+  panicHide?: ShortcutCallback;
 }
 
 // 当前注册的快捷键
@@ -97,6 +98,19 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
       });
     } catch (err) {
       console.error(`[Shortcut] 注册快捷键 ${config.toggleCompactMode} 失败:`, err);
+    }
+  }
+
+  // 注册紧急隐藏快捷键
+  if (config.panicHide) {
+    try {
+      await register(config.panicHide, () => {
+        if (handlers.panicHide) {
+          handlers.panicHide();
+        }
+      });
+    } catch (err) {
+      console.error(`[Shortcut] 注册快捷键 ${config.panicHide} 失败:`, err);
     }
   }
 }

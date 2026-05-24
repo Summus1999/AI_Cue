@@ -208,6 +208,7 @@ export interface ShortcutConfig {
   takeScreenshot: string;   // 截图
   togglePassthrough: string; // 切换穿透模式
   toggleCompactMode: string; // 切换紧凑模式
+  panicHide: string;         // 紧急隐藏/显示窗口
 }
 
 // 窗口边界配置
@@ -263,6 +264,7 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   takeScreenshot: 'CommandOrControl+Shift+S',
   togglePassthrough: 'CommandOrControl+Shift+T',
   toggleCompactMode: 'CommandOrControl+Shift+M',
+  panicHide: 'CommandOrControl+Shift+H',
 };
 
 // 快捷键功能名称映射
@@ -272,6 +274,7 @@ export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
   takeScreenshot: '区域截图',
   togglePassthrough: '切换穿透模式',
   toggleCompactMode: '切换紧凑模式',
+  panicHide: '紧急隐藏/显示窗口',
 };
 
 // 支持的千问模型列表（已弃用，请使用 PROVIDER_MODELS）
@@ -369,6 +372,11 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
     description: 'AI 用最短要点输出，适合实时面试快速扫读',
     mode: 'assistant',
     prompt: `你是一个实时面试辅助系统，帮助候选人回答面试官的问题。你的输出会被候选人在2-3秒内快速扫读并口头转述。
+
+你会收到候选人的背景信息（目标公司、岗位、JD、简历），请根据这些信息给出个性化回答：
+- 提到具体技术栈时，优先提及候选人简历中的项目经验
+- 结合目标公司的技术文化和面试风格
+- 用候选人熟悉的术语和行业背景来组织语言
 
 规则：
 1. 第一行：用一句话（不超过30字）总结核心观点

@@ -10,6 +10,19 @@ interface CompactViewProps {
   passthroughActive: boolean;         // 穿透模式状态
   onTogglePassthrough: () => void;    // 切换穿透模式
   promptMode?: PromptMode;            // 当前 Prompt 模式，cheat 模式使用特殊渲染
+  // 增强状态指示器
+  isRecording?: boolean;
+  recordingDuration?: number;          // 录音秒数
+  targetPosition?: string;             // 目标岗位
+  targetCompany?: string;              // 目标公司
+  isInterviewMode?: boolean;           // 面试官模式
+}
+
+// 格式化秒数为 MM:SS
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 /**
@@ -58,6 +71,11 @@ export default function CompactView({
   passthroughActive,
   onTogglePassthrough,
   promptMode,
+  isRecording,
+  recordingDuration,
+  targetPosition,
+  targetCompany,
+  isInterviewMode,
 }: CompactViewProps) {
   const isCheat = promptMode === 'cheat';
   const maxLen = isCheat ? 300 : 200;
@@ -71,6 +89,11 @@ export default function CompactView({
     onExpand();
   };
 
+  // 标题区状态文本
+  const statusLabel = targetPosition
+    ? `${targetCompany ? targetCompany + ' · ' : ''}${targetPosition}`
+    : '紧凑模式';
+
   return (
     <div className="compact-view flex flex-col w-full h-full bg-amber-50 text-amber-900 overflow-hidden rounded-2xl">
       {/* 精简标题栏 */}
@@ -78,9 +101,26 @@ export default function CompactView({
         data-tauri-drag-region
         className="flex items-center justify-between h-7 px-2 bg-amber-100/80 border-b border-amber-200 select-none shrink-0"
       >
-        {/* 左侧拖拽区域 */}
-        <div data-tauri-drag-region className="flex-1 h-full flex items-center">
-          <span className="text-[10px] text-amber-600/60 ml-1">紧凑模式</span>
+        {/* 左侧拖拽区域 — 显示状态指示器 */}
+        <div data-tauri-drag-region className="flex-1 h-full flex items-center gap-1.5 min-w-0">
+          {/* 录音指示灯 */}
+          {isRecording && (
+            <span className="flex-shrink-0 w-2 h-2 rounded-full bg-red-500 animate-pulse" title="录音中" />
+          )}
+          {/* 录音时长 */}
+          {isRecording && recordingDuration !== undefined && (
+            <span className="text-[10px] text-red-500 font-mono">{formatDuration(recordingDuration)}</span>
+          )}
+          {/* 流式生成中光标 */}
+          {isStreaming && !isRecording && (
+            <span className="text-[10px] text-amber-500">生成中</span>
+          )}
+          {/* 面试官模式标记 */}
+          {isInterviewMode && (
+            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-200/50 text-amber-700">面试官</span>
+          )}
+          {/* 目标信息 */}
+          <span className="text-[10px] text-amber-600/60 truncate">{statusLabel}</span>
         </div>
 
         {/* 右侧按钮 */}

@@ -245,6 +245,8 @@ function App() {
   // 当前面试的 JD 和简历（用于复盘功能）
   const [_interviewJd, setInterviewJd] = useState('');
   const [_interviewResume, setInterviewResume] = useState('');
+  const [_interviewCompany, setInterviewCompany] = useState('');
+  const [_interviewPosition, setInterviewPosition] = useState('');
   // 每题计时（用于复盘功能）
   const [questionTimings, setQuestionTimings] = useState<QuestionTiming[]>([]);
   const [currentQuestionAskedAt, setCurrentQuestionAskedAt] = useState<number | null>(null);
@@ -785,6 +787,23 @@ function App() {
         setPassthroughActive(newState);
       },
       toggleCompactMode: handleToggleCompactMode,
+      panicHide: async () => {
+        try {
+          const win = getCurrentWindow();
+          // 使用 document.hidden 没有直接 API，维护本地状态
+          const hidden = (window as any).__aiCueHidden;
+          if (hidden) {
+            await win.show();
+            await win.setFocus();
+            (window as any).__aiCueHidden = false;
+          } else {
+            await win.hide();
+            (window as any).__aiCueHidden = true;
+          }
+        } catch (e) {
+          console.warn('紧急隐藏失败:', e);
+        }
+      },
     };
 
     // 执行启动编排
@@ -992,22 +1011,24 @@ function App() {
   };
 
   // 面试设置提交处理
-  const handleInterviewSetupSubmit = async (jd: string, resume: string) => {
+  const handleInterviewSetupSubmit = async (jd: string, resume: string, company: string, position: string) => {
     setInterviewJd(jd);
     setInterviewResume(resume);
+    setInterviewCompany(company);
+    setInterviewPosition(position);
     setShowInterviewSetup(false);
     setIsInterviewStarted(true);
     setQuestionTimings([]);
     setCurrentQuestionIndex(0);
     setCurrentQuestionAskedAt(null);
     setElapsedSeconds(0);
-    
+
     // 先清空历史消息，确保新面试不受旧消息影响
     setMessages([]);
     setCurrentSessionId(null);
     setSessionResumeTimestamp(Date.now());
-    
-    // 更新 config 的 interviewBackground，使其注入 prompt
+
+    // 更新 config 的 interviewBackground，company + position 用于个性化 prompt
     const config = await loadConfig();
     await saveConfig({
       ...config,
@@ -1016,6 +1037,8 @@ function App() {
         enabled: true,
         jd,
         resume,
+        company,
+        position,
       }
     });
     
@@ -1594,6 +1617,11 @@ function App() {
           onClose={handleClose}
           passthroughActive={passthroughActive}
           promptMode={promptMode}
+          isRecording={isRecording}
+          recordingDuration={recordingDuration}
+          targetPosition={_interviewPosition || undefined}
+          targetCompany={_interviewCompany || undefined}
+          isInterviewMode={isInterviewStarted}
           onTogglePassthrough={async () => {
             const newState = await togglePassthrough();
             setPassthroughActive(newState);
