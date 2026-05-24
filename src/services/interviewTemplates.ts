@@ -7,6 +7,8 @@ export interface InterviewTemplate {
   suggestedInputs: string[];
 }
 
+// 模板按面试准备的自然顺序排列：先深挖简历 → 匹配 JD → 包装项目 → 技术基础 → 算法 → 行为面试
+// 每个模板的 systemPrompt 是发送给 AI 的角色设定，suggestedInputs 是快捷输入提示
 export const INTERVIEW_TEMPLATES: InterviewTemplate[] = [
   {
     id: 'resume_deep_dive',

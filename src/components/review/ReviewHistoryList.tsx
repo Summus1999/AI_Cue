@@ -8,8 +8,11 @@ interface ReviewHistoryListProps {
   onDeleteReport: (sessionId: string) => void;
   onViewTrend: () => void;
   activeSessionId?: string;
+  /** 外部传入的刷新键，变化时重新加载列表（用于父组件删除报告后刷新） */
+  refreshKey?: number;
 }
 
+// 中文日期格式用于列表展示，精确到分钟方便用户快速定位面试记录
 function formatDate(timestamp: number): string {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
@@ -30,6 +33,7 @@ export function ReviewHistoryList({
   onDeleteReport,
   onViewTrend,
   activeSessionId,
+  refreshKey,
 }: ReviewHistoryListProps) {
   const [reports, setReports] = useState<ReviewedSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,7 +54,7 @@ export function ReviewHistoryList({
 
   useEffect(() => {
     loadReports();
-  }, []);
+  }, [refreshKey]);
 
   if (isLoading) {
     return (

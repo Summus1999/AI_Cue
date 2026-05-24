@@ -3,6 +3,10 @@ import { loadConfig } from '../store/config';
 import type { FeatureGates } from '../store/config';
 import { useState, useEffect } from 'react';
 
+// 模块级缓存，避免多个 FeatureGate 实例重复加载 config
+let cachedFeatureGates: FeatureGates | null = null;
+let cachePromise: Promise<FeatureGates> | null = null;
+
 type FeatureKey = keyof FeatureGates;
 
 interface FeatureGateProps {
@@ -29,6 +33,24 @@ interface FeatureGateProps {
  * 核心功能（基础聊天、模型配置）不经过此开关，始终可用。
  * 需要受控的功能入口：知识库、训练计划、导出、语音、截图、模板选择器。
  */
+
+async function loadFeatureGates(): Promise<FeatureGates> {
+  if (cachedFeatureGates) return cachedFeatureGates;
+  if (cachePromise) return cachePromise;
+
+  cachePromise = loadConfig().then((config) => {
+    cachedFeatureGates = config.featureGates;
+    cachePromise = null;
+    return cachedFeatureGates;
+  }).catch(() => {
+    cachePromise = null;
+    // 加载失败时默认全部开启
+    return {} as FeatureGates;
+  });
+
+  return cachePromise;
+}
+
 export function FeatureGate({ feature, children, fallback = null, enabled: syncEnabled }: FeatureGateProps) {
   const [asyncEnabled, setAsyncEnabled] = useState(true);
 
@@ -39,14 +61,11 @@ export function FeatureGate({ feature, children, fallback = null, enabled: syncE
 
     let cancelled = false;
 
-    loadConfig()
-      .then((config) => {
+    loadFeatureGates()
+      .then((gates) => {
         if (!cancelled) {
-          setAsyncEnabled(config.featureGates[feature] ?? true);
+          setAsyncEnabled(gates[feature] ?? true);
         }
-      })
-      .catch(() => {
-        if (!cancelled) setAsyncEnabled(true);
       });
 
     return () => {
@@ -68,8 +87,8 @@ export function FeatureGate({ feature, children, fallback = null, enabled: syncE
  */
 export async function isFeatureEnabled(feature: FeatureKey): Promise<boolean> {
   try {
-    const config = await loadConfig();
-    return config.featureGates[feature] ?? true;
+    const gates = await loadFeatureGates();
+    return gates[feature] ?? true;
   } catch {
     return true;
   }

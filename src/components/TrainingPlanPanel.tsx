@@ -84,6 +84,7 @@ export function TrainingPlanPanel({ onBack }: TrainingPlanPanelProps) {
   const [targetPosition, setTargetPosition] = useState(plan?.targetPosition ?? '');
   const [targetCompany, setTargetCompany] = useState(plan?.targetCompany ?? '');
   const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set([1]));
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // 初始化时加载已有计划
   useEffect(() => {
@@ -99,8 +100,14 @@ export function TrainingPlanPanel({ onBack }: TrainingPlanPanelProps) {
     e.preventDefault();
     if (!targetPosition.trim()) return;
 
-    createPlan(targetPosition.trim(), targetCompany.trim());
-    setShowCreateForm(false);
+    try {
+      createPlan(targetPosition.trim(), targetCompany.trim());
+      setCreateError(null);
+      setShowCreateForm(false);
+    } catch (err) {
+      // localStorage 写入可能在存储满或隐私模式下失败
+      setCreateError(err instanceof Error ? err.message : '创建计划失败，请重试');
+    }
   };
 
   const toggleDay = (dayNumber: number) => {
@@ -210,6 +217,12 @@ export function TrainingPlanPanel({ onBack }: TrainingPlanPanelProps) {
                   <Target className="w-4 h-4" />
                   {plan ? '重新生成计划' : '生成训练计划'}
                 </button>
+
+                {createError && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {createError}
+                  </p>
+                )}
 
                 {plan && (
                   <p className="text-xs text-amber-500">

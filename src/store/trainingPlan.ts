@@ -1,10 +1,9 @@
 import { create } from 'zustand';
 import type { TrainingPlan } from '../services/trainingPlan';
-import { generateTrainingPlan, getDayProgress } from '../services/trainingPlan';
+import { generateTrainingPlan, getDayProgress as getDayProgressFromService } from '../services/trainingPlan';
 
 interface TrainingPlanState {
   plan: TrainingPlan | null;
-  isLoading: boolean;
   error: string | null;
 
   createPlan: (targetPosition: string, targetCompany: string) => void;
@@ -41,7 +40,6 @@ function saveToStorage(plan: TrainingPlan | null): void {
 
 export const useTrainingPlanStore = create<TrainingPlanState>((set, get) => ({
   plan: null,
-  isLoading: false,
   error: null,
 
   createPlan: (targetPosition: string, targetCompany: string) => {
@@ -52,7 +50,7 @@ export const useTrainingPlanStore = create<TrainingPlanState>((set, get) => ({
 
   loadPlan: () => {
     const plan = loadFromStorage();
-    set({ plan, isLoading: false });
+    set({ plan });
   },
 
   deletePlan: () => {
@@ -92,7 +90,7 @@ export const useTrainingPlanStore = create<TrainingPlanState>((set, get) => ({
     const day = plan.days.find((d) => d.dayNumber === dayNumber);
     if (!day) return { completed: 0, total: 0 };
 
-    return getDayProgress(day);
+    return getDayProgressFromService(day);
   },
 
   getTotalProgress: () => {

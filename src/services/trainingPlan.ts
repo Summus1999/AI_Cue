@@ -76,11 +76,9 @@ const DAY_TASKS: Record<number, Omit<TrainingTask, 'id' | 'completed' | 'complet
   ],
 };
 
-let idCounter = 0;
-
+// 使用 crypto.randomUUID() 避免模块级可变状态在 HMR 时重置导致 ID 碰撞
 function generateTaskId(): string {
-  idCounter += 1;
-  return `task-${Date.now()}-${idCounter}`;
+  return `task-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 export function generateTrainingPlan(

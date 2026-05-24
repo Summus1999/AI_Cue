@@ -7,6 +7,8 @@ interface OnboardingDialogProps {
   onSkip: () => void;
 }
 
+// 引导步骤按用户认知顺序排列：先介绍价值 → 配置模型 → 创建知识库 → 选择模式 → 确认就绪
+// 最后一步"准备就绪"是确认页，isLast 为 true 时按钮文案变为"开始使用"
 const STEPS = [
   {
     icon: MessageCircle,

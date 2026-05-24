@@ -49,10 +49,13 @@ export function FriendlyErrorCard({
       originalError ? `原始信息: ${originalError}` : '',
     ].filter(Boolean).join('\n');
 
+    // Tauri 环境下 clipboard API 可能因权限问题失败，catch 中给用户反馈
     navigator.clipboard.writeText(diagnostics).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn('复制诊断信息失败:', err);
+    });
   };
 
   const primaryAction = error.primaryAction;

@@ -256,7 +256,7 @@ class ErrorClassifier {
    * 支持字符串或 ErrorCategory 枚举值
    */
   private classifyByCategory(category: string | ErrorCategory, rawError: string): FriendlyError {
-    // 统一转换为 ErrorCategory 进行比较
+    // 后端传入的 category 已是字符串（如 'timeout'），可直接匹配 ErrorCategory 枚举值
     const categoryKey = typeof category === 'string' ? category : category;
     const rule = this.rules.find(r => r.category === categoryKey);
     if (rule) {
