@@ -1,5 +1,6 @@
 // 紧凑模式视图组件
 import { X, Maximize2 } from 'lucide-react';
+import type { PromptMode } from '../store/config';
 
 interface CompactViewProps {
   latestAIMessage: string | null;    // 最新一条 AI 回答的内容
@@ -8,6 +9,7 @@ interface CompactViewProps {
   onClose: () => void;                // 关闭应用
   passthroughActive: boolean;         // 穿透模式状态
   onTogglePassthrough: () => void;    // 切换穿透模式
+  promptMode?: PromptMode;            // 当前 Prompt 模式，cheat 模式使用特殊渲染
 }
 
 /**
@@ -16,11 +18,36 @@ interface CompactViewProps {
 function truncateContent(content: string, maxLength: number = 200): { text: string; isTruncated: boolean } {
   // 替换代码块为占位符
   let processed = content.replace(/```[\s\S]*?```/g, '[代码块]');
-  
+
   if (processed.length <= maxLength) {
     return { text: processed, isTruncated: false };
   }
   return { text: processed.slice(0, maxLength) + '...', isTruncated: true };
+}
+
+// cheat 模式下解析 AI 输出：首行为摘要，- 开头为要点，【】内为高亮
+function parseCheatContent(content: string): { summary: string; bullets: string[] } | null {
+  const lines = content.split('\n').filter(l => l.trim());
+  if (lines.length === 0) return null;
+
+  const summary = lines[0].trim();
+  const bullets = lines.slice(1)
+    .filter(l => l.trim().startsWith('-') || l.trim().startsWith('•'))
+    .map(l => l.replace(/^[-•]\s*/, '').trim());
+
+  if (bullets.length === 0) return null;
+  return { summary, bullets };
+}
+
+// 渲染【】包裹的关键术语为高亮span
+function renderHighlightedText(text: string): React.ReactNode {
+  const parts = text.split(/(【[^】]*】)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('【') && part.endsWith('】')) {
+      return <span key={i} className="text-amber-600 font-semibold">{part.slice(1, -1)}</span>;
+    }
+    return <span key={i}>{part}</span>;
+  });
 }
 
 export default function CompactView({
@@ -30,10 +57,15 @@ export default function CompactView({
   onClose,
   passthroughActive,
   onTogglePassthrough,
+  promptMode,
 }: CompactViewProps) {
+  const isCheat = promptMode === 'cheat';
+  const maxLen = isCheat ? 300 : 200;
   const { text, isTruncated } = latestAIMessage
-    ? truncateContent(latestAIMessage)
+    ? truncateContent(latestAIMessage, maxLen)
     : { text: '', isTruncated: false };
+
+  const cheatParsed = isCheat && latestAIMessage ? parseCheatContent(latestAIMessage) : null;
 
   const handleDoubleClick = () => {
     onExpand();
@@ -100,8 +132,26 @@ export default function CompactView({
       >
         {latestAIMessage ? (
           <div className="text-sm leading-relaxed text-amber-900">
-            <span>{text}</span>
-            {isStreaming && <span className="streaming-cursor" />}
+            {cheatParsed ? (
+              // cheat 模式：摘要 + 要点列表，【】内高亮
+              <div className="space-y-1.5">
+                <p className="font-semibold text-amber-950">
+                  {renderHighlightedText(cheatParsed.summary)}
+                </p>
+                <ul className="space-y-1">
+                  {cheatParsed.bullets.map((bullet, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5 text-xs">&#8226;</span>
+                      <span className="text-amber-800">{renderHighlightedText(bullet)}</span>
+                    </li>
+                  ))}
+                </ul>
+                {isStreaming && <span className="streaming-cursor" />}
+              </div>
+            ) : (
+              <span>{text}</span>
+            )}
+            {!cheatParsed && isStreaming && <span className="streaming-cursor" />}
             {isTruncated && (
               <span
                 onClick={onExpand}

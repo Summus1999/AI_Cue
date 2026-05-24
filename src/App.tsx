@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search, Database } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search, Database, Zap } from "lucide-react";
 // 懒加载非核心面板
 const SettingsPanel = lazy(() => 
   import("./components/SettingsPanel").then(m => ({ default: m.SettingsPanel }))
@@ -1593,6 +1593,7 @@ function App() {
           onExpand={handleToggleCompactMode}
           onClose={handleClose}
           passthroughActive={passthroughActive}
+          promptMode={promptMode}
           onTogglePassthrough={async () => {
             const newState = await togglePassthrough();
             setPassthroughActive(newState);
@@ -1770,6 +1771,27 @@ function App() {
                 </>
               )}
             </svg>
+          </button>
+          {/* 极速模式快捷切换 */}
+          <button
+            onClick={async () => {
+              const config = await loadConfig();
+              const isCheat = config.promptTemplateId === 'cheat';
+              // 切回时恢复为 tech 模板
+              const newTemplateId = isCheat ? 'tech' : 'cheat';
+              const newMode = getPromptMode({ ...config, promptTemplateId: newTemplateId });
+              setPromptMode(newMode);
+              config.promptTemplateId = newTemplateId;
+              await saveConfig(config);
+            }}
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors duration-150 ${
+              promptMode === 'cheat'
+                ? 'bg-amber-500 text-white hover:bg-amber-600'
+                : 'hover:bg-amber-200/50'
+            }`}
+            title={promptMode === 'cheat' ? '极速模式 · 点击切回' : '切换到极速模式'}
+          >
+            <Zap className={`w-3.5 h-3.5 ${promptMode === 'cheat' ? 'text-white' : 'text-amber-700'}`} />
           </button>
           {/* 快捷键设置按钮 */}
           <button

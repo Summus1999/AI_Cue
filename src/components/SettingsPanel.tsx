@@ -1,6 +1,7 @@
 // 设置面板组件 - 全页面进出式设计
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
@@ -736,6 +737,10 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onReopenOn
                   onClick={() => {
                     const newStealth = !config.stealthMode;
                     setConfig((prev) => ({ ...prev, stealthMode: newStealth }));
+                    // 实际调用 Rust 后端设置窗口属性
+                    invoke('set_stealth_mode', { enabled: newStealth }).catch((e) => {
+                      console.warn('设置隐身模式失败:', e);
+                    });
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
                     config.stealthMode ? 'bg-red-500' : 'bg-amber-200'

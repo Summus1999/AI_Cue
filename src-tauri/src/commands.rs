@@ -1644,6 +1644,60 @@ pub async fn set_window_always_on_top(
     window.set_always_on_top(always_on_top).map_err(|e| e.to_string())
 }
 
+// ==================== TTS 语音合成命令 ====================
+
+/// 使用 Windows SAPI 进行文本转语音朗读
+///
+/// 使用系统内置语音引擎，离线运行无需网络。
+/// 异步朗读模式，函数立即返回不阻塞。
+#[tauri::command]
+pub async fn tts_speak(
+    text: String,
+    rate: Option<i32>,
+    volume: Option<u16>,
+) -> Result<(), String> {
+    crate::tts::speak_sapi(text, rate.unwrap_or(2), volume.unwrap_or(100))
+}
+
+/// 停止当前 TTS 朗读
+#[tauri::command]
+pub async fn tts_stop() -> Result<(), String> {
+    crate::tts::stop_sapi()
+}
+
+// ==================== 屏幕捕获检测 & 隐身控制命令 ====================
+
+/// 检测当前是否有已知的会议/录屏软件正在运行
+#[tauri::command]
+pub async fn check_capture_status() -> Result<Vec<String>, String> {
+    Ok(crate::capture_detection::detect_capture_processes())
+}
+
+/// 运行时切换窗口 contentProtected（防屏幕捕获）
+#[tauri::command]
+pub async fn set_content_protection(
+    window: tauri::Window,
+    enabled: bool,
+) -> Result<(), String> {
+    let title = window.title().unwrap_or_else(|_| "AI Cue - AI Interview Assistant".to_string());
+    crate::capture_detection::set_content_protected(&title, enabled)
+}
+
+/// 一键启用/禁用完整隐身模式
+/// 同时控制 skipTaskbar + alwaysOnTop，确保窗口在屏幕共享时不被发现
+#[tauri::command]
+pub async fn set_stealth_mode(
+    window: tauri::Window,
+    enabled: bool,
+) -> Result<(), String> {
+    window.set_skip_taskbar(enabled).map_err(|e| e.to_string())?;
+    window.set_always_on_top(enabled).map_err(|e| e.to_string())?;
+    // contentProtected 在 tauri.conf.json 中默认开启，这里也动态设置
+    let title = window.title().unwrap_or_else(|_| "AI Cue - AI Interview Assistant".to_string());
+    crate::capture_detection::set_content_protected(&title, enabled).ok();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

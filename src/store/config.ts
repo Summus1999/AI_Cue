@@ -18,7 +18,8 @@ export interface FillerWordFilterConfig {
 
 export type ProviderType = 'qwen' | 'openai_compat' | 'claude';
 
-export type PromptMode = 'assistant' | 'interviewer';
+// cheat 模式：AI 用超简要点格式输出，适合实时面试快速扫读
+export type PromptMode = 'assistant' | 'interviewer' | 'cheat';
 
 // 智能路由候选条目，id = `${provider}:${model}`
 export interface SmartRouteEntry {
@@ -363,6 +364,29 @@ export const PROMPT_TEMPLATES: PromptTemplate[] = [
 请用中文进行面试。回答时请使用纯文本格式，不要使用 Markdown 标记。现在请做简短的开场白，然后请候选人做自我介绍。`,
   },
   {
+    id: 'cheat',
+    name: '极速模式（面试速答）',
+    description: 'AI 用最短要点输出，适合实时面试快速扫读',
+    mode: 'assistant',
+    prompt: `你是一个实时面试辅助系统，帮助候选人回答面试官的问题。你的输出会被候选人在2-3秒内快速扫读并口头转述。
+
+规则：
+1. 第一行：用一句话（不超过30字）总结核心观点
+2. 然后用3-5个要点，每个要点不超过20字
+3. 关键术语、数字、指标用【】包裹突出显示，方便候选人一眼定位
+4. 整体输出不超过200字
+5. 语言风格：口语化、自然，像真人说话
+6. 不要使用"首先/其次/最后"等冗余连接词，直接用-要点
+7. 不要使用任何Markdown格式标记
+8. 不要输出代码块，用一句话描述算法思路即可
+
+示例输出：
+使用【双指针】解决，时间复杂度【O(n)】
+- 左指针从【0】开始，右指针从【末尾】开始
+- 每次移动数值较小的指针【向内收缩】
+- 记录最大面积【maxArea = max(maxArea, 当前面积)】`,
+  },
+  {
     id: 'custom',
     name: '自定义',
     description: '完全自定义提示词，满足特殊需求',
@@ -422,6 +446,11 @@ export interface AppConfig {
   // - true: 窗口不显示在任务栏 + 窗口置顶 + 最小化按钮禁用（只能关闭）
   // - false: 正常显示在任务栏 + 可最小化到任务栏
   stealthMode: boolean;
+  // TTS 语音朗读
+  ttsEnabled: boolean;   // 是否启用 TTS
+  ttsAutoPlay: boolean;  // 新回答自动朗读（注意：会被面试官听到，建议仅在蓝牙耳机场景使用）
+  ttsSpeed: number;      // 语速 -5~5，默认 2
+  ttsVolume: number;     // 音量 0~100，默认 100
 }
 
 export const DEFAULT_RAG_CONFIG: RagConfig = {
@@ -499,6 +528,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   featureGates: { ...DEFAULT_FEATURE_GATES },
   smartRouting: DEFAULT_SMART_ROUTING_CONFIG,
   stealthMode: false,
+  ttsEnabled: false,
+  ttsAutoPlay: false,
+  ttsSpeed: 2,
+  ttsVolume: 100,
 };
 
 // Store 实例（延迟初始化）
@@ -725,6 +758,10 @@ export async function loadConfig(): Promise<AppConfig> {
     const onboardingCompleted = await store.get<boolean>('onboardingCompleted');
     const activeTemplateId = await store.get<string | null>('activeTemplateId');
     const stealthMode = await store.get<boolean>('stealthMode');
+    const ttsEnabled = await store.get<boolean>('ttsEnabled');
+    const ttsAutoPlay = await store.get<boolean>('ttsAutoPlay');
+    const ttsSpeed = await store.get<number>('ttsSpeed');
+    const ttsVolume = await store.get<number>('ttsVolume');
 
     const customPromptMode = await store.get<PromptMode>('customPromptMode');
 
@@ -755,6 +792,10 @@ export async function loadConfig(): Promise<AppConfig> {
       featureGates: featureGates || DEFAULT_FEATURE_GATES,
       smartRouting: smartRouting || DEFAULT_SMART_ROUTING_CONFIG,
       stealthMode: stealthMode ?? false,
+      ttsEnabled: ttsEnabled ?? false,
+      ttsAutoPlay: ttsAutoPlay ?? false,
+      ttsSpeed: ttsSpeed ?? 2,
+      ttsVolume: ttsVolume ?? 100,
     };
 
     // 补充 customPromptMode 默认值
@@ -815,6 +856,10 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('featureGates', config.featureGates);
     await store.set('smartRouting', config.smartRouting);
     await store.set('stealthMode', config.stealthMode);
+    await store.set('ttsEnabled', config.ttsEnabled);
+    await store.set('ttsAutoPlay', config.ttsAutoPlay);
+    await store.set('ttsSpeed', config.ttsSpeed);
+    await store.set('ttsVolume', config.ttsVolume);
     await store.save();
   } catch (error) {
     console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);

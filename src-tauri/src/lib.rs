@@ -16,6 +16,8 @@ pub mod rag;
 mod review;
 mod screenshot;
 mod startup; // 启动管理
+mod tts; // TTS 语音合成
+mod capture_detection; // 屏幕捕获检测
 
 pub fn run() {
     tauri::Builder::default()
@@ -241,6 +243,13 @@ pub fn run() {
             // 窗口控制命令
             commands::set_window_skip_taskbar,
             commands::set_window_always_on_top,
+            // TTS 语音合成命令
+            commands::tts_speak,
+            commands::tts_stop,
+            // 屏幕捕获检测 & 隐身控制命令
+            commands::check_capture_status,
+            commands::set_content_protection,
+            commands::set_stealth_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
