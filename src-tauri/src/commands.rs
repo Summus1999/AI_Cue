@@ -378,7 +378,7 @@ pub async fn qwen_chat_stream_vision(
 // 创建新会话
 #[tauri::command]
 pub fn create_session(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     metadata: Option<crate::database::SessionMetadata>,
 ) -> Result<serde_json::Value, String> {
     crate::database::create_session(&db, metadata)
@@ -387,7 +387,7 @@ pub fn create_session(
 // 列出所有会话（支持按 prompt_mode 筛选）
 #[tauri::command]
 pub fn list_sessions(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     prompt_mode: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     crate::database::list_sessions(&db, prompt_mode.as_deref())
@@ -396,7 +396,7 @@ pub fn list_sessions(
 // 获取会话的所有消息
 #[tauri::command]
 pub fn get_session_messages(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     session_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
     crate::database::get_session_messages(&db, &session_id)
@@ -405,7 +405,7 @@ pub fn get_session_messages(
 // 保存消息
 #[tauri::command]
 pub fn save_message(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     session_id: String,
     role: String,
     content: String,
@@ -417,7 +417,7 @@ pub fn save_message(
 // 更新会话标题
 #[tauri::command]
 pub fn update_session_title(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     session_id: String,
     title: String,
 ) -> Result<(), String> {
@@ -427,7 +427,7 @@ pub fn update_session_title(
 // 删除会话
 #[tauri::command]
 pub fn delete_session(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     session_id: String,
 ) -> Result<(), String> {
     crate::database::delete_session(&db, &session_id)
@@ -436,7 +436,7 @@ pub fn delete_session(
 // 搜索会话（支持按 prompt_mode 筛选）
 #[tauri::command]
 pub fn search_sessions(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     keyword: String,
     prompt_mode: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -446,7 +446,7 @@ pub fn search_sessions(
 // 获取最近活跃的会话（支持按 prompt_mode 筛选）
 #[tauri::command]
 pub fn get_last_active_session(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     prompt_mode: Option<String>,
 ) -> Result<Option<serde_json::Value>, String> {
     crate::database::get_last_active_session(&db, prompt_mode.as_deref())
@@ -455,7 +455,7 @@ pub fn get_last_active_session(
 // 结束面试（写入 completed_at 时间戳）
 #[tauri::command]
 pub fn end_interview(
-    db: tauri::State<'_, crate::database::Database>,
+    db: tauri::State<'_, Arc<crate::database::Database>>,
     session_id: String,
 ) -> Result<i64, String> {
     let completed_at = std::time::SystemTime::now()
@@ -472,7 +472,7 @@ pub fn end_interview(
 /// 导出会话
 #[tauri::command]
 pub async fn export_session(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     options: ExportOptions,
 ) -> Result<ExportResult, String> {
     // 获取会话数据
@@ -757,7 +757,7 @@ fn validate_path(path: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_review(
     app: AppHandle,
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     providers: State<'_, crate::ai::ProviderRegistry>,
     session_id: String,
     provider: String,
@@ -874,7 +874,7 @@ pub async fn start_review(
 /// 获取复盘报告
 #[tauri::command]
 pub async fn get_review_report(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     session_id: String,
 ) -> Result<crate::review::types::ReviewReport, String> {
     crate::review::report::build_review_report(&db, &session_id)
@@ -883,7 +883,7 @@ pub async fn get_review_report(
 /// 获取趋势对比数据
 #[tauri::command]
 pub async fn get_review_trend(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
 ) -> Result<crate::review::types::TrendData, String> {
     crate::review::trend::calculate_trend(&db)
 }
@@ -891,7 +891,7 @@ pub async fn get_review_trend(
 /// 删除复盘数据
 #[tauri::command]
 pub async fn delete_review(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     session_id: String,
 ) -> Result<(), String> {
     // 1. 删除 message_scores
@@ -912,7 +912,7 @@ pub async fn delete_review(
 /// 返回会话标题、评分、完成时间等摘要信息，前端按完成时间倒序展示。
 #[tauri::command]
 pub async fn list_review_reports(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
 ) -> Result<Vec<crate::database::ReviewedSession>, String> {
     crate::database::get_reviewed_sessions(&db)
 }
@@ -1542,7 +1542,7 @@ pub fn rag_get_knowledge_import_task(
 /// 创建知识库
 #[tauri::command]
 pub fn rag_create_knowledge_base(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     input: crate::database::CreateKnowledgeBaseInput,
 ) -> Result<crate::database::KnowledgeBaseRecord, String> {
     crate::database::create_knowledge_base(&db, input)
@@ -1551,7 +1551,7 @@ pub fn rag_create_knowledge_base(
 /// 列出知识库
 #[tauri::command]
 pub fn rag_list_knowledge_bases(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
 ) -> Result<Vec<crate::database::KnowledgeBaseRecord>, String> {
     crate::database::list_knowledge_bases(&db)
 }
@@ -1559,7 +1559,7 @@ pub fn rag_list_knowledge_bases(
 /// 获取单个知识库的聚合统计
 #[tauri::command]
 pub fn rag_get_knowledge_base_stats(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     knowledge_base_id: String,
 ) -> Result<Option<crate::database::KnowledgeBaseStatsRecord>, String> {
     crate::database::get_knowledge_base_stats(&db, &knowledge_base_id)
@@ -1568,7 +1568,7 @@ pub fn rag_get_knowledge_base_stats(
 /// 恢复应用重启前卡在 indexing 的知识库文档
 #[tauri::command]
 pub fn rag_recover_stuck_knowledge_documents(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
 ) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
     execute_rag_recover_stuck_knowledge_documents(&db)
 }
@@ -1576,7 +1576,7 @@ pub fn rag_recover_stuck_knowledge_documents(
 /// 删除知识库
 #[tauri::command]
 pub fn rag_delete_knowledge_base(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     knowledge_base_id: String,
 ) -> Result<(), String> {
     crate::database::delete_knowledge_base(&db, &knowledge_base_id)
@@ -1585,7 +1585,7 @@ pub fn rag_delete_knowledge_base(
 /// 列出知识库中的文档
 #[tauri::command]
 pub fn rag_list_knowledge_documents(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     knowledge_base_id: String,
 ) -> Result<Vec<crate::database::KnowledgeDocumentRecord>, String> {
     crate::database::list_knowledge_documents(&db, &knowledge_base_id)
@@ -1594,7 +1594,7 @@ pub fn rag_list_knowledge_documents(
 /// 获取单个知识库文档
 #[tauri::command]
 pub fn rag_get_knowledge_document(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     document_id: String,
 ) -> Result<Option<crate::database::KnowledgeDocumentRecord>, String> {
     crate::database::get_knowledge_document(&db, &document_id)
@@ -1603,7 +1603,7 @@ pub fn rag_get_knowledge_document(
 /// 列出单个知识库文档的分块明细
 #[tauri::command]
 pub fn rag_list_knowledge_document_chunks(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     document_id: String,
 ) -> Result<Vec<crate::database::KnowledgeChunkRecord>, String> {
     crate::database::list_knowledge_document_chunks(&db, &document_id)
@@ -1612,7 +1612,7 @@ pub fn rag_list_knowledge_document_chunks(
 /// 删除知识库文档
 #[tauri::command]
 pub fn rag_delete_knowledge_document(
-    db: State<'_, crate::database::Database>,
+    db: State<'_, Arc<crate::database::Database>>,
     document_id: String,
 ) -> Result<(), String> {
     crate::database::delete_knowledge_document(&db, &document_id)
