@@ -5,7 +5,9 @@ interface MessageCitationsProps {
 }
 
 function getCitationSourceLabel(sourceKind: CitationMetadata['sourceKind']): string {
-  return sourceKind === 'Message' ? '当前会话' : '知识库';
+  if (sourceKind === 'Message') return '当前会话';
+  if (sourceKind === 'PersonalMemory') return '个人记忆';
+  return '知识库';
 }
 
 function getCitationTitle(citation: CitationMetadata): string {
@@ -14,7 +16,9 @@ function getCitationTitle(citation: CitationMetadata): string {
     return normalizedTitle;
   }
 
-  return citation.sourceKind === 'Message' ? '会话消息' : '未命名文档';
+  if (citation.sourceKind === 'Message') return '会话消息';
+  if (citation.sourceKind === 'PersonalMemory') return '个人记忆';
+  return '未命名文档';
 }
 
 function buildCitationMeta(citation: CitationMetadata): string {

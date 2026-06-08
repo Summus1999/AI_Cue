@@ -253,6 +253,34 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onReopenOn
 
                 <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
                   <div>
+                    <div className="text-sm font-medium text-amber-900">面试官模式启用个人记忆</div>
+                    <p className="mt-1 text-xs text-amber-600">
+                      assistant 模式默认会检索个人记忆；面试官模式默认关闭，开启后模拟面试会参考你的历史面试经历。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateRagConfig({
+                      enablePersonalMemoryForInterviewer: !config.rag.enablePersonalMemoryForInterviewer,
+                    })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ease-in-out ${
+                      config.rag.enablePersonalMemoryForInterviewer ? 'bg-amber-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-md ${
+                        config.rag.enablePersonalMemoryForInterviewer ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                      style={{
+                        transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+                      }}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div>
                     <div className="text-sm font-medium text-amber-900">导入时启用 OCR fallback</div>
                     <p className="mt-1 text-xs text-amber-600">
                       适用于扫描版 PDF 或文本提取不足的页面；开启后重建索引也会复用这个设置。

@@ -162,7 +162,8 @@ fn sort_results_for_context(results: &[SearchResult]) -> Vec<&SearchResult> {
 fn context_source_rank(source_kind: &SearchSourceKind) -> u8 {
     match source_kind {
         SearchSourceKind::KnowledgeBaseDocument => 0,
-        SearchSourceKind::Message => 1,
+        SearchSourceKind::PersonalMemory => 1,
+        SearchSourceKind::Message => 2,
     }
 }
 
@@ -201,6 +202,7 @@ fn render_context_prefix(
 fn render_source_kind(source_kind: &SearchSourceKind) -> &'static str {
     match source_kind {
         SearchSourceKind::KnowledgeBaseDocument => "knowledge_base_document",
+        SearchSourceKind::PersonalMemory => "personal_memory",
         SearchSourceKind::Message => "message",
     }
 }

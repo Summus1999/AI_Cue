@@ -20,7 +20,7 @@ export interface SearchResult {
   heading_path: string[];
   score: number;
   source: 'Vector' | 'Keyword' | 'Hybrid';
-  source_kind: 'Message' | 'KnowledgeBaseDocument';
+  source_kind: 'Message' | 'KnowledgeBaseDocument' | 'PersonalMemory';
 }
 
 export interface CitationMetadata {
@@ -33,7 +33,7 @@ export interface CitationMetadata {
   pageNumber: number | null;
   headingPath: string[];
   score: number;
-  sourceKind: 'Message' | 'KnowledgeBaseDocument';
+  sourceKind: 'Message' | 'KnowledgeBaseDocument' | 'PersonalMemory';
 }
 
 export type RagSourceKind = CitationMetadata['sourceKind'];

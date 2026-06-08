@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../../store/config';
 import type { CitationMetadata } from '../ragService';
-import { resolveChatRetrievalContext } from '../chatRetrieval';
+import { resolveChatRetrievalContext, resolveChatRetrievalStrategy } from '../chatRetrieval';
 
 function createConfig(overrides?: Partial<AppConfig>): AppConfig {
   const baseConfig = {
@@ -27,6 +27,7 @@ function createConfig(overrides?: Partial<AppConfig>): AppConfig {
       enabled: true,
       retrievalScope: 'hybrid',
       enableOcr: false,
+      enablePersonalMemoryForInterviewer: false,
       embeddingProvider: 'qwen',
       embeddingModel: 'text-embedding-v2',
       autoReindexPolicy: 'manual',
@@ -60,6 +61,19 @@ const sampleCitation: CitationMetadata = {
   sourceKind: 'KnowledgeBaseDocument',
 };
 
+const personalMemoryCitation: CitationMetadata = {
+  index: 1,
+  knowledgeBaseId: null,
+  documentId: null,
+  chunkId: 'memory:memory-1',
+  title: '个人记忆',
+  snippet: '用户擅长 Redis AOF 重写。',
+  pageNumber: null,
+  headingPath: [],
+  score: 0.91,
+  sourceKind: 'PersonalMemory',
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -76,6 +90,7 @@ describe('resolveChatRetrievalContext', () => {
           enabled: false,
           retrievalScope: 'hybrid',
           enableOcr: false,
+          enablePersonalMemoryForInterviewer: false,
           embeddingProvider: 'qwen',
           embeddingModel: 'text-embedding-v2',
           autoReindexPolicy: 'manual',
@@ -120,9 +135,74 @@ describe('resolveChatRetrievalContext', () => {
     });
     expect(retrieveWithCitations).toHaveBeenCalledWith('如何实现二分查找？', 2000, 5, {
       sessionId: 'session-1',
-      sourceKinds: ['Message', 'KnowledgeBaseDocument'],
+      sourceKinds: ['Message', 'KnowledgeBaseDocument', 'PersonalMemory'],
     });
     expect(getKnowledgeReadyState).not.toHaveBeenCalled();
+  });
+
+  it('includes personal memory by default for assistant hybrid retrieval', () => {
+    const strategy = resolveChatRetrievalStrategy(createConfig(), 'assistant', 'session-1');
+
+    expect(strategy.sourceKinds).toEqual(['Message', 'KnowledgeBaseDocument', 'PersonalMemory']);
+    expect(strategy.sessionId).toBe('session-1');
+  });
+
+  it('keeps personal memory out of explicit knowledge-base and current-session scopes', () => {
+    expect(
+      resolveChatRetrievalStrategy(
+        createConfig({ rag: { ...createConfig().rag, retrievalScope: 'knowledge_base' } }),
+        'assistant',
+        'session-1',
+      ).sourceKinds,
+    ).toEqual(['KnowledgeBaseDocument']);
+    expect(
+      resolveChatRetrievalStrategy(
+        createConfig({ rag: { ...createConfig().rag, retrievalScope: 'current_session' } }),
+        'assistant',
+        'session-1',
+      ).sourceKinds,
+    ).toEqual(['Message']);
+  });
+
+  it('includes personal memory for interviewer only when enabled', () => {
+    expect(resolveChatRetrievalStrategy(createConfig(), 'interviewer', 'session-1').sourceKinds)
+      .toEqual(['KnowledgeBaseDocument']);
+
+    expect(
+      resolveChatRetrievalStrategy(
+        createConfig({
+          rag: {
+            ...createConfig().rag,
+            enablePersonalMemoryForInterviewer: true,
+          },
+        }),
+        'interviewer',
+        'session-1',
+      ).sourceKinds,
+    ).toEqual(['KnowledgeBaseDocument', 'PersonalMemory']);
+  });
+
+  it('returns retrieval context when only personal memory is cited', async () => {
+    const retrieveWithCitations = vi.fn().mockResolvedValue({
+      promptContext: '命中个人记忆',
+      citations: [personalMemoryCitation],
+    });
+
+    const result = await resolveChatRetrievalContext(
+      createConfig(),
+      'assistant',
+      'Redis AOF 怎么讲？',
+      'session-1',
+      {
+        retrieveWithCitations,
+        getKnowledgeReadyState: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({
+      promptContext: '命中个人记忆',
+      citations: [personalMemoryCitation],
+    });
   });
 
   it('falls back when retrieval returns no usable context', async () => {
@@ -139,6 +219,7 @@ describe('resolveChatRetrievalContext', () => {
           enabled: true,
           retrievalScope: 'knowledge_base',
           enableOcr: false,
+          enablePersonalMemoryForInterviewer: false,
           embeddingProvider: 'qwen',
           embeddingModel: 'text-embedding-v2',
           autoReindexPolicy: 'manual',

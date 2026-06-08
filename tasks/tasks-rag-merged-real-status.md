@@ -1,8 +1,8 @@
 ## Relevant Files
 
 - `src-tauri/src/rag/mod.rs` - `RagEngine` 装配、EmbeddingProvider 配置、统一检索入口，以及单文档/整库级知识库导入、重建、异常文档重试与 retrieve 链路结构化日志/耗时记录。
-- `src-tauri/src/rag/retriever.rs` - 消息向量检索、知识库向量检索、结果融合与结构化返回。
-- `src-tauri/src/rag/context_builder.rs` - Prompt context 构建与 citation 元信息生成。
+- `src-tauri/src/rag/retriever.rs` - 消息向量检索、知识库向量检索、个人记忆向量检索、结果融合与结构化返回；个人记忆检索已按相关性、时近性、重要性三因子打分。
+- `src-tauri/src/rag/context_builder.rs` - Prompt context 构建与 citation 元信息生成，支持 `Message`、`KnowledgeBaseDocument` 与 `PersonalMemory` 三类来源渲染。
 - `src-tauri/src/rag/parser.rs` - 文档解析、PDF 文本提取、OCR fallback 判断，以及 parse / OCR 结构化日志与耗时记录。
 - `src-tauri/src/rag/ocr.rs` - OCR 抽象、错误模型、Windows OCR 运行时实现与默认引擎工厂。
 - `src-tauri/Cargo.toml` - Rust 后端依赖声明，启用 Windows OCR / PDF / Imaging 所需 WinRT feature。
@@ -13,19 +13,19 @@
 - `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重、记忆和向量的原子入库，以及 assistant turn 实时抽取编排。
 - `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询、个人记忆实时抽取命令，以及命令层集成测试。
 - `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复、知识库统计与个人记忆实时抽取入口。
-- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与类型定义。
+- `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与 `PersonalMemory` 类型定义。
 - `src/services/memoryExtraction.ts` - 前端个人记忆实时抽取服务，负责 assistant 模式前置闸门、后端请求构建、fire-and-forget 调用与失败降级。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
-- `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，供主流程与回归测试复用。
+- `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，当前已将 assistant hybrid 检索接入个人记忆，并支持 interviewer 模式按配置开关启用个人记忆。
 - `src/services/chatReplay.ts` - 继续生成 / 重试消息的请求准备纯函数模块，负责恢复原用户上下文与请求元数据。
-- `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback 的前端回归测试。
+- `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback、个人记忆默认来源策略和 interviewer 开关的前端回归测试。
 - `src/services/__tests__/chatReplay.test.ts` - 覆盖 continue generate / retry 请求准备逻辑的前端回归测试。
 - `src/services/__tests__/memoryExtraction.test.ts` - 覆盖 assistant 记忆实时抽取的前置闸门、后端请求构建与 fire-and-forget 失败降级。
-- `src/store/config.ts` - 前端 RAG 配置持久化。
+- `src/store/config.ts` - 前端 RAG 配置持久化，包含个人记忆在 interviewer 模式下是否参与检索的开关迁移与默认值。
 - `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、知识库聚合统计、导入任务、单文档/整库重建索引、异常文档重试状态与错误状态。
 - `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、知识库统计、文档详情/分块、任务快照、单文档/整库重建索引以及异常文档重试状态同步。
-- `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口、知识库独立面板，以及 assistant 完整回答后的个人记忆实时抽取触发。
+- `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口、知识库独立面板、assistant 完整回答后的个人记忆实时抽取触发，并在聊天发送前注入个人记忆检索上下文。
 - `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、知识库统计、导入区、整库重建索引、异常文档重试、删除知识库操作、文档列表与文档预览挂载点。
 - `src/components/KnowledgeBasePanel.test.tsx` - 知识库页面容器回归测试，覆盖库切换、统计展示、整库重建、异常文档重试与删除确认。
 - `src/components/knowledge/KnowledgeDocumentList.tsx` - 当前知识库的文档列表组件，负责文档状态展示与当前文档选择。
@@ -34,10 +34,11 @@
 - `src/components/knowledge/KnowledgeImportPanel.test.tsx` - 导入面板回归测试，覆盖文件选择、顺序导入、乐观状态行、后端任务快照渲染与失败保留。
 - `src/components/knowledge/KnowledgeDocumentPreview.tsx` - 当前文档的预览组件，负责展示文档详情、重建索引、删除文档与 chunk 明细。
 - `src/components/knowledge/KnowledgeDocumentPreview.test.tsx` - 文档预览回归测试，覆盖空态、重建索引、删除确认、最近重建状态与 chunk 预览。
-- `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件。
+- `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件，支持个人记忆来源标签与标题 fallback。
+- `src/components/MessageCitations.test.tsx` - citation 渲染回归测试，覆盖 `PersonalMemory` 来源不会被误标为知识库。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置，并按 `on_startup` 策略恢复中断的知识库索引状态。
 - `src/bootstrap/bootstrapCoordinator.test.ts` - 启动恢复策略回归测试，覆盖 `on_startup` 触发与非触发分支。
-- `src/components/SettingsPanel.tsx` - 当前设置面板，已增加 RAG 配置区块和知识库入口，并会在保存配置后同步 RAG runtime 配置。
+- `src/components/SettingsPanel.tsx` - 当前设置面板，已增加 RAG 配置区块、知识库入口、interviewer 模式个人记忆检索开关，并会在保存配置后同步 RAG runtime 配置。
 - `Agent.md` - Agent 主约束文档，新增 skills 检查、code review 闭环、文档同步时机与 `/clear` 规则。
 - `.cursor/rules/agent-harness.mdc` - 会话启动强制规则，新增 skills 加载与验证、review、文档同步、`/clear` 流程。
 - `.github/workflows/build-windows.yml` - Windows CI workflow，新增 `npm run build` 与 `cargo test` 验证门禁。
@@ -160,6 +161,6 @@
   - ✅️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
   - ✅️ 11.2 抽取链路：实现 LLM 抽取与 JSON 校验（复用 review 模块范式）、入库前向量巩固去重，先打通复盘手动录入与用户显式指令两条确定性来源
   - ✅️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
-  - ❌️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
+  - ✅️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
   - ❌️ 11.5 反思与衰减：累计新增 active 记忆达到阈值触发反思生成画像记忆；衰减归档低重要性且长期未命中的情景记忆，显式指令与复盘录入来源豁免
   - ❌️ 11.6 记忆管理面板：新增记忆抽取 / 检索 / 列表 / 更新 / 删除 / 反思的 Tauri 命令，并提供可见、可编辑、可删除的前端记忆管理界面

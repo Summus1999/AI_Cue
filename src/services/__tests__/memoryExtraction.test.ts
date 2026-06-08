@@ -31,6 +31,7 @@ function createConfig(overrides?: Partial<AppConfig>): AppConfig {
       enabled: true,
       retrievalScope: 'hybrid',
       enableOcr: false,
+      enablePersonalMemoryForInterviewer: false,
       embeddingProvider: 'openai_compat',
       embeddingModel: 'text-embedding-3-small',
       autoReindexPolicy: 'manual',

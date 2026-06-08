@@ -45,6 +45,7 @@ export interface RagConfig {
   enabled: boolean;
   retrievalScope: RagRetrievalScope;
   enableOcr: boolean;
+  enablePersonalMemoryForInterviewer: boolean;
   embeddingProvider: RagEmbeddingProviderType;
   embeddingModel: string;
   autoReindexPolicy: RagAutoReindexPolicy;
@@ -465,6 +466,7 @@ export const DEFAULT_RAG_CONFIG: RagConfig = {
   enabled: true,
   retrievalScope: 'hybrid',
   enableOcr: false,
+  enablePersonalMemoryForInterviewer: false,
   embeddingProvider: 'qwen',
   embeddingModel: getDefaultRagEmbeddingModel('qwen'),
   autoReindexPolicy: 'manual',
@@ -609,6 +611,10 @@ function migrateRagConfig(rag: any): RagConfig {
       ? rag.retrievalScope
       : DEFAULT_RAG_CONFIG.retrievalScope,
     enableOcr: typeof rag?.enableOcr === 'boolean' ? rag.enableOcr : DEFAULT_RAG_CONFIG.enableOcr,
+    enablePersonalMemoryForInterviewer:
+      typeof rag?.enablePersonalMemoryForInterviewer === 'boolean'
+        ? rag.enablePersonalMemoryForInterviewer
+        : DEFAULT_RAG_CONFIG.enablePersonalMemoryForInterviewer,
     embeddingProvider,
     embeddingModel: normalizeOptionalConfigString(rag?.embeddingModel)
       || getDefaultRagEmbeddingModel(embeddingProvider),

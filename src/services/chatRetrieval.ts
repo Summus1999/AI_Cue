@@ -38,12 +38,13 @@ export function getChatRetrievalSourceKinds(promptMode: PromptMode): RagSourceKi
     return ['KnowledgeBaseDocument'];
   }
 
-  return ['Message', 'KnowledgeBaseDocument'];
+  return ['Message', 'KnowledgeBaseDocument', 'PersonalMemory'];
 }
 
 export function getRetrievalScopeSourceKinds(
   retrievalScope: RagRetrievalScope,
   promptMode: PromptMode,
+  enablePersonalMemoryForInterviewer = false,
 ): RagSourceKind[] {
   if (retrievalScope === 'knowledge_base') {
     return ['KnowledgeBaseDocument'];
@@ -51,6 +52,10 @@ export function getRetrievalScopeSourceKinds(
 
   if (retrievalScope === 'current_session') {
     return ['Message'];
+  }
+
+  if (promptMode === 'interviewer' && enablePersonalMemoryForInterviewer) {
+    return ['KnowledgeBaseDocument', 'PersonalMemory'];
   }
 
   return getChatRetrievalSourceKinds(promptMode);
@@ -61,7 +66,11 @@ export function resolveChatRetrievalStrategy(
   promptMode: PromptMode,
   sessionId?: string,
 ): ChatRetrievalStrategy {
-  const requestedSourceKinds = getRetrievalScopeSourceKinds(config.rag.retrievalScope, promptMode);
+  const requestedSourceKinds = getRetrievalScopeSourceKinds(
+    config.rag.retrievalScope,
+    promptMode,
+    config.rag.enablePersonalMemoryForInterviewer,
+  );
   const sourceKinds = requestedSourceKinds.filter((sourceKind) =>
     sourceKind !== 'Message' || Boolean(sessionId),
   );

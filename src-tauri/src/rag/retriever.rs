@@ -45,12 +45,10 @@ pub enum SearchSource {
 pub enum SearchSourceKind {
     Message,
     KnowledgeBaseDocument,
+    PersonalMemory,
 }
 
-pub fn source_kind_allowed(
-    filter: Option<&[SearchSourceKind]>,
-    kind: &SearchSourceKind,
-) -> bool {
+pub fn source_kind_allowed(filter: Option<&[SearchSourceKind]>, kind: &SearchSourceKind) -> bool {
     match filter {
         Some(allowed) if !allowed.is_empty() => allowed.iter().any(|candidate| candidate == kind),
         _ => true,
@@ -168,6 +166,16 @@ pub fn combined_vector_search_for_model(
         )?);
     }
 
+    if source_kind_allowed(source_kind_filter, &SearchSourceKind::PersonalMemory) {
+        results.extend(personal_memory_vector_search_with_db(
+            db,
+            query_embedding,
+            limit,
+            threshold,
+            model_filter,
+        )?);
+    }
+
     results.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -175,6 +183,17 @@ pub fn combined_vector_search_for_model(
     });
     results.truncate(limit);
     Ok(results)
+}
+
+#[derive(Debug, Clone)]
+struct PersonalMemoryEmbeddingEntry {
+    embedding_id: String,
+    memory_id: String,
+    content: String,
+    importance: i32,
+    recency_at: i64,
+    embedding: Vec<f32>,
+    embedding_dim: usize,
 }
 
 fn vector_search_entries(
@@ -340,6 +359,174 @@ pub fn knowledge_vector_search_with_db(
             })
         })
         .collect())
+}
+
+const PERSONAL_MEMORY_RELEVANCE_WEIGHT: f32 = 0.70;
+const PERSONAL_MEMORY_RECENCY_WEIGHT: f32 = 0.15;
+const PERSONAL_MEMORY_IMPORTANCE_WEIGHT: f32 = 0.15;
+const PERSONAL_MEMORY_RECENCY_HALF_LIFE_DAYS: f32 = 30.0;
+
+fn current_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+fn personal_memory_recency_score(last_seen_at: i64, now_ms: i64) -> f32 {
+    let age_ms = now_ms.saturating_sub(last_seen_at).max(0) as f32;
+    let age_days = age_ms / 86_400_000.0;
+    0.5_f32.powf(age_days / PERSONAL_MEMORY_RECENCY_HALF_LIFE_DAYS)
+}
+
+fn personal_memory_score(relevance: f32, importance: i32, last_seen_at: i64, now_ms: i64) -> f32 {
+    let importance_score = (importance.clamp(1, 10) as f32) / 10.0;
+    let recency_score = personal_memory_recency_score(last_seen_at, now_ms);
+    relevance * PERSONAL_MEMORY_RELEVANCE_WEIGHT
+        + recency_score * PERSONAL_MEMORY_RECENCY_WEIGHT
+        + importance_score * PERSONAL_MEMORY_IMPORTANCE_WEIGHT
+}
+
+/// 个人记忆向量检索。得分由相关性、时近性、重要性三因子组成。
+pub fn personal_memory_vector_search_with_db(
+    db: &Database,
+    query_embedding: &[f32],
+    limit: usize,
+    threshold: f32,
+    model_filter: Option<&str>,
+) -> Result<Vec<SearchResult>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+
+    match model_filter {
+        Some(model_id) => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT me.id, me.memory_id, m.content, m.importance,
+                            COALESCE(m.last_retrieved_at, m.last_seen_at) AS recency_at,
+                            me.embedding, me.embedding_dim
+                     FROM memory_embeddings me
+                     INNER JOIN memories m ON m.id = me.memory_id
+                     WHERE m.status = 'active' AND me.model_id = ?1
+                     ORDER BY m.last_seen_at DESC, me.created_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(rusqlite::params![model_id], |row| {
+                    let blob: Vec<u8> = row.get(5)?;
+                    Ok(PersonalMemoryEmbeddingEntry {
+                        embedding_id: row.get(0)?,
+                        memory_id: row.get(1)?,
+                        content: row.get(2)?,
+                        importance: row.get(3)?,
+                        recency_at: row.get(4)?,
+                        embedding: MessageVectorStore::blob_to_embedding(&blob),
+                        embedding_dim: row.get::<_, i32>(6)? as usize,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                entries.push(row.map_err(|e| e.to_string())?);
+            }
+        }
+        None => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT me.id, me.memory_id, m.content, m.importance,
+                            COALESCE(m.last_retrieved_at, m.last_seen_at) AS recency_at,
+                            me.embedding, me.embedding_dim
+                     FROM memory_embeddings me
+                     INNER JOIN memories m ON m.id = me.memory_id
+                     WHERE m.status = 'active'
+                     ORDER BY m.last_seen_at DESC, me.created_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let blob: Vec<u8> = row.get(5)?;
+                    Ok(PersonalMemoryEmbeddingEntry {
+                        embedding_id: row.get(0)?,
+                        memory_id: row.get(1)?,
+                        content: row.get(2)?,
+                        importance: row.get(3)?,
+                        recency_at: row.get(4)?,
+                        embedding: MessageVectorStore::blob_to_embedding(&blob),
+                        embedding_dim: row.get::<_, i32>(6)? as usize,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                entries.push(row.map_err(|e| e.to_string())?);
+            }
+        }
+    }
+
+    let candidates: Vec<(String, Vec<f32>)> = entries
+        .iter()
+        .filter(|entry| entry.embedding_dim == query_embedding.len())
+        .map(|entry| (entry.embedding_id.clone(), entry.embedding.clone()))
+        .collect();
+    let top_results = MessageVectorStore::top_k_similar(
+        query_embedding,
+        &candidates,
+        candidates.len(),
+        threshold,
+    );
+    let entries_by_embedding_id = entries
+        .iter()
+        .map(|entry| (entry.embedding_id.as_str(), entry))
+        .collect::<std::collections::HashMap<_, _>>();
+    let now_ms = current_timestamp_ms();
+
+    let mut results = top_results
+        .into_iter()
+        .filter_map(|(embedding_id, relevance)| {
+            let entry = entries_by_embedding_id.get(embedding_id.as_str())?;
+            let score =
+                personal_memory_score(relevance, entry.importance, entry.recency_at, now_ms);
+
+            Some(SearchResult {
+                knowledge_base_id: None,
+                chunk_id: format!("memory:{}", entry.memory_id),
+                embedding_id: Some(entry.embedding_id.clone()),
+                message_id: None,
+                document_id: None,
+                title: "个人记忆".to_string(),
+                chunk_text: entry.content.clone(),
+                snippet: build_search_snippet(&entry.content),
+                page_number: None,
+                heading_path: Vec::new(),
+                score,
+                source: SearchSource::Vector,
+                source_kind: SearchSourceKind::PersonalMemory,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    results.truncate(limit);
+    let memory_ids = results
+        .iter()
+        .map(|result| result.chunk_id.trim_start_matches("memory:").to_string())
+        .collect::<Vec<_>>();
+    if !memory_ids.is_empty() {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for memory_id in memory_ids {
+            tx.execute(
+                "UPDATE memories SET last_retrieved_at = ?1 WHERE id = ?2",
+                rusqlite::params![now_ms, memory_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    Ok(results)
 }
 
 /// 关键词检索（基于 SQLite LIKE）
@@ -584,6 +771,45 @@ mod tests {
         )
     }
 
+    fn create_test_memory_embedding(
+        db: &Arc<database::Database>,
+        content: &str,
+        importance: i32,
+        model_id: &str,
+        embedding: Vec<f32>,
+    ) -> String {
+        database::create_memory_with_embedding(
+            db,
+            database::CreateMemoryWithEmbeddingInput {
+                memory: database::CreateMemoryInput {
+                    memory_type: database::MemoryType::Semantic,
+                    source_type: database::MemorySourceType::Explicit,
+                    content: content.to_string(),
+                    structured_json: serde_json::json!({"source": "retriever-test"}),
+                    importance,
+                    embedding_model_id: Some(model_id.to_string()),
+                    source_session_id: None,
+                    occurrence_count: Some(1),
+                    decay_score: Some(0.0),
+                    status: Some(database::MemoryStatus::Active),
+                    last_retrieved_at: None,
+                },
+                embedding_dim: embedding.len(),
+                embedding,
+                model_id: model_id.to_string(),
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn test_now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
     #[test]
     fn test_vector_search_returns_message_and_chunk_identity() {
         let (store, db) = create_test_store();
@@ -694,6 +920,155 @@ mod tests {
         assert!(results
             .iter()
             .any(|result| result.source_kind == SearchSourceKind::KnowledgeBaseDocument));
+    }
+
+    #[test]
+    fn test_personal_memory_vector_search_uses_importance_in_score() {
+        let (_store, db) = create_test_store();
+        let low_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 重写基础回答",
+            2,
+            "memory-model",
+            vec![1.0, 0.0, 0.0],
+        );
+        let high_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 重写高质量项目表达",
+            10,
+            "memory-model",
+            vec![1.0, 0.0, 0.0],
+        );
+
+        let results = personal_memory_vector_search_with_db(
+            &db,
+            &[1.0, 0.0, 0.0],
+            5,
+            0.1,
+            Some("memory-model"),
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].source_kind, SearchSourceKind::PersonalMemory);
+        assert_eq!(results[0].chunk_id, format!("memory:{high_id}"));
+        assert_eq!(results[1].chunk_id, format!("memory:{low_id}"));
+        assert!(results[0].score > results[1].score);
+        assert_eq!(results[0].title, "个人记忆");
+    }
+
+    #[test]
+    fn test_personal_memory_vector_search_scores_before_limit_truncation() {
+        let (_store, db) = create_test_store();
+        let low_importance_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 纯相关但低重要性回答",
+            1,
+            "memory-model",
+            vec![1.0, 0.0],
+        );
+        let high_importance_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 项目亮点表达",
+            10,
+            "memory-model",
+            vec![0.9, 0.4358899],
+        );
+
+        let results =
+            personal_memory_vector_search_with_db(&db, &[1.0, 0.0], 1, 0.1, Some("memory-model"))
+                .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk_id, format!("memory:{high_importance_id}"));
+        assert_ne!(results[0].chunk_id, format!("memory:{low_importance_id}"));
+    }
+
+    #[test]
+    fn test_personal_memory_vector_search_uses_last_retrieved_for_recency() {
+        let (_store, db) = create_test_store();
+        let stale_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 很久没有命中的记忆",
+            5,
+            "memory-model",
+            vec![1.0, 0.0],
+        );
+        let recently_retrieved_id = create_test_memory_embedding(
+            &db,
+            "Redis AOF 最近命中的记忆",
+            5,
+            "memory-model",
+            vec![1.0, 0.0],
+        );
+        let now = test_now_ms();
+        let one_day_ago = now - 86_400_000;
+        let one_hundred_days_ago = now - 100 * 86_400_000;
+
+        {
+            let conn = db.0.lock().unwrap();
+            conn.execute(
+                "UPDATE memories SET last_seen_at = ?1, last_retrieved_at = NULL WHERE id = ?2",
+                rusqlite::params![one_day_ago, stale_id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE memories SET last_seen_at = ?1, last_retrieved_at = ?2 WHERE id = ?3",
+                rusqlite::params![one_hundred_days_ago, now, recently_retrieved_id],
+            )
+            .unwrap();
+        }
+
+        let results =
+            personal_memory_vector_search_with_db(&db, &[1.0, 0.0], 1, 0.1, Some("memory-model"))
+                .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].chunk_id,
+            format!("memory:{recently_retrieved_id}")
+        );
+
+        let refreshed_at: Option<i64> =
+            db.0.lock()
+                .unwrap()
+                .query_row(
+                    "SELECT last_retrieved_at FROM memories WHERE id = ?1",
+                    rusqlite::params![recently_retrieved_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+        assert!(refreshed_at.unwrap() >= now);
+    }
+
+    #[test]
+    fn test_combined_vector_search_can_filter_to_personal_memory() {
+        let (store, db) = create_test_store();
+        let embedding = vec![1.0f32, 0.0, 0.0];
+        let memory_id = create_test_memory_embedding(
+            &db,
+            "用户擅长讲 Redis AOF 重写",
+            8,
+            "shared-memory-model",
+            embedding.clone(),
+        );
+        create_test_knowledge_embedding(&db, "Rust KB", "shared-memory-model", embedding.clone());
+
+        let results = combined_vector_search_for_model(
+            &store,
+            &db,
+            &embedding,
+            5,
+            0.5,
+            None,
+            Some("shared-memory-model"),
+            Some(&[SearchSourceKind::PersonalMemory]),
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].chunk_id, format!("memory:{memory_id}"));
+        assert_eq!(results[0].source_kind, SearchSourceKind::PersonalMemory);
     }
 
     #[test]
