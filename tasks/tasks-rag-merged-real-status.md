@@ -42,6 +42,7 @@
 - `package-lock.json` - 同步前端测试依赖锁文件。
 - `README.md` - 项目说明，现已同步当前 RAG 架构、使用方式、能力边界与已知限制。
 - `TODO.md` - 进度文档，现已同步当前 RAG 主线完成情况、文档来源与剩余非 RAG 工作。
+- `docs/plans/2026-06-08-assistant-memory-system-design.md` - 助手模式个人面试记忆系统设计文档，定义记忆分层、来源差异化抽取、生命周期、数据模型、接入点与分阶段实施，作为 11.0 任务块的开发依据。
 
 ### Notes
 
@@ -149,3 +150,13 @@
   - ✅️ 10.1 `Agent.md` 已加入 skills 检查、`requesting-code-review` 审查闭环、`writing-guide` 文档时机与 `/clear` 规则
   - ✅️ 10.2 `.cursor/rules/agent-harness.mdc` 已同步 skills 加载、review 闭环和 `/clear` 重载流程
   - ✅️ 10.3 `.github/workflows/build-windows.yml` 已加入 `npm run build` 与 `cargo test` 验证门禁
+
+- ❌️ 11.0 落地助手模式个人面试记忆系统
+  - 设计依据：`docs/plans/2026-06-08-assistant-memory-system-design.md`
+  - 核心决策：assistant 模式默认启用记忆检索、interviewer 模式提供开关；实时抽取；来源为 assistant 模式面试题、用户显式指令、复盘手动录入；反思层与衰减归档都要做
+  - ❌️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
+  - ❌️ 11.2 抽取链路：实现 LLM 抽取与 JSON 校验（复用 review 模块范式）、入库前向量巩固去重，先打通复盘手动录入与用户显式指令两条确定性来源
+  - ❌️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
+  - ❌️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
+  - ❌️ 11.5 反思与衰减：累计新增 active 记忆达到阈值触发反思生成画像记忆；衰减归档低重要性且长期未命中的情景记忆，显式指令与复盘录入来源豁免
+  - ❌️ 11.6 记忆管理面板：新增记忆抽取 / 检索 / 列表 / 更新 / 删除 / 反思的 Tauri 命令，并提供可见、可编辑、可删除的前端记忆管理界面
