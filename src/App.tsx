@@ -22,6 +22,9 @@ const CodeEditorPanel = lazy(() =>
 const KnowledgeBasePanel = lazy(() =>
   import("./components/KnowledgeBasePanel").then(m => ({ default: m.KnowledgeBasePanel }))
 );
+const MemoryManagementPanel = lazy(() =>
+  import("./components/MemoryManagementPanel").then(m => ({ default: m.MemoryManagementPanel }))
+);
 import CompactView from "./components/CompactView";
 import { MessageContent } from "./components/MessageContent";
 import { MessageCitations } from "./components/MessageCitations";
@@ -224,7 +227,7 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   
   // 当前视图：主界面 | 设置页面 | 快捷键设置 | 会话历史 | 知识库
-  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts' | 'sessions' | 'knowledge'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'shortcuts' | 'sessions' | 'knowledge' | 'memory'>('main');
   
   // 会话列表状态
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -1086,6 +1089,13 @@ function App() {
     } catch (error) {
       console.error('Failed to load knowledge bases:', error);
     }
+  };
+
+  const handleOpenMemoryManagement = () => {
+    if (compactMode) {
+      setCompactModeState(false);
+    }
+    setCurrentView('memory');
   };
 
   // 打开快捷键设置（紧凑模式下自动切换回完整模式）
@@ -2077,6 +2087,7 @@ function App() {
           <SettingsPanel
             isOpen={true}
             onOpenKnowledgeBase={handleOpenKnowledgeBases}
+            onOpenMemoryManagement={handleOpenMemoryManagement}
             onClose={async () => {
               setCurrentView('main');
               const config = await loadConfig();
@@ -2115,6 +2126,12 @@ function App() {
       {currentView === 'knowledge' && (
         <div className="absolute inset-0 z-50">
           <KnowledgeBasePanel onBack={() => setCurrentView('main')} />
+        </div>
+      )}
+
+      {currentView === 'memory' && (
+        <div className="absolute inset-0 z-50">
+          <MemoryManagementPanel onBack={() => setCurrentView('main')} />
         </div>
       )}
 

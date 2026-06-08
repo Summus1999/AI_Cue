@@ -1102,6 +1102,52 @@ pub fn create_memory(db: &Database, input: CreateMemoryInput) -> Result<MemoryRe
     get_memory(db, &id)?.ok_or_else(|| format!("记忆创建后读取失败: {id}"))
 }
 
+/// 按状态列出全部记忆。status 为 None 时不过滤，返回 active + archived 全部记忆。
+/// 按 last_seen_at 降序排列。
+pub fn list_all_memories(
+    db: &Database,
+    status: Option<MemoryStatus>,
+) -> Result<Vec<MemoryRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let result = if let Some(s) = status {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_type, source_type, content, structured_json, importance,
+                        embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+                        created_at, updated_at, last_seen_at, last_retrieved_at
+                 FROM memories
+                 WHERE status = ?1
+                 ORDER BY last_seen_at DESC, updated_at DESC, id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![s.as_str()], map_memory_row)
+            .map_err(|e| e.to_string())?;
+        let mut vec = Vec::new();
+        for row in rows {
+            vec.push(row.map_err(|e| e.to_string())?);
+        }
+        vec
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_type, source_type, content, structured_json, importance,
+                        embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+                        created_at, updated_at, last_seen_at, last_retrieved_at
+                 FROM memories
+                 ORDER BY last_seen_at DESC, updated_at DESC, id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], map_memory_row).map_err(|e| e.to_string())?;
+        let mut vec = Vec::new();
+        for row in rows {
+            vec.push(row.map_err(|e| e.to_string())?);
+        }
+        vec
+    };
+    Ok(result)
+}
+
 /// 按状态列出记忆。默认只列 active，避免归档记忆污染后续检索。
 pub fn list_memories(db: &Database, filter: MemoryListFilter) -> Result<Vec<MemoryRecord>, String> {
     let status = filter.status.unwrap_or(MemoryStatus::Active);

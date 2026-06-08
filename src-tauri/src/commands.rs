@@ -188,6 +188,49 @@ pub async fn memory_run_maintenance(
     crate::memory::run_memory_maintenance(&db, &registry, request).await
 }
 
+/// 列出记忆。status 为 None 时返回全部记忆（含已归档），否则按指定状态过滤。
+#[tauri::command]
+pub fn memory_list(
+    db: State<'_, Arc<crate::database::Database>>,
+    status: Option<String>,
+) -> Result<Vec<crate::database::MemoryRecord>, String> {
+    let status_filter = match status.as_deref() {
+        Some("active") => Some(crate::database::MemoryStatus::Active),
+        Some("archived") => Some(crate::database::MemoryStatus::Archived),
+        Some(other) => return Err(format!("不支持的记忆状态: {other}")),
+        None => None,
+    };
+    crate::database::list_all_memories(&db, status_filter)
+}
+
+/// 获取单条记忆详情。
+#[tauri::command]
+pub fn memory_get(
+    db: State<'_, Arc<crate::database::Database>>,
+    memory_id: String,
+) -> Result<Option<crate::database::MemoryRecord>, String> {
+    crate::database::get_memory(&db, &memory_id)
+}
+
+/// 更新记忆的 content、importance、structured_json 等可编辑字段。
+#[tauri::command]
+pub fn memory_update(
+    db: State<'_, Arc<crate::database::Database>>,
+    memory_id: String,
+    input: crate::database::UpdateMemoryInput,
+) -> Result<crate::database::MemoryRecord, String> {
+    crate::database::update_memory(&db, &memory_id, input)
+}
+
+/// 删除记忆及其关联向量（级联删除）。
+#[tauri::command]
+pub fn memory_delete(
+    db: State<'_, Arc<crate::database::Database>>,
+    memory_id: String,
+) -> Result<(), String> {
+    crate::database::delete_memory(&db, &memory_id)
+}
+
 /// 网络健康检查命令
 /// 检测互联网连通性和 Provider API 可达性
 #[tauri::command]

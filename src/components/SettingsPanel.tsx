@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database, Brain } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
 import { ProviderSelector } from './ProviderSelector';
@@ -30,10 +30,11 @@ interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenKnowledgeBase?: () => void | Promise<void>;
+  onOpenMemoryManagement?: () => void | Promise<void>;
   onReopenOnboarding?: () => void;
 }
 
-export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onReopenOnboarding }: SettingsPanelProps) {
+export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemoryManagement, onReopenOnboarding }: SettingsPanelProps) {
   // 配置状态
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(false);
@@ -192,18 +193,32 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onReopenOn
                     控制聊天检索来源、PDF OCR、embedding 模型，以及知识库管理入口。
                   </p>
                 </div>
-                {onOpenKnowledgeBase && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void onOpenKnowledgeBase();
-                    }}
-                    className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200"
-                  >
-                    <Database className="w-3.5 h-3.5" />
-                    打开知识库
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {onOpenKnowledgeBase && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onOpenKnowledgeBase();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200"
+                    >
+                      <Database className="w-3.5 h-3.5" />
+                      打开知识库
+                    </button>
+                  )}
+                  {onOpenMemoryManagement && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onOpenMemoryManagement();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg border border-purple-300 bg-purple-100 px-3 py-2 text-xs font-medium text-purple-800 transition-colors hover:bg-purple-200"
+                    >
+                      <Brain className="w-3.5 h-3.5" />
+                      记忆管理
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="rounded-xl border border-amber-200 bg-white/70 p-3 space-y-4">

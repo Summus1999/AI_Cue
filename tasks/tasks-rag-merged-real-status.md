@@ -9,7 +9,7 @@
 - `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建/异常文档重试请求模型、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件、embedding 结构化日志与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
-- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计、应用重启后 `indexing` 卡死文档恢复，以及助手模式个人记忆表结构、迁移、CRUD 与记忆向量级联删除。
+- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计、应用重启后 `indexing` 卡死文档恢复，以及助手模式个人记忆表结构、迁移、CRUD、级联删除、按类型列表、计数与衰减归档。
 - `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重、记忆和向量的原子入库、assistant turn 实时抽取编排，以及反思归纳（LLM 读取近期记忆生成画像特征）与衰减归档（低重要性情景记忆归档，显式/复盘来源豁免）的生命周期维护。
 - `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询、个人记忆实时抽取命令、综合记忆维护命令（衰减 + 条件反思），以及命令层集成测试。
 - `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复、知识库统计、个人记忆实时抽取与综合记忆维护入口。
@@ -36,6 +36,8 @@
 - `src/components/knowledge/KnowledgeDocumentPreview.test.tsx` - 文档预览回归测试，覆盖空态、重建索引、删除确认、最近重建状态与 chunk 预览。
 - `src/components/MessageCitations.tsx` - 聊天回答下方的 citation 列表渲染组件，支持个人记忆来源标签与标题 fallback。
 - `src/components/MessageCitations.test.tsx` - citation 渲染回归测试，覆盖 `PersonalMemory` 来源不会被误标为知识库。
+- `src/components/MemoryManagementPanel.tsx` - 个人记忆管理面板，支持记忆列表浏览（全部/活跃/归档过滤）、详情查看、在线编辑、删除及一键运行维护。
+- `src/services/memoryService.ts` - 前端记忆管理服务层，封装记忆 CRUD、维护调用与类型标签映射。
 - `src/bootstrap/bootstrapCoordinator.ts` - 前端启动编排，当前已在启动阶段同步 RAG runtime 配置，并按 `on_startup` 策略恢复中断的知识库索引状态。
 - `src/bootstrap/bootstrapCoordinator.test.ts` - 启动恢复策略回归测试，覆盖 `on_startup` 触发与非触发分支。
 - `src/components/SettingsPanel.tsx` - 当前设置面板，已增加 RAG 配置区块、知识库入口、interviewer 模式个人记忆检索开关，并会在保存配置后同步 RAG runtime 配置。
@@ -155,7 +157,7 @@
   - ✅️ 10.2 `.cursor/rules/agent-harness.mdc` 已同步 skills 加载、review 闭环和 `/clear` 重载流程
   - ✅️ 10.3 `.github/workflows/build-windows.yml` 已加入 `npm run build` 与 `cargo test` 验证门禁
 
-- ❌️ 11.0 落地助手模式个人面试记忆系统
+- ✅️ 11.0 落地助手模式个人面试记忆系统
   - 设计依据：`docs/plans/2026-06-08-assistant-memory-system-design.md`
   - 核心决策：assistant 模式默认启用记忆检索、interviewer 模式提供开关；实时抽取；来源为 assistant 模式面试题、用户显式指令、复盘手动录入；反思层与衰减归档都要做
   - ✅️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
@@ -163,4 +165,4 @@
   - ✅️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
   - ✅️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
   - ✅️ 11.5 反思与衰减：累计 active 情景 + 语义记忆达阈值（默认 10）触发 LLM 反思生成画像记忆；衰减归档 importance ≤ 3 且超 30 天未被检索的情景记忆，显式指令与复盘录入来源豁免。新增 `list_active_memories_by_types`、`count_active_memories_by_types`、`decay_episodic_memories` 数据库函数与 `run_memory_maintenance` Tauri 命令，并补齐衰减 / 反思解析 / 记忆文本构建的 Rust 测试
-  - ❌️ 11.6 记忆管理面板：新增记忆抽取 / 检索 / 列表 / 更新 / 删除 / 反思的 Tauri 命令，并提供可见、可编辑、可删除的前端记忆管理界面
+  - ✅️ 11.6 记忆管理面板：新增 `memory_list`、`memory_get`、`memory_update`、`memory_delete` Tauri 命令暴露全部 CRUD；复用 `memory_extract_from_assistant_turn`（抽取）与 `memory_run_maintenance`（维护）。前端新增 `MemoryManagementPanel` 组件，支持记忆列表浏览（全部/活跃/归档过滤）、详情查看（含结构化信息与元数据）、在线编辑（内容/重要性/状态）、删除与一键运行维护（衰减 + 反思），入口位于设置面板 RAG 区块。新增 `memoryService.ts` 前端服务层与 `list_all_memories` 数据库函数。
