@@ -907,7 +907,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
 }
 
 /// 获取当前时间戳（毫秒）
-fn current_timestamp_ms() -> i64 {
+pub fn current_timestamp_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1425,6 +1425,130 @@ pub fn list_memory_embedding_vectors(
     }
 
     Ok(result)
+}
+
+/// 列出指定类型和状态的 active 记忆，供反思任务收集素材。
+/// 按 last_seen_at 降序排列，确保最近活跃的记忆优先。
+pub fn list_active_memories_by_types(
+    db: &Database,
+    memory_types: &[MemoryType],
+    limit: usize,
+) -> Result<Vec<MemoryRecord>, String> {
+    if memory_types.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let type_placeholders: Vec<String> = memory_types
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
+    let in_clause = type_placeholders.join(", ");
+    let sql = format!(
+        "SELECT id, memory_type, source_type, content, structured_json, importance,
+                embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+                created_at, updated_at, last_seen_at, last_retrieved_at
+         FROM memories
+         WHERE status = ?1 AND memory_type IN ({})
+         ORDER BY last_seen_at DESC, updated_at DESC, id DESC
+         LIMIT ?{}",
+        in_clause,
+        memory_types.len() + 2,
+    );
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+        Vec::with_capacity(memory_types.len() + 2);
+    param_values.push(Box::new(MemoryStatus::Active.as_str().to_string()));
+    for t in memory_types {
+        param_values.push(Box::new(t.as_str().to_string()));
+    }
+    param_values.push(Box::new(limit as i64));
+
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values
+        .iter()
+        .map(|v| v.as_ref())
+        .collect();
+
+    let rows = stmt
+        .query_map(params_ref.as_slice(), map_memory_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
+}
+
+/// 衰减归档陈旧的低重要性情景记忆。
+/// 只处理 episodic 类型、active 状态、importance 不高于阈值、
+/// last_retrieved_at 为空或早于截止时间的记忆。
+/// 显式指令与复盘录入来源豁免衰减。
+/// 返回实际归档的条数。
+pub fn decay_episodic_memories(
+    db: &Database,
+    importance_max: i32,
+    days_threshold: i64,
+) -> Result<usize, String> {
+    let cutoff = current_timestamp_ms() - days_threshold * 86_400_000;
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let affected = conn
+        .execute(
+            "UPDATE memories
+             SET status = 'archived',
+                 updated_at = ?1
+             WHERE memory_type = 'episodic'
+               AND status = 'active'
+               AND source_type NOT IN ('explicit', 'manual_review')
+               AND importance <= ?2
+               AND (last_retrieved_at IS NULL OR last_retrieved_at < ?3)",
+            params![current_timestamp_ms(), importance_max, cutoff],
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(affected)
+}
+
+/// 统计 active 状态下指定类型的记忆数量，用于判断是否需要触发反思。
+pub fn count_active_memories_by_types(
+    db: &Database,
+    memory_types: &[MemoryType],
+) -> Result<i64, String> {
+    if memory_types.is_empty() {
+        return Ok(0);
+    }
+
+    let type_placeholders: Vec<String> = memory_types
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
+    let in_clause = type_placeholders.join(", ");
+    let sql = format!(
+        "SELECT COUNT(*) FROM memories WHERE status = ?1 AND memory_type IN ({})",
+        in_clause,
+    );
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+        Vec::with_capacity(memory_types.len() + 1);
+    param_values.push(Box::new(MemoryStatus::Active.as_str().to_string()));
+    for t in memory_types {
+        param_values.push(Box::new(t.as_str().to_string()));
+    }
+
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values
+        .iter()
+        .map(|v| v.as_ref())
+        .collect();
+
+    conn.query_row(&sql, params_ref.as_slice(), |row| row.get(0))
+        .map_err(|e| e.to_string())
 }
 
 /// 创建新会话（支持元数据）
@@ -3613,5 +3737,324 @@ mod tests {
         let error = list_knowledge_document_chunks(&db, "missing-document-id").unwrap_err();
 
         assert!(error.contains("知识库文档不存在"));
+    }
+
+    // ==================== Reflection & Decay database tests ====================
+
+    #[test]
+    fn test_list_active_memories_by_types_returns_only_active_and_specified_types() {
+        let db = create_test_db();
+
+        // 创建 active episodic 记忆
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "Redis AOF 重写相关问答".to_string(),
+                structured_json: json!({"topic": "Redis"}),
+                importance: 5,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+
+        // 创建 active semantic 记忆
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Semantic,
+                source_type: MemorySourceType::Explicit,
+                content: "用户擅长 Rust 异步优化".to_string(),
+                structured_json: json!({"skill": "Rust"}),
+                importance: 10,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+
+        // 创建 archived episodic 记忆（不应出现在列表中）
+        let archived = create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "过期记忆".to_string(),
+                structured_json: json!({}),
+                importance: 1,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Archived),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+
+        // 只查 episodic + semantic，应该只返回 2 条 active
+        let results = list_active_memories_by_types(
+            &db,
+            &[MemoryType::Episodic, MemoryType::Semantic],
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 2);
+        let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert!(!ids.contains(&archived.id.as_str()));
+
+        // 空类型列表返回空
+        let empty = list_active_memories_by_types(&db, &[], 10).unwrap();
+        assert!(empty.is_empty());
+
+        // limit 限制生效
+        let limited = list_active_memories_by_types(
+            &db,
+            &[MemoryType::Episodic, MemoryType::Semantic],
+            1,
+        )
+        .unwrap();
+        assert_eq!(limited.len(), 1);
+    }
+
+    #[test]
+    fn test_count_active_memories_by_types_aggregates_correctly() {
+        let db = create_test_db();
+
+        assert_eq!(
+            count_active_memories_by_types(&db, &[MemoryType::Episodic, MemoryType::Semantic])
+                .unwrap(),
+            0
+        );
+
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "e1".to_string(),
+                structured_json: json!({}),
+                importance: 3,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "e2".to_string(),
+                structured_json: json!({}),
+                importance: 4,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Semantic,
+                source_type: MemorySourceType::Explicit,
+                content: "s1".to_string(),
+                structured_json: json!({}),
+                importance: 10,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None,
+            },
+        )
+        .unwrap();
+
+        // 3 active episodic + semantic
+        assert_eq!(
+            count_active_memories_by_types(&db, &[MemoryType::Episodic, MemoryType::Semantic])
+                .unwrap(),
+            3
+        );
+        // 2 active episodic only
+        assert_eq!(
+            count_active_memories_by_types(&db, &[MemoryType::Episodic]).unwrap(),
+            2
+        );
+        // 空类型列表
+        assert_eq!(count_active_memories_by_types(&db, &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_decay_episodic_memories_archives_stale_low_importance_only() {
+        let db = create_test_db();
+
+        // 应被衰减：episodic + active + importance=2 + last_retrieved_at=NOW-31days
+        let now = current_timestamp_ms();
+        let old_time = now - 32 * 86_400_000; // 32 天前
+
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "应当衰减的记忆".to_string(),
+                structured_json: json!({}),
+                importance: 2,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        // 不应被衰减：importance 太高
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "重要性高的记忆".to_string(),
+                structured_json: json!({}),
+                importance: 5,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        // 不应被衰减：explicit 来源豁免
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::Explicit,
+                content: "显式指令，豁免衰减".to_string(),
+                structured_json: json!({}),
+                importance: 1,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        // 不应被衰减：manual_review 来源豁免
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::ManualReview,
+                content: "复盘录入，豁免衰减".to_string(),
+                structured_json: json!({}),
+                importance: 1,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        // 不应被衰减：最近被检索过
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "最近被检索过的记忆".to_string(),
+                structured_json: json!({}),
+                importance: 2,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(now), // 刚刚被检索
+            },
+        )
+        .unwrap();
+
+        // 执行衰减：重要性 <= 3 且超过 30 天未被检索
+        let decayed = decay_episodic_memories(&db, 3, 30).unwrap();
+        assert_eq!(decayed, 1, "只应衰减恰好 1 条记忆");
+
+        // 验证：只剩 4 条 active 记忆（原来 5 条，衰减 1 条）
+        let active = list_memories(
+            &db,
+            MemoryListFilter {
+                status: Some(MemoryStatus::Active),
+            },
+        )
+        .unwrap();
+        assert_eq!(active.len(), 4);
+    }
+
+    #[test]
+    fn test_decay_episodic_memories_handles_null_last_retrieved_at() {
+        let db = create_test_db();
+
+        // last_retrieved_at 为 None（从未被检索），应被衰减
+        create_memory(
+            &db,
+            CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "从未被检索的记忆".to_string(),
+                structured_json: json!({}),
+                importance: 1,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: None, // 从未被检索
+            },
+        )
+        .unwrap();
+
+        let decayed = decay_episodic_memories(&db, 5, 30).unwrap();
+        assert_eq!(decayed, 1);
+
+        let active = list_memories(
+            &db,
+            MemoryListFilter {
+                status: Some(MemoryStatus::Active),
+            },
+        )
+        .unwrap();
+        assert_eq!(active.len(), 0);
     }
 }

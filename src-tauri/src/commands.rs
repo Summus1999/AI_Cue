@@ -177,6 +177,17 @@ pub async fn memory_extract_from_assistant_turn(
     crate::memory::extract_assistant_turn_memories(&db, &registry, request).await
 }
 
+/// 综合记忆维护：先执行衰减归档陈旧记忆，再检查是否达到反思阈值并生成画像记忆。
+/// 建议在每次实时抽取完成后或定期调用，保持记忆池健康。
+#[tauri::command]
+pub async fn memory_run_maintenance(
+    db: State<'_, Arc<crate::database::Database>>,
+    registry: State<'_, ProviderRegistry>,
+    request: crate::memory::MemoryMaintenanceRequest,
+) -> Result<crate::memory::MemoryMaintenanceSummary, String> {
+    crate::memory::run_memory_maintenance(&db, &registry, request).await
+}
+
 /// 网络健康检查命令
 /// 检测互联网连通性和 Provider API 可达性
 #[tauri::command]

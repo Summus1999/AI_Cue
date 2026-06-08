@@ -391,6 +391,221 @@ pub async fn extract_assistant_turn_memories(
     })
 }
 
+// ==================== 反思与衰减 ====================
+
+const MEMORY_REFLECTION_SYSTEM_PROMPT: &str = r#"你是 AI_Cue 的个人面试记忆反思器。
+请从下面列出的多条用户面试情景与语义记忆中，归纳出用户的长期画像特征。
+
+只返回 JSON，不要输出任何解释：
+{
+  "memories": [
+    {
+      "memory_type": "profile",
+      "content": "画像记忆正文，描述用户的一项长期特征、强项或薄弱点",
+      "structured_json": {},
+      "importance": 7
+    }
+  ]
+}
+
+规则：
+1. 从多条记忆中寻找反复出现的模式，归纳为稳定的画像特征。
+2. 画像记忆应描述用户的技术强项、常见薄弱点、偏好的答题风格或反复遇到的知识盲区。
+3. 每条画像记忆应高度凝练，避免长篇叙述。
+4. importance 范围为 1 到 10，越稳定的特征分数越高。
+5. 如果现有记忆不足以归纳出画像特征，返回空数组。"#;
+
+/// 反思与衰减的配置参数。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMaintenanceRequest {
+    pub provider: ProviderType,
+    pub config: ProviderConfig,
+    pub model: String,
+    pub embedding_config: EmbeddingProviderConfig,
+    /// active 情景 + 语义记忆达到此数量时触发反思（默认 10）
+    pub reflection_threshold: Option<usize>,
+    /// 衰减重要性上限，不高于此值的记忆可被衰减（默认 3）
+    pub decay_importance_max: Option<i32>,
+    /// 衰减天数阈值，超过此天数未被检索的记忆可被衰减（默认 30）
+    pub decay_days_threshold: Option<i64>,
+    /// 巩固去重相似度阈值（默认 0.92）
+    pub similarity_threshold: Option<f32>,
+}
+
+/// 反思与衰减的执行结果摘要。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMaintenanceSummary {
+    /// 衰减归档的记忆条数
+    pub decayed_count: usize,
+    /// 是否触发了反思
+    pub reflection_triggered: bool,
+    /// 反思生成的画像记忆条数
+    pub reflection_profile_count: usize,
+    /// 当前 active 情景 + 语义记忆总数
+    pub active_source_count: i64,
+}
+
+/// 构建反思用的记忆列表文本，供 LLM 分析。
+fn build_reflection_memory_text(memories: &[database::MemoryRecord]) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(memories.len());
+    for (i, memory) in memories.iter().enumerate() {
+        let type_label = match memory.memory_type {
+            MemoryType::Episodic => "情景",
+            MemoryType::Semantic => "语义",
+            MemoryType::Profile => "画像",
+            MemoryType::Procedural => "程序",
+        };
+        let source_label = match memory.source_type {
+            MemorySourceType::AssistantChat => "助手对话",
+            MemorySourceType::Explicit => "显式指令",
+            MemorySourceType::ManualReview => "复盘录入",
+        };
+        lines.push(format!(
+            "{}. [{type_label}|{source_label}|重要性{}|出现{}次] {}",
+            i + 1,
+            memory.importance,
+            memory.occurrence_count,
+            memory.content,
+        ));
+    }
+    lines.join("\n")
+}
+
+/// 执行衰减：将低重要性且长期未检索的情景记忆归档。
+/// 显式指令与复盘录入来源被豁免。
+fn run_decay(
+    db: &database::Database,
+    importance_max: i32,
+    days_threshold: i64,
+) -> Result<usize, String> {
+    database::decay_episodic_memories(db, importance_max, days_threshold)
+}
+
+/// 执行反思：收集近期情景与语义记忆，调用 LLM 归纳画像特征并持久化。
+async fn run_reflection(
+    db: &database::Database,
+    providers: &ProviderRegistry,
+    provider: &ProviderType,
+    config: &ProviderConfig,
+    model: &str,
+    embedder: &dyn EmbeddingProvider,
+    similarity_threshold: f32,
+    memory_limit: usize,
+) -> Result<usize, String> {
+    // 收集最近的情景与语义记忆作为反思素材
+    let source_memories = database::list_active_memories_by_types(
+        db,
+        &[MemoryType::Episodic, MemoryType::Semantic],
+        memory_limit,
+    )?;
+
+    if source_memories.is_empty() {
+        return Ok(0);
+    }
+
+    let memory_text = build_reflection_memory_text(&source_memories);
+
+    // 调用 LLM 进行反思归纳
+    let response = providers
+        .chat(
+            provider,
+            config,
+            model,
+            vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: MEMORY_REFLECTION_SYSTEM_PROMPT.to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: format!("请分析以下面试记忆并归纳用户的画像特征：\n\n{memory_text}"),
+                },
+            ],
+        )
+        .await
+        .map_err(|e| format!("反思 LLM 调用失败: {e}"))?;
+
+    // 复用现有抽取链路：解析 JSON 候选并执行巩固去重入库
+    let candidates = extract_candidates_from_llm_response(
+        &response,
+        MemorySourceType::AssistantChat, // 反思生成的画像记忆标记为 AssistantChat 来源
+    )
+    .map_err(|e| format!("反思结果解析失败: {e}"))?;
+
+    // 只保留 profile 类型的候选
+    let profile_candidates: Vec<_> = candidates
+        .into_iter()
+        .filter(|c| c.memory_type == MemoryType::Profile)
+        .collect();
+
+    let mut persisted_count = 0;
+    for candidate in profile_candidates {
+        persist_candidate_with_consolidation(
+            db,
+            embedder,
+            candidate,
+            None,
+            similarity_threshold,
+        )
+        .await?;
+        persisted_count += 1;
+    }
+
+    Ok(persisted_count)
+}
+
+/// 综合记忆维护：先衰减后反思。
+/// - 衰减先执行，清理已无价值的陈旧记忆。
+/// - 反思在衰减后判断：若剩余 active 情景 + 语义记忆仍达阈值则触发。
+pub async fn run_memory_maintenance(
+    db: &database::Database,
+    providers: &ProviderRegistry,
+    request: MemoryMaintenanceRequest,
+) -> Result<MemoryMaintenanceSummary, String> {
+    let reflection_threshold = request.reflection_threshold.unwrap_or(10);
+    let decay_importance_max = request.decay_importance_max.unwrap_or(3).clamp(1, 10);
+    let decay_days_threshold = request.decay_days_threshold.unwrap_or(30).max(1);
+    let similarity_threshold = request.similarity_threshold.unwrap_or(0.92);
+
+    // 1. 先执行衰减
+    let decayed_count = run_decay(db, decay_importance_max, decay_days_threshold)?;
+
+    // 2. 统计衰减后的 active 情景 + 语义记忆数量
+    let active_source_count = database::count_active_memories_by_types(
+        db,
+        &[MemoryType::Episodic, MemoryType::Semantic],
+    )?;
+
+    // 3. 判断是否需要触发反思
+    let (reflection_triggered, reflection_profile_count) =
+        if active_source_count >= reflection_threshold as i64 {
+            let embedder = create_embedding_provider(&request.embedding_config)?;
+            let count = run_reflection(
+                db,
+                providers,
+                &request.provider,
+                &request.config,
+                &request.model,
+                embedder.as_ref(),
+                similarity_threshold,
+                50, // 最多取 50 条近期记忆作为反思素材
+            )
+            .await?;
+            (true, count)
+        } else {
+            (false, 0)
+        };
+
+    Ok(MemoryMaintenanceSummary {
+        decayed_count,
+        reflection_triggered,
+        reflection_profile_count,
+        active_source_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,5 +879,159 @@ mod tests {
         );
         assert_eq!(count_rows(&db, "memories"), 2);
         assert_eq!(count_rows(&db, "memory_embeddings"), 2);
+    }
+
+    // ==================== Reflection & Decay tests ====================
+
+    #[test]
+    fn builds_reflection_memory_text_with_type_and_source_labels() {
+        let memories = vec![
+            database::MemoryRecord {
+                id: "m1".to_string(),
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "Redis AOF 重写相关问答".to_string(),
+                structured_json: json!({}),
+                importance: 5,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: 2,
+                decay_score: 0.0,
+                status: MemoryStatus::Active,
+                created_at: 1,
+                updated_at: 2,
+                last_seen_at: 3,
+                last_retrieved_at: None,
+            },
+            database::MemoryRecord {
+                id: "m2".to_string(),
+                memory_type: MemoryType::Semantic,
+                source_type: MemorySourceType::Explicit,
+                content: "用户擅长 Rust 异步优化".to_string(),
+                structured_json: json!({"skill": "Rust"}),
+                importance: 10,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: 1,
+                decay_score: 0.0,
+                status: MemoryStatus::Active,
+                created_at: 4,
+                updated_at: 5,
+                last_seen_at: 6,
+                last_retrieved_at: None,
+            },
+        ];
+
+        let text = build_reflection_memory_text(&memories);
+
+        assert!(text.contains("Redis AOF"));
+        assert!(text.contains("情景|助手对话|重要性5|出现2次"));
+        assert!(text.contains("Rust 异步优化"));
+        assert!(text.contains("语义|显式指令|重要性10|出现1次"));
+    }
+
+    #[test]
+    fn run_decay_archives_stale_episodic_memories() {
+        let db = create_test_db();
+
+        // 创建应被衰减的记忆
+        let old_time = database::current_timestamp_ms() - 40 * 86_400_000;
+        database::create_memory(
+            &db,
+            database::CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "旧的低重要性记忆".to_string(),
+                structured_json: json!({}),
+                importance: 2,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        // 不应被衰减：importance 高
+        database::create_memory(
+            &db,
+            database::CreateMemoryInput {
+                memory_type: MemoryType::Episodic,
+                source_type: MemorySourceType::AssistantChat,
+                content: "高重要性记忆".to_string(),
+                structured_json: json!({}),
+                importance: 8,
+                embedding_model_id: Some("test-model".to_string()),
+                source_session_id: None,
+                occurrence_count: Some(1),
+                decay_score: Some(0.0),
+                status: Some(MemoryStatus::Active),
+                last_retrieved_at: Some(old_time),
+            },
+        )
+        .unwrap();
+
+        let decayed = run_decay(&db, 3, 30).unwrap();
+        assert_eq!(decayed, 1);
+
+        // 验证衰减结果
+        let remaining = database::list_memories(
+            &db,
+            database::MemoryListFilter {
+                status: Some(MemoryStatus::Active),
+            },
+        )
+        .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].content, "高重要性记忆");
+    }
+
+    #[test]
+    fn parses_reflection_response_and_filters_to_profile_only() {
+        let response = r#"```json
+{
+  "memories": [
+    {
+      "memory_type": "profile",
+      "content": "用户在系统设计面试中反复表现出对高并发场景经验的不足",
+      "structured_json": {"weakness": "high concurrency system design"},
+      "importance": 8
+    },
+    {
+      "memory_type": "semantic",
+      "content": "这条不应该被保留，因为反射只应产出 profile 记忆",
+      "structured_json": {},
+      "importance": 5
+    }
+  ]
+}
+```"#;
+
+        let candidates =
+            extract_candidates_from_llm_response(response, MemorySourceType::AssistantChat)
+                .unwrap();
+
+        // 两条都在候选列表中
+        assert_eq!(candidates.len(), 2);
+
+        // 过滤到只有 profile
+        let profile_only: Vec<_> = candidates
+            .into_iter()
+            .filter(|c| c.memory_type == MemoryType::Profile)
+            .collect();
+        assert_eq!(profile_only.len(), 1);
+        assert!(profile_only[0].content.contains("高并发"));
+        assert_eq!(profile_only[0].importance, 8);
+    }
+
+    #[test]
+    fn reflection_prompt_accepts_empty_memories_array() {
+        let response = r#"{"memories":[]}"#;
+
+        let err = extract_candidates_from_llm_response(response, MemorySourceType::AssistantChat)
+            .unwrap_err();
+        assert!(err.contains("不能为空"));
     }
 }

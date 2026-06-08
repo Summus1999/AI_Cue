@@ -173,6 +173,7 @@ pub fn run() {
             commands::ai_test_connection,
             commands::ai_list_providers,
             commands::memory_extract_from_assistant_turn,
+            commands::memory_run_maintenance,
             // 网络健康检查命令（新增）
             commands::check_network_health,
             commands::batch_health_check,

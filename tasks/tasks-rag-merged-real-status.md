@@ -10,9 +10,9 @@
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计、应用重启后 `indexing` 卡死文档恢复，以及助手模式个人记忆表结构、迁移、CRUD 与记忆向量级联删除。
-- `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重、记忆和向量的原子入库，以及 assistant turn 实时抽取编排。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询、个人记忆实时抽取命令，以及命令层集成测试。
-- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复、知识库统计与个人记忆实时抽取入口。
+- `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重、记忆和向量的原子入库、assistant turn 实时抽取编排，以及反思归纳（LLM 读取近期记忆生成画像特征）与衰减归档（低重要性情景记忆归档，显式/复盘来源豁免）的生命周期维护。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询、个人记忆实时抽取命令、综合记忆维护命令（衰减 + 条件反思），以及命令层集成测试。
+- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复、知识库统计、个人记忆实时抽取与综合记忆维护入口。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与 `PersonalMemory` 类型定义。
 - `src/services/memoryExtraction.ts` - 前端个人记忆实时抽取服务，负责 assistant 模式前置闸门、后端请求构建、fire-and-forget 调用与失败降级。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
@@ -162,5 +162,5 @@
   - ✅️ 11.2 抽取链路：实现 LLM 抽取与 JSON 校验（复用 review 模块范式）、入库前向量巩固去重，先打通复盘手动录入与用户显式指令两条确定性来源
   - ✅️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
   - ✅️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
-  - ❌️ 11.5 反思与衰减：累计新增 active 记忆达到阈值触发反思生成画像记忆；衰减归档低重要性且长期未命中的情景记忆，显式指令与复盘录入来源豁免
+  - ✅️ 11.5 反思与衰减：累计 active 情景 + 语义记忆达阈值（默认 10）触发 LLM 反思生成画像记忆；衰减归档 importance ≤ 3 且超 30 天未被检索的情景记忆，显式指令与复盘录入来源豁免。新增 `list_active_memories_by_types`、`count_active_memories_by_types`、`decay_episodic_memories` 数据库函数与 `run_memory_maintenance` Tauri 命令，并补齐衰减 / 反思解析 / 记忆文本构建的 Rust 测试
   - ❌️ 11.6 记忆管理面板：新增记忆抽取 / 检索 / 列表 / 更新 / 删除 / 反思的 Tauri 命令，并提供可见、可编辑、可删除的前端记忆管理界面
