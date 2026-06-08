@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database, Brain } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
@@ -45,6 +46,9 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
   const [isNlsRegionDropdownOpen, setIsNlsRegionDropdownOpen] = useState(false);
   const [isPromptDropdownOpen, setIsPromptDropdownOpen] = useState(false);
 
+  // 应用版本号
+  const [appVersion, setAppVersion] = useState('');
+
   // 面板打开时加载配置
   useEffect(() => {
     if (isOpen) {
@@ -55,6 +59,13 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
       });
       setSaveStatus('idle');
       setErrorMessage('');
+    }
+  }, [isOpen]);
+
+  // 面板打开时获取应用版本号
+  useEffect(() => {
+    if (isOpen) {
+      getVersion().then(setAppVersion).catch(() => setAppVersion(''));
     }
   }, [isOpen]);
 
@@ -161,6 +172,13 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
           </button>
           <span className="text-xs font-medium text-amber-800 tracking-wide">设置</span>
         </div>
+
+        {/* 右侧：版本号 */}
+        {appVersion && (
+          <span className="text-[10px] text-amber-500/60 tracking-wide select-none">
+            v{appVersion}
+          </span>
+        )}
       </div>
 
       {/* 设置内容 - 可滚动 */}
