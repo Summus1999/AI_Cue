@@ -9,6 +9,7 @@ mod commands;
 mod database;
 mod export;
 mod logging; // 日志系统
+pub mod memory;
 mod nls;
 mod perf; // 性能埋点
 mod qwen;

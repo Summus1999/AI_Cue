@@ -363,6 +363,12 @@ pub struct UpdateMemoryInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReinforceMemoryInput {
+    pub importance: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MemoryListFilter {
     pub status: Option<MemoryStatus>,
 }
@@ -404,6 +410,26 @@ pub struct MemoryEmbeddingRecord {
     pub embedding_dim: usize,
     pub model_id: String,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEmbeddingVectorRecord {
+    pub memory_id: String,
+    pub memory_type: MemoryType,
+    pub source_type: MemorySourceType,
+    pub embedding: Vec<f32>,
+    pub embedding_dim: usize,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMemoryWithEmbeddingInput {
+    pub memory: CreateMemoryInput,
+    pub embedding: Vec<f32>,
+    pub embedding_dim: usize,
+    pub model_id: String,
 }
 
 /// 数据库迁移 - v1 到 v2
@@ -895,6 +921,20 @@ fn serialize_embedding_blob(embedding: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+fn deserialize_embedding_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
+    if blob.len() % std::mem::size_of::<f32>() != 0 {
+        return Err("embedding BLOB 长度不是 f32 字节宽度的整数倍".to_string());
+    }
+
+    Ok(blob
+        .chunks_exact(std::mem::size_of::<f32>())
+        .map(|chunk| {
+            let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            f32::from_le_bytes(bytes)
+        })
+        .collect())
+}
+
 fn parse_index_state(value: String) -> KnowledgeDocumentIndexState {
     KnowledgeDocumentIndexState::try_from(value.as_str()).unwrap_or_default()
 }
@@ -1166,6 +1206,37 @@ pub fn update_memory(
     get_memory(db, memory_id)?.ok_or_else(|| format!("记忆更新后读取失败: {memory_id}"))
 }
 
+/// 巩固已有记忆：复用原行，提升重要性并累加出现次数，避免重复记忆膨胀。
+pub fn reinforce_memory(
+    db: &Database,
+    memory_id: &str,
+    input: ReinforceMemoryInput,
+) -> Result<MemoryRecord, String> {
+    let current = get_memory(db, memory_id)?.ok_or_else(|| format!("记忆不存在: {memory_id}"))?;
+    if !(1..=10).contains(&input.importance) {
+        return Err("记忆重要性必须在 1 到 10 之间".to_string());
+    }
+
+    let now = current_timestamp_ms();
+    let importance = current.importance.max(input.importance);
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE memories
+         SET importance = ?1,
+             occurrence_count = occurrence_count + 1,
+             updated_at = ?2,
+             last_seen_at = ?3,
+             status = 'active'
+         WHERE id = ?4",
+        params![importance, now, now, memory_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(conn);
+    get_memory(db, memory_id)?.ok_or_else(|| format!("记忆巩固后读取失败: {memory_id}"))
+}
+
 /// 删除记忆。memory_embeddings 依赖外键级联清理，避免孤儿向量。
 pub fn delete_memory(db: &Database, memory_id: &str) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -1222,6 +1293,138 @@ pub fn insert_memory_embedding(
         map_memory_embedding_row,
     )
     .map_err(|e| e.to_string())
+}
+
+/// 原子创建记忆及其向量，避免出现没有 embedding 的 active 记忆。
+pub fn create_memory_with_embedding(
+    db: &Database,
+    input: CreateMemoryWithEmbeddingInput,
+) -> Result<MemoryRecord, String> {
+    let CreateMemoryWithEmbeddingInput {
+        memory,
+        embedding,
+        embedding_dim,
+        model_id,
+    } = input;
+
+    let content = memory.content.trim();
+    if content.is_empty() {
+        return Err("记忆内容不能为空".to_string());
+    }
+    if !(1..=10).contains(&memory.importance) {
+        return Err("记忆重要性必须在 1 到 10 之间".to_string());
+    }
+    if model_id.trim().is_empty() {
+        return Err("modelId 不能为空".to_string());
+    }
+    if embedding_dim == 0 || embedding_dim != embedding.len() {
+        return Err("embeddingDim 必须与 embedding 长度一致".to_string());
+    }
+
+    let structured_json =
+        serde_json::to_string(&memory.structured_json).map_err(|e| e.to_string())?;
+    let occurrence_count = memory.occurrence_count.unwrap_or(1).max(1);
+    let decay_score = memory.decay_score.unwrap_or(0.0).max(0.0);
+    let status = memory.status.unwrap_or(MemoryStatus::Active);
+    let memory_id = uuid::Uuid::new_v4().to_string();
+    let embedding_id = uuid::Uuid::new_v4().to_string();
+    let now = current_timestamp_ms();
+    let blob = serialize_embedding_blob(&embedding);
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO memories (
+            id, memory_type, source_type, content, structured_json, importance,
+            embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+            created_at, updated_at, last_seen_at, last_retrieved_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            &memory_id,
+            memory.memory_type.as_str(),
+            memory.source_type.as_str(),
+            content,
+            structured_json,
+            memory.importance,
+            model_id.trim(),
+            memory.source_session_id,
+            occurrence_count,
+            decay_score,
+            status.as_str(),
+            now,
+            now,
+            now,
+            memory.last_retrieved_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO memory_embeddings (id, memory_id, embedding, embedding_dim, model_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            embedding_id,
+            &memory_id,
+            blob,
+            embedding_dim as i64,
+            model_id.trim(),
+            now,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    drop(conn);
+    get_memory(db, &memory_id)?.ok_or_else(|| format!("记忆创建后读取失败: {memory_id}"))
+}
+
+/// 读取指定模型下的记忆向量，供抽取链路做入库前相似度去重。
+pub fn list_memory_embedding_vectors(
+    db: &Database,
+    model_id: &str,
+) -> Result<Vec<MemoryEmbeddingVectorRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT me.memory_id, m.memory_type, m.source_type, me.embedding, me.embedding_dim, me.model_id
+             FROM memory_embeddings me
+             INNER JOIN memories m ON m.id = me.memory_id
+             WHERE me.model_id = ?1 AND m.status = 'active'
+             ORDER BY m.last_seen_at DESC, me.created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![model_id], |row| {
+            let blob: Vec<u8> = row.get(3)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                blob,
+                row.get::<_, i64>(4)? as usize,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let (memory_id, memory_type, source_type, blob, embedding_dim, model_id) =
+            row.map_err(|e| e.to_string())?;
+        let embedding = deserialize_embedding_blob(&blob)?;
+        result.push(MemoryEmbeddingVectorRecord {
+            memory_id,
+            memory_type: MemoryType::try_from(memory_type.as_str()).unwrap_or(MemoryType::Episodic),
+            source_type: MemorySourceType::try_from(source_type.as_str())
+                .unwrap_or(MemorySourceType::AssistantChat),
+            embedding,
+            embedding_dim,
+            model_id,
+        });
+    }
+
+    Ok(result)
 }
 
 /// 创建新会话（支持元数据）
