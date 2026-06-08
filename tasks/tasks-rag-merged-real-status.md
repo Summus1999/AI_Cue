@@ -9,7 +9,7 @@
 - `src-tauri/src/rag/knowledge_base.rs` - 知识库导入/重建/异常文档重试请求模型、OCR 解析接线、分块持久化、embedding 入库、fingerprint 未变化短路跳过、阶段进度事件、embedding 结构化日志与失败收口。
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
-- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计，以及应用重启后 `indexing` 卡死文档恢复。
+- `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计、应用重启后 `indexing` 卡死文档恢复，以及助手模式个人记忆表结构、迁移、CRUD 与记忆向量级联删除。
 - `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及命令层集成测试。
 - `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复与知识库统计入口。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与类型定义。
@@ -154,7 +154,7 @@
 - ❌️ 11.0 落地助手模式个人面试记忆系统
   - 设计依据：`docs/plans/2026-06-08-assistant-memory-system-design.md`
   - 核心决策：assistant 模式默认启用记忆检索、interviewer 模式提供开关；实时抽取；来源为 assistant 模式面试题、用户显式指令、复盘手动录入；反思层与衰减归档都要做
-  - ❌️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
+  - ✅️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
   - ❌️ 11.2 抽取链路：实现 LLM 抽取与 JSON 校验（复用 review 模块范式）、入库前向量巩固去重，先打通复盘手动录入与用户显式指令两条确定性来源
   - ❌️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
   - ❌️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用

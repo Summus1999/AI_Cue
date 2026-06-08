@@ -2,7 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -236,6 +236,171 @@ pub struct KnowledgeEmbeddingRecord {
     pub knowledge_base_id: String,
     pub document_id: String,
     pub chunk_id: String,
+    pub embedding_dim: usize,
+    pub model_id: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryType {
+    Episodic,
+    Semantic,
+    Profile,
+    Procedural,
+}
+
+impl MemoryType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Episodic => "episodic",
+            Self::Semantic => "semantic",
+            Self::Profile => "profile",
+            Self::Procedural => "procedural",
+        }
+    }
+}
+
+impl TryFrom<&str> for MemoryType {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "episodic" => Ok(Self::Episodic),
+            "semantic" => Ok(Self::Semantic),
+            "profile" => Ok(Self::Profile),
+            "procedural" => Ok(Self::Procedural),
+            _ => Err(format!("未知的记忆类型: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySourceType {
+    AssistantChat,
+    Explicit,
+    ManualReview,
+}
+
+impl MemorySourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AssistantChat => "assistant_chat",
+            Self::Explicit => "explicit",
+            Self::ManualReview => "manual_review",
+        }
+    }
+}
+
+impl TryFrom<&str> for MemorySourceType {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "assistant_chat" => Ok(Self::AssistantChat),
+            "explicit" => Ok(Self::Explicit),
+            "manual_review" => Ok(Self::ManualReview),
+            _ => Err(format!("未知的记忆来源类型: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStatus {
+    Active,
+    Archived,
+}
+
+impl MemoryStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Archived => "archived",
+        }
+    }
+}
+
+impl TryFrom<&str> for MemoryStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "active" => Ok(Self::Active),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("未知的记忆状态: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMemoryInput {
+    pub memory_type: MemoryType,
+    pub source_type: MemorySourceType,
+    pub content: String,
+    pub structured_json: Value,
+    pub importance: i32,
+    pub embedding_model_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub occurrence_count: Option<i32>,
+    pub decay_score: Option<f64>,
+    pub status: Option<MemoryStatus>,
+    pub last_retrieved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemoryInput {
+    pub content: Option<String>,
+    pub structured_json: Option<Value>,
+    pub importance: Option<i32>,
+    pub decay_score: Option<f64>,
+    pub status: Option<MemoryStatus>,
+    pub last_retrieved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryListFilter {
+    pub status: Option<MemoryStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryRecord {
+    pub id: String,
+    pub memory_type: MemoryType,
+    pub source_type: MemorySourceType,
+    pub content: String,
+    pub structured_json: Value,
+    pub importance: i32,
+    pub embedding_model_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub occurrence_count: i32,
+    pub decay_score: f64,
+    pub status: MemoryStatus,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub last_seen_at: i64,
+    pub last_retrieved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMemoryEmbeddingInput {
+    pub memory_id: String,
+    pub embedding: Vec<f32>,
+    pub embedding_dim: usize,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEmbeddingRecord {
+    pub id: String,
+    pub memory_id: String,
     pub embedding_dim: usize,
     pub model_id: String,
     pub created_at: i64,
@@ -606,6 +771,66 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// 数据库迁移 - v7 到 v8（助手模式个人记忆系统）
+fn migrate_v7_to_v8(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if version < 8 {
+        println!("执行数据库迁移 v7 -> v8...");
+
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memories (
+                id                  TEXT PRIMARY KEY,
+                memory_type         TEXT NOT NULL,
+                source_type         TEXT NOT NULL,
+                content             TEXT NOT NULL,
+                structured_json     TEXT NOT NULL DEFAULT '{}',
+                importance          INTEGER NOT NULL DEFAULT 5 CHECK (importance >= 1 AND importance <= 10),
+                embedding_model_id  TEXT,
+                source_session_id   TEXT,
+                occurrence_count    INTEGER NOT NULL DEFAULT 1,
+                decay_score         REAL NOT NULL DEFAULT 0,
+                status              TEXT NOT NULL DEFAULT 'active',
+                created_at          INTEGER NOT NULL,
+                updated_at          INTEGER NOT NULL,
+                last_seen_at        INTEGER NOT NULL,
+                last_retrieved_at   INTEGER,
+                FOREIGN KEY (source_session_id) REFERENCES sessions(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memories_status_seen
+                ON memories(status, last_seen_at DESC, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memories_type_source
+                ON memories(memory_type, source_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memories_session
+                ON memories(source_session_id);
+
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id              TEXT PRIMARY KEY,
+                memory_id       TEXT NOT NULL,
+                embedding       BLOB NOT NULL,
+                embedding_dim   INTEGER NOT NULL,
+                model_id        TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                UNIQUE (memory_id, model_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_embeddings_memory
+                ON memory_embeddings(memory_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model
+                ON memory_embeddings(model_id, created_at DESC);",
+        )?;
+
+        tx.pragma_update(None, "user_version", 8)?;
+        tx.commit()?;
+
+        println!("数据库迁移 v7 -> v8 完成");
+    }
+
+    Ok(())
+}
+
 /// 初始化数据库
 pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error::Error>> {
     // 确保目录存在
@@ -650,6 +875,7 @@ pub fn init_database(app_data_dir: &Path) -> Result<Database, Box<dyn std::error
     migrate_v4_to_v5(&conn)?;
     migrate_v5_to_v6(&conn)?;
     migrate_v6_to_v7(&conn)?;
+    migrate_v7_to_v8(&conn)?;
 
     Ok(Database(Mutex::new(conn)))
 }
@@ -731,6 +957,42 @@ fn map_knowledge_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Knowledg
     })
 }
 
+fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
+    let memory_type: String = row.get(1)?;
+    let source_type: String = row.get(2)?;
+    let structured_json: String = row.get(4)?;
+    let status: String = row.get(10)?;
+
+    Ok(MemoryRecord {
+        id: row.get(0)?,
+        memory_type: MemoryType::try_from(memory_type.as_str()).unwrap_or(MemoryType::Episodic),
+        source_type: MemorySourceType::try_from(source_type.as_str())
+            .unwrap_or(MemorySourceType::AssistantChat),
+        content: row.get(3)?,
+        structured_json: serde_json::from_str(&structured_json).unwrap_or_else(|_| json!({})),
+        importance: row.get(5)?,
+        embedding_model_id: row.get(6)?,
+        source_session_id: row.get(7)?,
+        occurrence_count: row.get(8)?,
+        decay_score: row.get(9)?,
+        status: MemoryStatus::try_from(status.as_str()).unwrap_or(MemoryStatus::Active),
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        last_seen_at: row.get(13)?,
+        last_retrieved_at: row.get(14)?,
+    })
+}
+
+fn map_memory_embedding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEmbeddingRecord> {
+    Ok(MemoryEmbeddingRecord {
+        id: row.get(0)?,
+        memory_id: row.get(1)?,
+        embedding_dim: row.get::<_, i64>(2)? as usize,
+        model_id: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
 fn touch_knowledge_base(
     conn: &Connection,
     knowledge_base_id: &str,
@@ -747,6 +1009,220 @@ fn touch_knowledge_base(
 
 const KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR: &str =
     "应用重启后恢复：上次索引任务未完成，请重试";
+
+// ==================== Personal Memory CRUD Functions ====================
+
+/// 创建一条个人记忆。这里只负责可信结构入库，抽取与去重在后续阶段实现。
+pub fn create_memory(db: &Database, input: CreateMemoryInput) -> Result<MemoryRecord, String> {
+    let content = input.content.trim();
+    if content.is_empty() {
+        return Err("记忆内容不能为空".to_string());
+    }
+    if !(1..=10).contains(&input.importance) {
+        return Err("记忆重要性必须在 1 到 10 之间".to_string());
+    }
+
+    let occurrence_count = input.occurrence_count.unwrap_or(1).max(1);
+    let decay_score = input.decay_score.unwrap_or(0.0).max(0.0);
+    let status = input.status.unwrap_or(MemoryStatus::Active);
+    let structured_json =
+        serde_json::to_string(&input.structured_json).map_err(|e| e.to_string())?;
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = current_timestamp_ms();
+
+    conn.execute(
+        "INSERT INTO memories (
+            id, memory_type, source_type, content, structured_json, importance,
+            embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+            created_at, updated_at, last_seen_at, last_retrieved_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            &id,
+            input.memory_type.as_str(),
+            input.source_type.as_str(),
+            content,
+            structured_json,
+            input.importance,
+            input.embedding_model_id,
+            input.source_session_id,
+            occurrence_count,
+            decay_score,
+            status.as_str(),
+            now,
+            now,
+            now,
+            input.last_retrieved_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(conn);
+    get_memory(db, &id)?.ok_or_else(|| format!("记忆创建后读取失败: {id}"))
+}
+
+/// 按状态列出记忆。默认只列 active，避免归档记忆污染后续检索。
+pub fn list_memories(db: &Database, filter: MemoryListFilter) -> Result<Vec<MemoryRecord>, String> {
+    let status = filter.status.unwrap_or(MemoryStatus::Active);
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, memory_type, source_type, content, structured_json, importance,
+                    embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+                    created_at, updated_at, last_seen_at, last_retrieved_at
+             FROM memories
+             WHERE status = ?1
+             ORDER BY last_seen_at DESC, updated_at DESC, id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![status.as_str()], map_memory_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+
+    Ok(result)
+}
+
+/// 读取单条记忆，供后续前端管理面板和检索链路复用。
+pub fn get_memory(db: &Database, memory_id: &str) -> Result<Option<MemoryRecord>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT id, memory_type, source_type, content, structured_json, importance,
+                embedding_model_id, source_session_id, occurrence_count, decay_score, status,
+                created_at, updated_at, last_seen_at, last_retrieved_at
+         FROM memories
+         WHERE id = ?1",
+        params![memory_id],
+        map_memory_row,
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// 更新可编辑字段，并刷新 last_seen_at，表示这条记忆被再次确认。
+pub fn update_memory(
+    db: &Database,
+    memory_id: &str,
+    input: UpdateMemoryInput,
+) -> Result<MemoryRecord, String> {
+    let current = get_memory(db, memory_id)?.ok_or_else(|| format!("记忆不存在: {memory_id}"))?;
+
+    let content = input
+        .content
+        .unwrap_or_else(|| current.content.clone())
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return Err("记忆内容不能为空".to_string());
+    }
+
+    let importance = input.importance.unwrap_or(current.importance);
+    if !(1..=10).contains(&importance) {
+        return Err("记忆重要性必须在 1 到 10 之间".to_string());
+    }
+
+    let structured_json = input
+        .structured_json
+        .unwrap_or_else(|| current.structured_json.clone());
+    let structured_json = serde_json::to_string(&structured_json).map_err(|e| e.to_string())?;
+    let decay_score = input.decay_score.unwrap_or(current.decay_score).max(0.0);
+    let status = input.status.unwrap_or_else(|| current.status.clone());
+    let last_retrieved_at = input.last_retrieved_at.or(current.last_retrieved_at);
+    let now = current_timestamp_ms();
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE memories
+         SET content = ?1,
+             structured_json = ?2,
+             importance = ?3,
+             decay_score = ?4,
+             status = ?5,
+             updated_at = ?6,
+             last_seen_at = ?7,
+             last_retrieved_at = ?8
+         WHERE id = ?9",
+        params![
+            content,
+            structured_json,
+            importance,
+            decay_score,
+            status.as_str(),
+            now,
+            now,
+            last_retrieved_at,
+            memory_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    drop(conn);
+    get_memory(db, memory_id)?.ok_or_else(|| format!("记忆更新后读取失败: {memory_id}"))
+}
+
+/// 删除记忆。memory_embeddings 依赖外键级联清理，避免孤儿向量。
+pub fn delete_memory(db: &Database, memory_id: &str) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let affected = conn
+        .execute("DELETE FROM memories WHERE id = ?1", params![memory_id])
+        .map_err(|e| e.to_string())?;
+
+    if affected == 0 {
+        return Err(format!("记忆不存在: {memory_id}"));
+    }
+
+    Ok(())
+}
+
+/// 写入单条记忆向量。批量 embedding 与检索排序会在后续阶段补齐。
+pub fn insert_memory_embedding(
+    db: &Database,
+    input: CreateMemoryEmbeddingInput,
+) -> Result<MemoryEmbeddingRecord, String> {
+    if input.memory_id.trim().is_empty() {
+        return Err("memoryId 不能为空".to_string());
+    }
+    if input.model_id.trim().is_empty() {
+        return Err("modelId 不能为空".to_string());
+    }
+    if input.embedding_dim == 0 || input.embedding_dim != input.embedding.len() {
+        return Err("embeddingDim 必须与 embedding 长度一致".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = current_timestamp_ms();
+    let blob = serialize_embedding_blob(&input.embedding);
+
+    conn.execute(
+        "INSERT INTO memory_embeddings (id, memory_id, embedding, embedding_dim, model_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            &id,
+            &input.memory_id,
+            blob,
+            input.embedding_dim as i64,
+            &input.model_id,
+            now,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.query_row(
+        "SELECT id, memory_id, embedding_dim, model_id, created_at
+         FROM memory_embeddings
+         WHERE id = ?1",
+        params![id],
+        map_memory_embedding_row,
+    )
+    .map_err(|e| e.to_string())
+}
 
 /// 创建新会话（支持元数据）
 pub fn create_session(
@@ -2248,6 +2724,25 @@ mod tests {
         }
     }
 
+    fn sample_memory_input(content: &str) -> CreateMemoryInput {
+        CreateMemoryInput {
+            memory_type: MemoryType::Semantic,
+            source_type: MemorySourceType::Explicit,
+            content: content.to_string(),
+            structured_json: json!({
+                "skill": "Rust",
+                "evidence": "用户明确要求记住 Rust 项目经验"
+            }),
+            importance: 10,
+            embedding_model_id: Some("text-embedding-v2".to_string()),
+            source_session_id: None,
+            occurrence_count: Some(1),
+            decay_score: Some(0.0),
+            status: Some(MemoryStatus::Active),
+            last_retrieved_at: None,
+        }
+    }
+
     fn count_rows(db: &Database, table: &str) -> i64 {
         let conn = db.0.lock().unwrap();
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -2257,14 +2752,123 @@ mod tests {
     }
 
     #[test]
-    fn test_v7_migration_creates_knowledge_base_tables() {
+    fn test_v8_migration_creates_memory_tables() {
         let db = create_test_db();
         let conn = db.0.lock().unwrap();
 
         let version: i32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
+
+        for table in ["memories", "memory_embeddings"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table should exist: {table}");
+        }
+    }
+
+    #[test]
+    fn test_create_list_get_and_update_memory() {
+        let db = create_test_db();
+
+        let memory = create_memory(&db, sample_memory_input("我擅长 Rust 异步服务优化")).unwrap();
+        assert_eq!(memory.memory_type, MemoryType::Semantic);
+        assert_eq!(memory.source_type, MemorySourceType::Explicit);
+        assert_eq!(memory.content, "我擅长 Rust 异步服务优化");
+        assert_eq!(memory.structured_json["skill"], "Rust");
+        assert_eq!(memory.importance, 10);
+        assert_eq!(memory.occurrence_count, 1);
+        assert_eq!(memory.status, MemoryStatus::Active);
+
+        let listed = list_memories(
+            &db,
+            MemoryListFilter {
+                status: Some(MemoryStatus::Active),
+            },
+        )
+        .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, memory.id);
+
+        let fetched = get_memory(&db, &memory.id).unwrap().unwrap();
+        assert_eq!(fetched.id, memory.id);
+
+        let updated = update_memory(
+            &db,
+            &memory.id,
+            UpdateMemoryInput {
+                content: Some("我擅长 Rust 和 Tauri 后端排障".to_string()),
+                structured_json: Some(json!({
+                    "skill": "Rust",
+                    "framework": "Tauri"
+                })),
+                importance: Some(9),
+                decay_score: Some(0.2),
+                status: Some(MemoryStatus::Archived),
+                last_retrieved_at: Some(1_720_000_000_000),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(updated.content, "我擅长 Rust 和 Tauri 后端排障");
+        assert_eq!(updated.structured_json["framework"], "Tauri");
+        assert_eq!(updated.importance, 9);
+        assert_eq!(updated.decay_score, 0.2);
+        assert_eq!(updated.status, MemoryStatus::Archived);
+        assert_eq!(updated.last_retrieved_at, Some(1_720_000_000_000));
+        assert!(updated.last_seen_at >= memory.last_seen_at);
+
+        let active = list_memories(
+            &db,
+            MemoryListFilter {
+                status: Some(MemoryStatus::Active),
+            },
+        )
+        .unwrap();
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn test_delete_memory_cascades_memory_embeddings() {
+        let db = create_test_db();
+        let memory = create_memory(&db, sample_memory_input("我处理过高并发登录链路")).unwrap();
+
+        let embedding = insert_memory_embedding(
+            &db,
+            CreateMemoryEmbeddingInput {
+                memory_id: memory.id.clone(),
+                embedding: vec![0.1, 0.2, 0.3],
+                embedding_dim: 3,
+                model_id: "text-embedding-v2".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(embedding.memory_id, memory.id);
+        assert_eq!(embedding.embedding_dim, 3);
+        assert_eq!(count_rows(&db, "memories"), 1);
+        assert_eq!(count_rows(&db, "memory_embeddings"), 1);
+
+        delete_memory(&db, &memory.id).unwrap();
+
+        assert_eq!(count_rows(&db, "memories"), 0);
+        assert_eq!(count_rows(&db, "memory_embeddings"), 0);
+    }
+
+    #[test]
+    fn test_latest_migration_keeps_knowledge_base_tables() {
+        let db = create_test_db();
+        let conn = db.0.lock().unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 8);
 
         for table in [
             "knowledge_bases",
