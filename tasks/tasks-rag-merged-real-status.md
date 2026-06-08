@@ -10,20 +10,22 @@
 - `src-tauri/src/rag/integration_test.rs` - RAG 导入/删除/重导入、fingerprint 跳过与模型变更拒绝等 Rust 集成测试。
 - `src-tauri/src/rag/task_registry.rs` - 知识库导入/重建索引任务注册表，负责记录后台任务最新进度快照并提供查询能力。
 - `src-tauri/src/database.rs` - 知识库表结构、迁移、CRUD、同路径文档查找、chunk/embedding 写入、知识库维度聚合统计、应用重启后 `indexing` 卡死文档恢复，以及助手模式个人记忆表结构、迁移、CRUD 与记忆向量级联删除。
-- `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重，以及记忆和向量的原子入库。
-- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询，以及命令层集成测试。
-- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复与知识库统计入口。
+- `src-tauri/src/memory.rs` - 助手模式个人记忆抽取链路，负责 AI 抽取 JSON 校验、显式指令与手动复盘候选生成、embedding 相似度巩固去重、记忆和向量的原子入库，以及 assistant turn 实时抽取编排。
+- `src-tauri/src/commands.rs` - Tauri RAG 命令入口、单文档/整库重建与异常文档重试命令、知识库统计查询、启动恢复命令、进度事件发射、后台任务状态查询、文档 chunk 明细查询、个人记忆实时抽取命令，以及命令层集成测试。
+- `src-tauri/src/lib.rs` - Tauri 命令注册，包含 RAG 导入、重建、异常文档重试、启动恢复、知识库统计与个人记忆实时抽取入口。
 - `src/services/ragService.ts` - 前端 RAG 服务层、知识库导入/单文档/整库重建/异常文档重试进度监听封装、知识库统计查询、启动恢复调用、后台任务状态查询、文档 chunk 明细查询与类型定义。
+- `src/services/memoryExtraction.ts` - 前端个人记忆实时抽取服务，负责 assistant 模式前置闸门、后端请求构建、fire-and-forget 调用与失败降级。
 - `src/services/ragRuntimeConfig.ts` - 将持久化的 RAG embedding provider 配置映射并去重同步到后端 `rag_configure` 运行时。
 - `src/services/aiChat.ts` - 聊天请求构建、可选 retrieval context 注入，以及聊天发送前的 RAG runtime 配置兜底同步。
 - `src/services/chatRetrieval.ts` - 聊天 RAG 检索策略与 fallback 判定的纯函数模块，供主流程与回归测试复用。
 - `src/services/chatReplay.ts` - 继续生成 / 重试消息的请求准备纯函数模块，负责恢复原用户上下文与请求元数据。
 - `src/services/__tests__/chatRetrieval.test.ts` - 覆盖 retrieval off / on / empty / failure fallback 的前端回归测试。
 - `src/services/__tests__/chatReplay.test.ts` - 覆盖 continue generate / retry 请求准备逻辑的前端回归测试。
+- `src/services/__tests__/memoryExtraction.test.ts` - 覆盖 assistant 记忆实时抽取的前置闸门、后端请求构建与 fire-and-forget 失败降级。
 - `src/store/config.ts` - 前端 RAG 配置持久化。
 - `src/store/rag.ts` - 前端 RAG store，现已补齐知识库列表、当前选中库/文档、知识库聚合统计、导入任务、单文档/整库重建索引、异常文档重试状态与错误状态。
 - `src/store/__tests__/rag.test.ts` - RAG store 回归测试，覆盖知识库列表、知识库统计、文档详情/分块、任务快照、单文档/整库重建索引以及异常文档重试状态同步。
-- `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口，并将知识库页面切换到独立面板组件。
+- `src/App.tsx` - 主聊天编排与消息渲染，现已增加知识库视图入口、知识库独立面板，以及 assistant 完整回答后的个人记忆实时抽取触发。
 - `src/components/KnowledgeBasePanel.tsx` - 知识库页面容器组件，承载知识库概览、库选择、知识库统计、导入区、整库重建索引、异常文档重试、删除知识库操作、文档列表与文档预览挂载点。
 - `src/components/KnowledgeBasePanel.test.tsx` - 知识库页面容器回归测试，覆盖库切换、统计展示、整库重建、异常文档重试与删除确认。
 - `src/components/knowledge/KnowledgeDocumentList.tsx` - 当前知识库的文档列表组件，负责文档状态展示与当前文档选择。
@@ -157,7 +159,7 @@
   - 核心决策：assistant 模式默认启用记忆检索、interviewer 模式提供开关；实时抽取；来源为 assistant 模式面试题、用户显式指令、复盘手动录入；反思层与衰减归档都要做
   - ✅️ 11.1 后端地基：新增 `memories` 与 `memory_embeddings` 表、数据库迁移与 `user_version` 提升、CRUD 与级联删除，并补齐 migration、CRUD、级联删除的 Rust 数据库测试
   - ✅️ 11.2 抽取链路：实现 LLM 抽取与 JSON 校验（复用 review 模块范式）、入库前向量巩固去重，先打通复盘手动录入与用户显式指令两条确定性来源
-  - ❌️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
+  - ✅️ 11.3 实时抽取：assistant 模式每轮回答完成后异步触发抽取，加前置闸门（长度/疑问句/关键词等廉价判断）与成本、延迟保护，抽取任务绝不阻塞主回答链路
   - ❌️ 11.4 检索注入：扩展 `SearchSourceKind` 与 `chatRetrieval` 新增个人记忆来源，实现 relevance / recency / importance 三因子打分，assistant 默认启用、interviewer 按开关启用
   - ❌️ 11.5 反思与衰减：累计新增 active 记忆达到阈值触发反思生成画像记忆；衰减归档低重要性且长期未命中的情景记忆，显式指令与复盘录入来源豁免
   - ❌️ 11.6 记忆管理面板：新增记忆抽取 / 检索 / 列表 / 更新 / 删除 / 反思的 Tauri 命令，并提供可见、可编辑、可删除的前端记忆管理界面

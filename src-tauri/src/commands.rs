@@ -166,6 +166,17 @@ pub fn ai_list_providers(
     registry.list_providers()
 }
 
+/// 实时抽取 assistant 模式问答记忆。
+/// 该命令只服务后台增强链路，失败会由前端吞掉，不阻塞主聊天。
+#[tauri::command]
+pub async fn memory_extract_from_assistant_turn(
+    db: State<'_, Arc<crate::database::Database>>,
+    registry: State<'_, ProviderRegistry>,
+    request: crate::memory::AssistantTurnMemoryExtractionRequest,
+) -> Result<crate::memory::AssistantTurnMemoryExtractionSummary, String> {
+    crate::memory::extract_assistant_turn_memories(&db, &registry, request).await
+}
+
 /// 网络健康检查命令
 /// 检测互联网连通性和 Provider API 可达性
 #[tauri::command]

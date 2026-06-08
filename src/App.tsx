@@ -58,6 +58,7 @@ import { ragService, type CitationMetadata } from './services/ragService';
 import {
   resolveChatRetrievalContext,
 } from './services/chatRetrieval';
+import { triggerAssistantMemoryExtraction } from './services/memoryExtraction';
 import {
   buildContinueGenerationPlan,
   buildRetryMessagePlan,
@@ -524,6 +525,16 @@ function App() {
               console.error('Failed to save assistant message:', err);
             });
           }
+
+          void triggerAssistantMemoryExtraction({
+            promptMode,
+            isComplete: isComplete ?? true,
+            sessionId,
+            userContent,
+            assistantContent: finalAssistantContent,
+            imageBase64,
+            config,
+          });
 
           if (isComplete && codeEditor.codeModeAutoDetect && finalAssistantContent) {
             const detection = codeDetector.detect(finalAssistantContent);

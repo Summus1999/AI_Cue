@@ -4,8 +4,8 @@ use crate::database::{
     self, CreateMemoryInput, CreateMemoryWithEmbeddingInput, MemoryRecord, MemorySourceType,
     MemoryStatus, MemoryType, ReinforceMemoryInput,
 };
-use crate::rag::EmbeddingProvider;
-use serde::Deserialize;
+use crate::rag::{create_embedding_provider, EmbeddingProvider, EmbeddingProviderConfig};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const MEMORY_EXTRACTION_SYSTEM_PROMPT: &str = r#"你是 AI_Cue 的个人面试记忆抽取器。
@@ -45,6 +45,25 @@ pub struct ManualReviewInput {
     pub answer: String,
     pub outcome: String,
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantTurnMemoryExtractionRequest {
+    pub session_id: String,
+    pub provider: ProviderType,
+    pub config: ProviderConfig,
+    pub model: String,
+    pub embedding_config: EmbeddingProviderConfig,
+    pub source_text: String,
+    pub similarity_threshold: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantTurnMemoryExtractionSummary {
+    pub candidate_count: usize,
+    pub persisted_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +156,14 @@ fn parse_provider_type(provider: &str) -> Result<ProviderType, String> {
         "openai_compat" | "openaicompat" | "openai" => Ok(ProviderType::OpenAICompat),
         "claude" => Ok(ProviderType::Claude),
         _ => Err(format!("Unknown provider: {}", provider)),
+    }
+}
+
+fn provider_type_id(provider: &ProviderType) -> &'static str {
+    match provider {
+        ProviderType::Qwen => "qwen",
+        ProviderType::OpenAICompat => "openai_compat",
+        ProviderType::Claude => "claude",
     }
 }
 
@@ -318,6 +345,50 @@ pub async fn persist_candidate_with_consolidation(
             model_id,
         },
     )
+}
+
+pub async fn extract_assistant_turn_memories(
+    db: &database::Database,
+    providers: &ProviderRegistry,
+    request: AssistantTurnMemoryExtractionRequest,
+) -> Result<AssistantTurnMemoryExtractionSummary, String> {
+    let session_id = request.session_id.trim();
+    if session_id.is_empty() {
+        return Err("sessionId 不能为空".to_string());
+    }
+    if request.source_text.trim().is_empty() {
+        return Err("sourceText 不能为空".to_string());
+    }
+
+    let embedder = create_embedding_provider(&request.embedding_config)?;
+    let candidates = extract_candidates_with_llm(
+        providers,
+        provider_type_id(&request.provider),
+        &request.config,
+        &request.model,
+        &request.source_text,
+        MemorySourceType::AssistantChat,
+    )
+    .await?;
+
+    let candidate_count = candidates.len();
+    let mut persisted_count = 0;
+    for candidate in candidates {
+        persist_candidate_with_consolidation(
+            db,
+            embedder.as_ref(),
+            candidate,
+            Some(session_id.to_string()),
+            request.similarity_threshold.unwrap_or(0.92),
+        )
+        .await?;
+        persisted_count += 1;
+    }
+
+    Ok(AssistantTurnMemoryExtractionSummary {
+        candidate_count,
+        persisted_count,
+    })
 }
 
 #[cfg(test)]
