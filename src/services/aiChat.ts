@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } from '../store/config';
-import { PROMPT_TEMPLATES } from '../store/config';
+import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground, PromptMode } from '../store/config';
+import { PROMPT_TEMPLATES, getPromptMode } from '../store/config';
+import { getTemplateById } from './interviewTemplates';
 import { ensureRagRuntimeConfigured } from './ragRuntimeConfig';
 import { selectProvider, getTopPriorityEntry } from './smartRouter';
 import type { RouteSelection } from './smartRouter';
@@ -61,7 +62,6 @@ interface StreamRequestOptions {
 
 export interface ChatRequestOptions {
   retrievalContext?: string;
-  templatePrompt?: string;
 }
 
 export const SCREENSHOT_ANALYSIS_PROMPT =
@@ -83,24 +83,35 @@ export function buildScreenshotFollowUpPrompt(question: string): string {
   ].join('\n');
 }
 
-function buildInterviewBackgroundPrompt(bg: InterviewBackground): string {
+function buildInterviewBackgroundPrompt(bg: InterviewBackground, mode: PromptMode): string {
   const parts: string[] = ['---', '## 本次面试背景信息'];
 
-  if (bg.company) {
-    parts.push(`### 目标公司\n${bg.company}`);
-  }
-  if (bg.position) {
-    parts.push(`### 应聘岗位\n${bg.position}`);
-  }
-  if (bg.jd) {
-    parts.push(`### 岗位JD\n${bg.jd}`);
-  }
+  if (bg.company) parts.push('### 目标公司\n' + bg.company);
+  if (bg.position) parts.push('### 应聘岗位\n' + bg.position);
+  if (bg.jd) parts.push('### 岗位JD\n' + bg.jd);
   if (bg.resume) {
-    parts.push(`### 候选人简历\n${bg.resume}`);
+    parts.push('### 候选人简历\n' + bg.resume);
+    parts.push('');
+    parts.push('【简历驱动指令 - 必须严格遵守】');
+
+    if (mode === 'interviewer') {
+      parts.push('你是面试官。请将简历作为"考察清单"：为每个项目准备技术选型、架构、量化结果、个人贡献、失败反思五类追问；');
+      parts.push('对简历中每个技术关键词至少追问一个深度验证题；模糊描述（如"优化了性能"）必须追问具体指标。');
+    } else if (mode === 'cheat') {
+      parts.push('你是面试助手。每条要点须锚定简历中的项目或技术名词，关键数据用【】包裹。');
+    } else {
+      parts.push('你是面试助手。回答技术问题时优先引用简历项目作为实例，用简历中的具体数据支撑观点，');
+      parts.push('确保回答中的技术水平声明与简历经历一致——不夸大不缩小。');
+    }
   }
 
   parts.push('');
-  parts.push('请严格根据以上JD要求和候选人简历，有针对性地设计面试问题。优先考察JD中强调的技术能力，并结合简历中的项目经历进行追问。');
+
+  if (mode === 'interviewer') {
+    parts.push('请根据以上JD和简历，设计有针对性的面试问题，优先考察JD强调的技术并结合简历项目进行交叉验证式追问。');
+  } else {
+    parts.push('请根据以上JD和简历，给出个性化回答并结合候选人项目经历作为实例支撑。');
+  }
 
   return parts.join('\n');
 }
@@ -120,41 +131,41 @@ function appendRetrievalContext(systemPrompt: string, retrievalContext?: string)
   ].join('\n\n');
 }
 
+// 从配置解析基础 Prompt 模板
+function resolveBasePrompt(config: AppConfig): string {
+  if (config.promptTemplateId === 'custom' && config.customPrompt?.trim()) {
+    return config.customPrompt;
+  }
+  const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
+  return template?.prompt || PROMPT_TEMPLATES[0].prompt;
+}
+
 // 构建发送给 AI 的 System Prompt。
 // 拼接顺序（优先级从高到低）：
 //   1. 面试模板 Prompt（来自 interviewTemplates.ts，用户主动选择，最高优先级）
 //   2. 基础 Prompt（来自设置页的 Prompt 模板，默认 "通用助手"）
 //   3. 面试背景信息（JD、简历、公司、岗位，来自面试设置弹窗）
 //   4. RAG 检索上下文（知识库中检索到的相关文档片段）
-// 模板 Prompt 放在最前面，确保 AI 优先遵循模板的角色设定。
-function getSystemPrompt(config: AppConfig, retrievalContext?: string, templatePrompt?: string): string {
-  // 1. 获取基础 Prompt
-  let basePrompt: string;
-  if (config.promptTemplateId === 'custom') {
-    if (config.customPrompt?.trim()) {
-      basePrompt = config.customPrompt;
-    } else {
-      basePrompt = PROMPT_TEMPLATES[0].prompt; // 兜底：使用数组第一项（通用助手）
+function getSystemPrompt(config: AppConfig, promptMode: PromptMode, retrievalContext?: string): string {
+  let prompt = resolveBasePrompt(config);
+
+  // 注入面试模板 Prompt（优先于基础 Prompt）
+  if (config.activeTemplateId) {
+    const t = getTemplateById(config.activeTemplateId);
+    if (t?.systemPrompt) {
+      prompt = `${t.systemPrompt}\n\n---\n\n${prompt}`;
+      log.debug(`注入面试模板: ${t.name} (${t.id})`);
     }
-  } else {
-    const template = PROMPT_TEMPLATES.find((item) => item.id === config.promptTemplateId);
-    basePrompt = template?.prompt || PROMPT_TEMPLATES[0].prompt;
   }
 
-  // 2. 注入面试模板 Prompt（在基础 Prompt 之前，确保角色设定优先）
-  if (templatePrompt) {
-    basePrompt = `${templatePrompt}\n\n---\n\n${basePrompt}`;
-  }
-
-  // 3. 注入面试背景信息
+  // 注入面试背景信息
   const bg = config.interviewBackground;
   if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
-    log.debug(`注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
-    const bgSection = buildInterviewBackgroundPrompt(bg);
-    return appendRetrievalContext(`${basePrompt}\n\n${bgSection}`, retrievalContext);
+    log.debug(`注入面试背景: mode=${promptMode}, 简历长度=${bg.resume?.length || 0}字符`);
+    prompt = `${prompt}\n\n${buildInterviewBackgroundPrompt(bg, promptMode)}`;
   }
 
-  return appendRetrievalContext(basePrompt, retrievalContext);
+  return appendRetrievalContext(prompt, retrievalContext);
 }
 
 /** 流结果 */
@@ -356,7 +367,8 @@ export async function sendStream(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config, options.retrievalContext, options.templatePrompt);
+  const mode = getPromptMode(config);
+  const systemPrompt = getSystemPrompt(config, mode, options.retrievalContext);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -466,7 +478,8 @@ export async function sendChat(
     throw new Error(`请先配置 ${provider} 的 API Key`);
   }
 
-  const systemPrompt = getSystemPrompt(config, options.retrievalContext, options.templatePrompt);
+  const mode = getPromptMode(config);
+  const systemPrompt = getSystemPrompt(config, mode, options.retrievalContext);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -531,7 +544,7 @@ export async function sendToQwen(
   }
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: getSystemPrompt(config) },
+    { role: 'system', content: getSystemPrompt(config, getPromptMode(config)) },
     ...history,
     { role: 'user', content: question },
   ];
@@ -560,7 +573,7 @@ export async function sendToQwenStream(
   }
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: getSystemPrompt(config) },
+    { role: 'system', content: getSystemPrompt(config, getPromptMode(config)) },
     ...history,
     { role: 'user', content: question },
   ];
