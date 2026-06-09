@@ -27,7 +27,7 @@ impl UrlValidator {
         allowed.insert("api.deepseek.com".to_string());
         allowed.insert("openai.com".to_string());
 
-        let mut blocked = HashSet::new();
+        let blocked = HashSet::new();
         // 内置黑名单（默认禁止）
 
         Self {

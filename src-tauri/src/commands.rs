@@ -373,10 +373,9 @@ pub async fn batch_health_check(
     Ok(BatchHealthCheckResult { results })
 }
 
-// ==================== 向下兼容：保留原有千问命令（已弃用）====================
+// ==================== 向下兼容：保留原有千问命令 ====================
 
-/// 千问 AI 对话（已弃用，请使用 ai_chat）
-#[deprecated(since = "0.2.0", note = "请使用 ai_chat 命令")]
+/// 千问 AI 对话（向下兼容，新代码请使用 ai_chat）
 #[tauri::command]
 pub async fn qwen_chat(
     api_key: String,
@@ -386,8 +385,7 @@ pub async fn qwen_chat(
     crate::qwen::chat(&api_key, &model, messages).await
 }
 
-/// 千问 AI 流式对话（已弃用，请使用 ai_chat_stream）
-#[deprecated(since = "0.2.0", note = "请使用 ai_chat_stream 命令")]
+/// 千问 AI 流式对话（向下兼容，新代码请使用 ai_chat_stream）
 #[tauri::command]
 pub async fn qwen_chat_stream(
     app: AppHandle,

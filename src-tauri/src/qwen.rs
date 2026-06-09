@@ -1,7 +1,6 @@
 // 千问 API 调用模块 - 使用 DashScope OpenAI 兼容接口
 
 use base64::Engine;
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;

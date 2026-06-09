@@ -23,7 +23,6 @@ pub async fn parse_openai_sse_stream(
 ) -> Result<bool, AIError> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
-    let mut received_done = false;
     let mut finish_reason = String::new();
 
     if *cancel_rx.borrow() {
@@ -68,7 +67,6 @@ pub async fn parse_openai_sse_stream(
 
             if let Some(json_str) = line.strip_prefix("data: ") {
                 if json_str.trim() == "[DONE]" {
-                    received_done = true;
                     let _ = app.emit(
                         event_name,
                         StreamEvent {
