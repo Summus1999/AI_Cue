@@ -8,6 +8,40 @@ import { NetworkStatus } from '../services/networkMonitor';
 import { FriendlyError } from '../services/errorClassifier';
 import { RetryState } from '../services/retryStrategy';
 
+// ==================== 降级事件类型 ====================
+
+export type DegradationReason =
+  | 'unreachable'    // 网络不可达
+  | 'high_latency'   // 延迟超过阈值
+  | 'health_failed'  // 健康检查本身失败
+  | 'all_degraded';  // 所有候选都不可用，回退到 activeProvider
+
+export interface SkippedCandidate {
+  provider: string;
+  model: string;
+  reason: DegradationReason;
+  latencyMs?: number | null;
+}
+
+export interface DegradationEvent {
+  /** 事件唯一 ID */
+  id: string;
+  /** 时间戳 */
+  timestamp: number;
+  /** 原本期望的 provider（最高优先级未降级者） */
+  intendedProvider: string;
+  /** 原本期望的 model */
+  intendedModel: string;
+  /** 实际使用的 provider */
+  actualProvider: string;
+  /** 实际使用的 model */
+  actualModel: string;
+  /** 降级原因 */
+  reason: DegradationReason;
+  /** 被跳过的候选列表（按优先级排序） */
+  skippedCandidates: SkippedCandidate[];
+}
+
 interface NetworkResilienceState {
   // ========== 网络状态 ==========
   networkStatus: NetworkStatus;
@@ -35,6 +69,16 @@ interface NetworkResilienceState {
   waitingStartTime: number | null;
   setWaiting: (messageId: string | null) => void;
   getWaitingSeconds: () => number;
+
+  // ========== 降级通知 ==========
+  /** 降级历史（当前会话，最多保留 20 条） */
+  degradationEvents: DegradationEvent[];
+  addDegradationEvent: (event: DegradationEvent) => void;
+  clearDegradationHistory: () => void;
+
+  /** 最新一条未读降级事件（用于 toast 触发） */
+  lastUnreadDegradation: DegradationEvent | null;
+  markDegradationRead: () => void;
 }
 
 /**
@@ -98,6 +142,16 @@ export const useNetworkResilience = create<NetworkResilienceState>((set, get) =>
     if (!waitingStartTime) return 0;
     return Math.floor((Date.now() - waitingStartTime) / 1000);
   },
+
+  // ========== 降级通知 ==========
+  degradationEvents: [],
+  addDegradationEvent: (event) => set((state) => ({
+    degradationEvents: [event, ...state.degradationEvents].slice(0, 20),
+    lastUnreadDegradation: event,
+  })),
+  clearDegradationHistory: () => set({ degradationEvents: [], lastUnreadDegradation: null }),
+  lastUnreadDegradation: null,
+  markDegradationRead: () => set({ lastUnreadDegradation: null }),
 }));
 
 /**

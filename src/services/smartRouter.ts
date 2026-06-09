@@ -3,12 +3,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AppConfig, SmartRouteEntry, ProviderType } from '../store/config';
 import { PROVIDERS } from '../store/config';
+import type { SkippedCandidate, DegradationReason } from '../store/networkResilience';
 
 // 路由选择结果
 export interface RouteSelection {
   provider: ProviderType;
   model: string;
   entryId: string;
+  /** 降级详情：哪些候选被跳过以及原因 */
+  skippedCandidates?: SkippedCandidate[];
 }
 
 // 后端批量健康检查返回
@@ -74,22 +77,34 @@ export async function selectProvider(
 ): Promise<RouteSelection | null> {
   const { smartRouting } = config;
 
-  // 开关未启用或无候选列表，不干预
   if (!smartRouting.enabled || smartRouting.entries.length === 0) {
     return null;
   }
 
   const priorityGroups = groupByPriority(smartRouting.entries);
+  const allSkipped: SkippedCandidate[] = [];
 
-  // 从高优先级到低优先级尝试
+  const addSkipped = (e: SmartRouteEntry, reason: DegradationReason, latencyMs?: number | null) => {
+    allSkipped.push({ provider: e.provider, model: e.model, reason, latencyMs: latencyMs ?? null });
+  };
+
   for (const [, entries] of priorityGroups) {
-    // 过滤本 session 已降级的模型
-    const activeEntries = entries.filter((e) => !degradedModels.has(e.id));
+    // 本组中 session 已降级的直接记入跳过
+    const activeEntries: SmartRouteEntry[] = [];
+    for (const e of entries) {
+      if (degradedModels.has(e.id)) {
+        addSkipped(e, 'unreachable');
+      } else {
+        activeEntries.push(e);
+      }
+    }
     if (activeEntries.length === 0) continue;
 
-    // 同优先级的候选进行批量探测
     const candidates = entriesToCandidates(activeEntries, config);
     if (candidates.length === 0) continue;
+
+    // 构建 id → entry 映射，避免后续重复 find
+    const entryById = new Map(activeEntries.map((e) => [e.id, e]));
 
     let statuses: CandidateHealthStatus[];
     try {
@@ -99,7 +114,7 @@ export async function selectProvider(
       );
       statuses = result.results;
     } catch {
-      // 健康检查本身失败，跳过该优先级组
+      for (const e of activeEntries) addSkipped(e, 'health_failed');
       continue;
     }
 
@@ -113,19 +128,43 @@ export async function selectProvider(
       )
       .sort((a, b) => (a.latencyMs ?? Infinity) - (b.latencyMs ?? Infinity));
 
+    // 记录不可达或延迟过高的候选
+    for (const s of statuses) {
+      if (viable.some((v) => v.id === s.id)) continue;
+      const entry = entryById.get(s.id);
+      if (!entry) continue;
+      addSkipped(entry, s.reachable ? 'high_latency' : 'unreachable', s.latencyMs);
+    }
+
     if (viable.length > 0) {
-      const best = viable[0];
-      const entry = activeEntries.find((e) => e.id === best.id);
+      const entry = entryById.get(viable[0].id);
       if (entry) {
         return {
           provider: entry.provider,
           model: entry.model,
           entryId: entry.id,
+          skippedCandidates: allSkipped.length > 0 ? allSkipped : undefined,
         };
       }
     }
   }
 
-  // 所有候选都不可用，返回 null 让调用方用 activeProvider 兜底
   return null;
+}
+
+/**
+ * 获取最高优先级首选条目（排除 session 已降级且已配置 API Key 者）
+ */
+export function getTopPriorityEntry(
+  entries: SmartRouteEntry[],
+  degradedModels: Set<string>,
+  configuredProviders: Set<string>,
+): SmartRouteEntry | null {
+  // 直接遍历找最小 priority，无需完整排序
+  let best: SmartRouteEntry | null = null;
+  for (const e of entries) {
+    if (degradedModels.has(e.id) || !configuredProviders.has(e.provider)) continue;
+    if (!best || e.priority < best.priority) best = e;
+  }
+  return best;
 }

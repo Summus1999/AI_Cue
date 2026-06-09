@@ -3,8 +3,10 @@ import { listen } from '@tauri-apps/api/event';
 import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } from '../store/config';
 import { PROMPT_TEMPLATES } from '../store/config';
 import { ensureRagRuntimeConfigured } from './ragRuntimeConfig';
-import { selectProvider } from './smartRouter';
+import { selectProvider, getTopPriorityEntry } from './smartRouter';
+import type { RouteSelection } from './smartRouter';
 import { createLogger } from './logger';
+import { useNetworkResilience, type DegradationReason } from '../store/networkResilience';
 
 const log = createLogger('AIChat');
 
@@ -330,12 +332,19 @@ export async function sendStream(
   let routedProvider = config.activeProvider;
   let routedModel: string | null = null;
 
+  let routeResult: Awaited<ReturnType<typeof selectProvider>> = null;
+
   if (config.smartRouting?.enabled && config.smartRouting.entries.length > 0) {
-    const routeResult = await selectProvider(config, degradedModels);
+    routeResult = await selectProvider(config, degradedModels);
     if (routeResult) {
       routedProvider = routeResult.provider;
       routedModel = routeResult.model;
     }
+  }
+
+  // 降级检测：实际路由 != 最高优先级首选 → 写入降级事件
+  if (config.smartRouting?.enabled) {
+    recordDegradationIfNeeded(config, degradedModels, routeResult, routedProvider, routedModel);
   }
 
   const provider = routedProvider;
@@ -379,6 +388,64 @@ export async function sendStream(
     result.usedModel = routedModel;
   }
   return result;
+}
+
+/** 降级检测：实际路由偏离最高优先级首选时写入 store */
+function recordDegradationIfNeeded(
+  config: AppConfig,
+  degradedModels: Set<string>,
+  routeResult: RouteSelection | null,
+  actualProvider: ProviderType,
+  actualModel: string | null,
+): void {
+  const { smartRouting } = config;
+  if (!smartRouting?.enabled) return;
+
+  const configuredSet = new Set(
+    (Object.keys(config.providerConfigs) as ProviderType[]).filter(
+      (p) => config.providerConfigs[p]?.apiKey?.trim(),
+    ),
+  );
+  const top = getTopPriorityEntry(smartRouting.entries, degradedModels, configuredSet);
+  if (!top) return;
+
+  // 首选可用且被选中 → 未降级
+  if (routeResult && routeResult.provider === top.provider && routeResult.model === top.model) return;
+
+  const now = Date.now();
+  const { degradationEvents } = useNetworkResilience.getState();
+
+  // 5 秒去重
+  if (
+    degradationEvents.some(
+      (e) =>
+        e.intendedProvider === top.provider &&
+        e.intendedModel === top.model &&
+        e.actualProvider === actualProvider &&
+        e.actualModel === actualModel &&
+        now - e.timestamp < 5000,
+    )
+  ) return;
+
+  // 定位 topEntry 被跳过的原因
+  const skipped = routeResult?.skippedCandidates ?? [];
+  const topSkip = skipped.find(
+    (s) => s.provider === top.provider && s.model === top.model,
+  );
+  const reason: DegradationReason = !routeResult
+    ? 'all_degraded'
+    : (topSkip?.reason ?? 'unreachable');
+
+  useNetworkResilience.getState().addDegradationEvent({
+    id: `${top.provider}:${top.model}-${now}`,
+    timestamp: now,
+    intendedProvider: top.provider,
+    intendedModel: top.model,
+    actualProvider,
+    actualModel: actualModel ?? config.providerConfigs[actualProvider]?.model ?? '',
+    reason,
+    skippedCandidates: skipped,
+  });
 }
 
 /**

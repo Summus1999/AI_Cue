@@ -303,3 +303,19 @@ span[data-search-highlight="current"] {
   padding: 0 1px;
   box-shadow: 0 0 0 2px rgba(253, 186, 116, 0.3);
 }
+
+/* ====== 降级通知 Toast 动画 ====== */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 300ms ease-out;
+}
