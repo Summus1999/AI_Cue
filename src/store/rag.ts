@@ -1,6 +1,9 @@
 // RAG 状态管理
 
 import { create, type StateCreator } from 'zustand';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('RagStore');
 import type {
   CompletedKnowledgeBaseImport,
   CompletedKnowledgeBaseReindex,
@@ -387,7 +390,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
         const stats = await service.getStats();
         set({ stats });
       } catch (err) {
-        console.error('获取 RAG 统计失败:', err);
+        log.error('获取 RAG 统计失败:', err);
       }
     },
 

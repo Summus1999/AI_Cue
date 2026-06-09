@@ -4,6 +4,9 @@ import { AlertCircle, Check, Clock3, FolderOpen, LoaderCircle } from 'lucide-rea
 import { loadConfig } from '../../store/config';
 import { useRagStore } from '../../store/rag';
 import { ragService, type KnowledgeBaseImportStage, type KnowledgeBaseImportTaskSnapshot } from '../../services/ragService';
+import { createLogger } from '../../services/logger';
+
+const log = createLogger('KnowledgeImportPanel');
 
 interface KnowledgeImportPanelProps {
   knowledgeBaseId: string | null;
@@ -148,7 +151,7 @@ export function KnowledgeImportPanel({
         }
       })
       .catch((loadError) => {
-        console.error('Failed to load config for knowledge import panel:', loadError);
+        log.error('Failed to load config for knowledge import panel:', loadError);
       });
 
     return () => {
@@ -166,7 +169,7 @@ export function KnowledgeImportPanel({
     }
 
     void refreshKnowledgeImportTasks(knowledgeBaseId, undefined, true).catch((refreshError) => {
-      console.error('Failed to load knowledge import tasks:', refreshError);
+      log.error('Failed to load knowledge import tasks:', refreshError);
     });
   }, [knowledgeBaseId, refreshKnowledgeImportTasks]);
 
@@ -243,7 +246,7 @@ export function KnowledgeImportPanel({
 
       setSelectedPaths(Array.from(new Set(paths)));
     } catch (chooseError) {
-      console.error('Failed to choose knowledge files:', chooseError);
+      log.error('Failed to choose knowledge files:', chooseError);
     } finally {
       setIsChoosingFiles(false);
     }
@@ -321,7 +324,7 @@ export function KnowledgeImportPanel({
     } finally {
       setIsSubmitting(false);
       void refreshKnowledgeImportTasks(knowledgeBaseId, undefined, true).catch((refreshError) => {
-        console.error('Failed to refresh import tasks after import:', refreshError);
+        log.error('Failed to refresh import tasks after import:', refreshError);
       });
     }
   };

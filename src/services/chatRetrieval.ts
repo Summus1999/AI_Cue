@@ -3,6 +3,9 @@ import type {
   PromptMode,
   RagRetrievalScope,
 } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('ChatRetrieval');
 import type {
   CitationMetadata,
   RagContextBundle,
@@ -90,21 +93,21 @@ export async function resolveChatRetrievalContext(
   dependencies: ChatRetrievalDependencies,
 ): Promise<ChatRetrievalPayload | undefined> {
   if (!config.rag.enabled) {
-    console.info('[RAG] 聊天降级到普通模式: RAG 开关关闭');
+    log.info('聊天降级到普通模式: RAG 开关关闭');
     return undefined;
   }
 
   const ragProviderConfig = config.providerConfigs[config.rag.embeddingProvider];
   if (!ragProviderConfig?.apiKey?.trim()) {
-    console.info(`[RAG] 聊天降级到普通模式: ${config.rag.embeddingProvider} 未配置 API Key`);
+    log.info(`聊天降级到普通模式: ${config.rag.embeddingProvider} 未配置 API Key`);
     return undefined;
   }
 
   try {
     const strategy = resolveChatRetrievalStrategy(config, promptMode, sessionId);
     if (strategy.sourceKinds.length === 0) {
-      console.info(
-        `[RAG] 聊天降级到普通模式: retrievalScope=${config.rag.retrievalScope} 需要会话消息检索，但当前没有可用 sessionId`,
+      log.info(
+        `聊天降级到普通模式: retrievalScope=${config.rag.retrievalScope} 需要会话消息检索，但当前没有可用 sessionId`,
       );
       return undefined;
     }
@@ -123,19 +126,19 @@ export async function resolveChatRetrievalContext(
     if (strategy.sourceKinds.includes('KnowledgeBaseDocument')) {
       const knowledgeReadyState = await dependencies.getKnowledgeReadyState();
       if (knowledgeReadyState === false) {
-        console.info('[RAG] 聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
+        log.info('聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
         return undefined;
       }
     }
 
     if (strategy.sourceKinds.length === 1 && strategy.sourceKinds[0] === 'Message') {
-      console.info('[RAG] 聊天降级到普通模式: 当前会话检索未返回可用上下文');
+      log.info('聊天降级到普通模式: 当前会话检索未返回可用上下文');
     } else {
-      console.info('[RAG] 聊天降级到普通模式: retrieval 未返回可用上下文');
+      log.info('聊天降级到普通模式: retrieval 未返回可用上下文');
     }
     return undefined;
   } catch (error) {
-    console.warn('[RAG] 聊天检索失败，继续走普通聊天链路:', error);
+    log.warn('聊天检索失败，继续走普通聊天链路:', error);
     return undefined;
   }
 }

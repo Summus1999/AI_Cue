@@ -2,6 +2,9 @@
  * 音频可视化服务
  * 监听 Rust 后端发射的音频电平事件，提供给 WaveformVisualizer 组件使用
  */
+import { createLogger } from './logger';
+
+const log = createLogger('AudioVisualizer');
 
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
@@ -110,10 +113,10 @@ class AudioVisualizerService {
     if (this.isActive) return;
 
     try {
-      console.log('[AudioVisualizer] Starting to listen for audio-level events...');
+      log.debug('Starting to listen for audio-level events...');
       this.unlistenFn = await listen<WaveformData>('audio-level', (event) => {
         const data = event.payload;
-        console.log('[AudioVisualizer] Received event:', { rms: data.rms.toFixed(4), peak: data.peak.toFixed(4), points: data.waveform.length });
+        log.trace('Received audio-level event:', { rms: data.rms.toFixed(4), peak: data.peak.toFixed(4), points: data.waveform.length });
         this.buffer.push(data);
 
         // 通知所有订阅者
@@ -121,15 +124,15 @@ class AudioVisualizerService {
           try {
             callback(data);
           } catch (e) {
-            console.error('Waveform callback error:', e);
+            log.error('Waveform callback error:', e);
           }
         });
       });
 
       this.isActive = true;
-      console.log('[AudioVisualizer] Successfully started listening for audio-level events');
+      log.debug('Successfully started listening for audio-level events');
     } catch (error) {
-      console.error('[AudioVisualizer] Failed to start listening:', error);
+      log.error('Failed to start listening:', error);
       this.isActive = false;
     }
   }
@@ -145,7 +148,7 @@ class AudioVisualizerService {
     }
     this.buffer.clear();
     this.isActive = false;
-    console.log('AudioVisualizerService: 停止监听音频电平事件');
+    log.debug('停止监听音频电平事件');
   }
 
   /**

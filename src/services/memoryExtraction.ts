@@ -1,6 +1,9 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
 import type { AppConfig, PromptMode } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('MemoryExtraction');
 
 const MIN_USER_CHARS = 8;
 const MIN_ASSISTANT_CHARS = 80;
@@ -154,6 +157,6 @@ export async function triggerAssistantMemoryExtraction(
     await invoke('memory_extract_from_assistant_turn', { request });
   } catch (error) {
     // 实时记忆只能增强体验，失败不能影响主聊天链路。
-    console.warn('[Memory] 实时抽取失败，已跳过:', error);
+    log.warn('实时抽取失败，已跳过:', error);
   }
 }

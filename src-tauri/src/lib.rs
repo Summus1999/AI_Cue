@@ -91,7 +91,7 @@ pub fn run() {
             // 在后台线程异步加载动态 Provider
             std::thread::spawn(move || {
                 let async_timer = perf::perf_layer2_start();
-                tokio::runtime::Builder::new_current_thread()
+                let _ = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| tracing::error!("创建异步 runtime 失败: {}", e))

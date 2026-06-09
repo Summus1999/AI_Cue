@@ -6,6 +6,9 @@
 import { useState } from 'react';
 import { Settings, Database, RefreshCw, Copy, X } from 'lucide-react';
 import type { FriendlyError } from '../services/errorClassifier';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('FriendlyErrorCard');
 
 interface Props {
   /** 友好错误信息 */
@@ -54,7 +57,7 @@ export function FriendlyErrorCard({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }).catch((err) => {
-      console.warn('复制诊断信息失败:', err);
+      log.warn('复制诊断信息失败:', err);
     });
   };
 

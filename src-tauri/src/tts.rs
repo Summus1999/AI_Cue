@@ -110,7 +110,7 @@ pub fn speak_sapi(text: String, rate: i32, volume: u16) -> Result<(), String> {
 
     thread::spawn(move || {
         if let Err(e) = speak_internal(&text, rate, volume) {
-            eprintln!("TTS 朗读错误: {}", e);
+            tracing::error!(error = %e, "TTS 朗读错误");
         }
         TTS_ACTIVE.store(false, Ordering::SeqCst);
     });

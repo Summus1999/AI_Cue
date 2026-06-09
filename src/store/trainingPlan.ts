@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { TrainingPlan } from '../services/trainingPlan';
 import { generateTrainingPlan, getDayProgress as getDayProgressFromService } from '../services/trainingPlan';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('TrainingPlan');
 
 interface TrainingPlanState {
   plan: TrainingPlan | null;
@@ -34,7 +37,7 @@ function saveToStorage(plan: TrainingPlan | null): void {
       localStorage.removeItem(STORAGE_KEY);
     }
   } catch (err) {
-    console.error('Failed to save training plan:', err);
+    log.error('Failed to save training plan:', err);
   }
 }
 

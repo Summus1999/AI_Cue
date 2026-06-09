@@ -339,9 +339,11 @@ pub async fn score_session_messages(
             }
             Err(e) => {
                 // 单条评分失败，记录但不中断整体流程
-                eprintln!(
-                    "评分失败 (message_id: {}, index {}): {}",
-                    message_id, index, e
+                tracing::warn!(
+                    message_id = %message_id,
+                    index = index,
+                    error = %e,
+                    "评分失败"
                 );
             }
         }
@@ -351,12 +353,12 @@ pub async fn score_session_messages(
     if !scores.is_empty() {
         let db_scores: Vec<_> = scores.iter().map(to_db_message_score).collect();
         if let Err(e) = database::insert_message_scores_batch(db, &db_scores) {
-            eprintln!("批量写入评分失败: {}, 尝试逐条写入", e);
+            tracing::warn!(error = %e, "批量写入评分失败，尝试逐条写入");
             // 回退到逐条写入
             for score in &scores {
                 let db_score = to_db_message_score(score);
                 if let Err(e) = database::insert_message_score(db, &db_score) {
-                    eprintln!("写入评分失败: {}", e);
+                    tracing::warn!(error = %e, "写入评分失败");
                 }
             }
         }

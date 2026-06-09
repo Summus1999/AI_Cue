@@ -1,5 +1,8 @@
 // 配置管理 - 使用 Tauri Store 插件持久化（带 localStorage 备用）
 import { Store } from '@tauri-apps/plugin-store';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('Config');
 
 // ==================== 填充词过滤配置 ====================
 
@@ -557,7 +560,7 @@ async function getStore(): Promise<Store | null> {
     try {
       store = await Store.load('config.json');
     } catch (err) {
-      console.warn('[Config] Tauri Store 加载失败，切换到 localStorage');
+      log.warn('Tauri Store 加载失败，切换到 localStorage');
       useLocalStorage = true;
       return null;
     }
@@ -698,7 +701,7 @@ function loadFromLocalStorage(): AppConfig {
       return validateAndFixConfig(config);
     }
   } catch (err) {
-    console.error('localStorage 读取失败:', err);
+    log.error('localStorage 读取失败:', err);
   }
   return DEFAULT_CONFIG;
 }
@@ -708,7 +711,7 @@ function saveToLocalStorage(config: AppConfig): void {
   try {
     localStorage.setItem('ai-cue-config', JSON.stringify(config));
   } catch (err) {
-    console.error('[Config] localStorage 保存失败:', err);
+    log.error('localStorage 保存失败:', err);
     throw err;
   }
 }
@@ -824,7 +827,7 @@ export async function loadConfig(): Promise<AppConfig> {
 
     return validateAndFixConfig(config);
   } catch (error) {
-    console.error('从 Store 加载失败，切换到 localStorage:', error);
+    log.error('从 Store 加载失败，切换到 localStorage:', error);
     useLocalStorage = true;
     return loadFromLocalStorage();
   }
@@ -876,7 +879,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     await store.set('ttsVolume', config.ttsVolume);
     await store.save();
   } catch (error) {
-    console.error('[Config] 保存到 Store 失败，切换到 localStorage:', error);
+    log.error('保存到 Store 失败，切换到 localStorage:', error);
     useLocalStorage = true;
     saveToLocalStorage(config);
   }

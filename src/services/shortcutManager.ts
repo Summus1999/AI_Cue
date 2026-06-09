@@ -1,6 +1,9 @@
 // 快捷键管理服务 - 使用 Tauri 全局快捷键插件
 import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import { ShortcutConfig, DEFAULT_SHORTCUT_CONFIG } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('Shortcut');
 
 // 快捷键回调函数类型
 export type ShortcutCallback = () => void;
@@ -39,7 +42,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
   try {
     await unregisterAll();
   } catch (err) {
-    console.warn('[Shortcut] 注销快捷键失败（可忽略）:', err);
+    log.warn('注销快捷键失败（可忽略）:', err);
   }
 
   // 注册录音快捷键
@@ -50,7 +53,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
       }
     });
   } catch (err) {
-    console.error(`[Shortcut] 注册快捷键 ${config.toggleRecording} 失败:`, err);
+    log.error(`注册快捷键 ${config.toggleRecording} 失败:`, err);
   }
 
   // 注册发送快捷键
@@ -61,7 +64,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
       }
     });
   } catch (err) {
-    console.error(`[Shortcut] 注册快捷键 ${config.sendMessage} 失败:`, err);
+    log.error(`注册快捷键 ${config.sendMessage} 失败:`, err);
   }
 
   // 注册截图快捷键
@@ -72,7 +75,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
       }
     });
   } catch (err) {
-    console.error(`[Shortcut] 注册快捷键 ${config.takeScreenshot} 失败:`, err);
+    log.error(`注册快捷键 ${config.takeScreenshot} 失败:`, err);
   }
 
   // 注册切换穿透模式快捷键
@@ -84,7 +87,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
         }
       });
     } catch (err) {
-      console.error(`[Shortcut] 注册快捷键 ${config.togglePassthrough} 失败:`, err);
+      log.error(`注册快捷键 ${config.togglePassthrough} 失败:`, err);
     }
   }
 
@@ -97,7 +100,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
         }
       });
     } catch (err) {
-      console.error(`[Shortcut] 注册快捷键 ${config.toggleCompactMode} 失败:`, err);
+      log.error(`注册快捷键 ${config.toggleCompactMode} 失败:`, err);
     }
   }
 
@@ -110,7 +113,7 @@ async function registerAllShortcuts(config: ShortcutConfig): Promise<void> {
         }
       });
     } catch (err) {
-      console.error(`[Shortcut] 注册快捷键 ${config.panicHide} 失败:`, err);
+      log.error(`注册快捷键 ${config.panicHide} 失败:`, err);
     }
   }
 }
@@ -140,7 +143,7 @@ export async function unregisterAllShortcuts(): Promise<void> {
     await unregisterAll();
     isInitialized = false;
   } catch (err) {
-    console.error('[Shortcut] 注销所有快捷键失败:', err);
+    log.error('注销所有快捷键失败:', err);
   }
 }
 

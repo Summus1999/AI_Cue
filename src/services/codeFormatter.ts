@@ -97,7 +97,7 @@ class CodeFormatterService {
       
       // 处理 Worker 错误
       this.worker.onerror = (error) => {
-        console.error('Prettier Worker error:', error);
+        console.error('Prettier Worker error:', error); // Worker context - no logger available
         // 拒绝所有待处理请求
         for (const pending of this.pendingRequests.values()) {
           clearTimeout(pending.timeout);

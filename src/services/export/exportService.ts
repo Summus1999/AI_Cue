@@ -6,6 +6,9 @@ import { ExporterFactory } from './types';
 import { MarkdownExporter } from './markdownExporter';
 import { PDFExporter } from './pdfExporter';
 import { JSONExporter } from './jsonExporter';
+import { createLogger } from '../logger';
+
+const log = createLogger('ExportService');
 import { ReviewPdfExporter, ReviewExportData } from './reviewPdfExporter';
 
 /**
@@ -117,7 +120,7 @@ export class ExportService {
           try {
             await invoke('delete_file', { path: tempHtmlPath });
           } catch (e) {
-            console.warn('清理临时文件失败:', e);
+            log.warn('清理临时文件失败:', e);
           }
         }
         
@@ -125,7 +128,7 @@ export class ExportService {
         try {
           await invoke('open_file_with_default_app', { path: filePath });
         } catch (e) {
-          console.warn('无法自动打开 PDF:', e);
+          log.warn('无法自动打开 PDF:', e);
         }
       } else {
         // 其他格式（Markdown、JSON）直接写入
@@ -213,7 +216,7 @@ export class ExportService {
         try {
           await invoke('delete_file', { path: tempHtmlPath });
         } catch (e) {
-          console.warn('清理临时文件失败:', e);
+          log.warn('清理临时文件失败:', e);
         }
       }
       
@@ -221,7 +224,7 @@ export class ExportService {
       try {
         await invoke('open_file_with_default_app', { path: filePath });
       } catch (e) {
-        console.warn('无法自动打开 PDF:', e);
+        log.warn('无法自动打开 PDF:', e);
       }
       
       return {

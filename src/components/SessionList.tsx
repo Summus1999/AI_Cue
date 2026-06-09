@@ -3,6 +3,9 @@ import { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Search, Trash2, Plus, MessageSquare, Download, ClipboardCheck } from 'lucide-react';
 import { Session, getSessionMessages } from '../services/sessionManager';
 import { ExportDialog } from './export/ExportDialog';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('SessionList');
 
 interface SessionListProps {
   sessions: Session[];
@@ -89,7 +92,7 @@ export function SessionList({
       setExportSession(session);
       setExportMessageCount(messages.length);
     } catch (error) {
-      console.error('加载会话消息失败:', error);
+      log.error('加载会话消息失败:', error);
     }
   };
 

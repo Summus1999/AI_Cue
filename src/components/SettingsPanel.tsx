@@ -6,6 +6,9 @@ import { getVersion } from '@tauri-apps/api/app';
 import { ArrowLeft, ChevronDown, Check, AlertCircle, FolderOpen, Database, Brain } from 'lucide-react';
 import { setWindowOpacity, enableHoverRestore } from '../services/windowManager';
 import { ensureRagRuntimeConfigured } from '../services/ragRuntimeConfig';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('SettingsPanel');
 import { ProviderSelector } from './ProviderSelector';
 import { SmartRoutingSettings } from './SmartRoutingSettings';
 import {
@@ -90,7 +93,7 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
         onClose();
       }, 500);
     } catch (err) {
-      console.error('保存失败详情:', err);
+      log.error('保存失败详情:', err);
       setSaveStatus('error');
       setErrorMessage('保存失败: ' + (err instanceof Error ? err.message : String(err)));
     }
@@ -800,7 +803,7 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
                     setConfig((prev) => ({ ...prev, stealthMode: newStealth }));
                     // 实际调用 Rust 后端设置窗口属性
                     invoke('set_stealth_mode', { enabled: newStealth }).catch((e) => {
-                      console.warn('设置隐身模式失败:', e);
+                      log.warn('设置隐身模式失败:', e);
                     });
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${

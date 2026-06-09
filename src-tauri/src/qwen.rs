@@ -556,10 +556,10 @@ pub async fn chat(
         stream: false,
     };
 
-    println!("[千问API] 发送请求到模型: {}", model);
+    tracing::debug!(model = %model, "发送请求到千问模型");
     let response = post_chat_request(&client, api_key, &request_body).await?;
     let content = read_chat_response_text(response).await?;
-    println!("[千问API] 成功获取回复，长度: {} 字符", content.len());
+    tracing::debug!(len = content.len(), "千问模型返回回复");
     Ok(content)
 }
 
@@ -581,7 +581,7 @@ pub async fn chat_stream(
         stream: true,
     };
 
-    println!("[千问API] 发送流式请求到模型: {}", model);
+    tracing::debug!(model = %model, "发送流式请求到千问模型");
     let response = post_chat_request(&client, api_key, &request_body).await?;
     stream_response(app, response, event_name, cancel_rx).await
 }

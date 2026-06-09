@@ -4,6 +4,9 @@ import { ArrowLeft, Edit3, Check, RotateCcw, AlertCircle } from 'lucide-react';
 import { ShortcutConfig, DEFAULT_SHORTCUT_CONFIG, SHORTCUT_LABELS, loadConfig, saveConfig } from '../store/config';
 import { useShortcutRecorder, formatShortcutForDisplay } from '../hooks/useShortcutRecorder';
 import { updateShortcuts } from '../services/shortcutManager';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('ShortcutSettingsPanel');
 
 interface ShortcutSettingsPanelProps {
   isOpen: boolean;
@@ -82,7 +85,7 @@ export function ShortcutSettingsPanel({ isOpen, onClose }: ShortcutSettingsPanel
         onClose();
       }, 500);
     } catch (err) {
-      console.error('保存快捷键失败:', err);
+      log.error('保存快捷键失败:', err);
       setSaveStatus('error');
       setErrorMessage('保存失败: ' + (err instanceof Error ? err.message : String(err)));
     }

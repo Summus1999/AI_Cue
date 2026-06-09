@@ -13,6 +13,9 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from '../services/memoryService';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('MemoryManagementPanel');
 
 interface MemoryManagementPanelProps {
   onBack: () => void;
@@ -39,7 +42,7 @@ export function MemoryManagementPanel({ onBack }: MemoryManagementPanelProps) {
 
   // 加载配置
   useEffect(() => {
-    loadConfig().then(setConfig).catch(console.error);
+    loadConfig().then(setConfig).catch(log.error);
   }, []);
 
   const loadMemories = useCallback(async () => {

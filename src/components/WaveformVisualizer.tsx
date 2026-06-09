@@ -5,6 +5,9 @@
 
 import React, { useRef, useEffect, useCallback } from 'react';
 import { audioVisualizer, WaveformData } from '../services/audioVisualizer';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('WaveformVisualizer');
 
 // ============== 类型定义 ==============
 
@@ -211,7 +214,7 @@ const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
   // 订阅数据更新
   useEffect(() => {
     if (!isActive) {
-      console.log('[WaveformVisualizer] Not active, clearing data');
+      log.debug('Not active, clearing data');
       dataRef.current = null;
       prevDataRef.current = [];
       // 停止时绘制一次静态状态
@@ -219,11 +222,11 @@ const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
       return;
     }
 
-    console.log('[WaveformVisualizer] Active, subscribing to audioVisualizer...');
+    log.debug('Active, subscribing to audioVisualizer...');
     
     // 订阅更新
     const unsubscribe = audioVisualizer.subscribe((data) => {
-      console.log('[WaveformVisualizer] Received waveform data:', { rms: data.rms, waveformLength: data.waveform.length });
+      log.trace('Received waveform data:', { rms: data.rms, waveformLength: data.waveform.length });
       dataRef.current = data;
     });
 
@@ -237,7 +240,7 @@ const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
     animationRef.current = requestAnimationFrame(renderLoop);
 
     return () => {
-      console.log('[WaveformVisualizer] Unsubscribing...');
+      log.debug('Unsubscribing...');
       running = false;
       unsubscribe();
       cancelAnimationFrame(animationRef.current);

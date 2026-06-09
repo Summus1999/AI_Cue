@@ -7,11 +7,14 @@
  * 3. 可观测启动过程
  */
 
-import { 
-  loadRuntimeConfigSnapshot, 
+import {
+  loadRuntimeConfigSnapshot,
   RuntimeConfigSnapshot,
 } from './runtimeConfigSnapshot';
 import { Session, getLastActiveSession } from '../services/sessionManager';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('Bootstrap');
 import { 
   initWindowOpacity, 
   enableHoverRestore, 
@@ -192,12 +195,12 @@ export async function recoverInterruptedKnowledgeIndexingOnStartup(
       return;
     }
 
-    console.info(
-      `[Bootstrap] 已恢复 ${recoveredDocuments.length} 个上次中断的知识库索引任务`,
+    log.info(
+      `已恢复 ${recoveredDocuments.length} 个上次中断的知识库索引任务`,
       recoveredDocuments.map((document) => document.fileName),
     );
   } catch (err) {
-    console.warn('[Bootstrap] 恢复中断的知识库索引任务失败:', err);
+    log.warn('恢复中断的知识库索引任务失败:', err);
   }
 }
 
@@ -260,7 +263,7 @@ export async function bootstrap(
       try {
         callback(snapshot);
       } catch (err) {
-        console.error('[Bootstrap] 启动完成回调执行失败:', err);
+        log.error('启动完成回调执行失败:', err);
       }
     }
 

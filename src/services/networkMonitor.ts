@@ -5,6 +5,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { AppConfig } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('NetworkMonitor');
 
 /** 网络状态 */
 export interface NetworkStatus {
@@ -85,7 +88,7 @@ class NetworkMonitor implements INetworkMonitor {
     this.startCount++;
     // 如果已经启动，只更新引用计数，不重复启动
     if (this.startCount > 1) {
-      console.log(`[NetworkMonitor] 已启动，引用计数: ${this.startCount}`);
+      log.debug(`已启动，引用计数: ${this.startCount}`);
       return;
     }
 
@@ -111,7 +114,7 @@ class NetworkMonitor implements INetworkMonitor {
     window.addEventListener('offline', this.offlineHandler);
     window.addEventListener('online', this.onlineHandler);
 
-    console.log('[NetworkMonitor] 网络监控已启动');
+    log.info('网络监控已启动');
   }
 
   /**
@@ -122,7 +125,7 @@ class NetworkMonitor implements INetworkMonitor {
     this.startCount--;
     // 还有引用，不真正停止
     if (this.startCount > 0) {
-      console.log(`[NetworkMonitor] 引用计数: ${this.startCount}，暂不停止`);
+      log.debug(`引用计数: ${this.startCount}，暂不停止`);
       return;
     }
 
@@ -143,7 +146,7 @@ class NetworkMonitor implements INetworkMonitor {
       this.onlineHandler = null;
     }
 
-    console.log('[NetworkMonitor] 网络监控已停止');
+    log.info('网络监控已停止');
   }
 
   /**
@@ -201,7 +204,7 @@ class NetworkMonitor implements INetworkMonitor {
   refreshConfig(): void {
     this.configCache = null;
     this.configLoadPromise = null;
-    console.log('[NetworkMonitor] 配置缓存已刷新');
+    log.debug('配置缓存已刷新');
   }
 
   /**

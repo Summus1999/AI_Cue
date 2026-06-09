@@ -530,13 +530,13 @@ fn capture_packets_with_events(
 
                     // 发射事件（忽略错误，不影响采集）
                     match app.emit("audio-level", &event) {
-                        Ok(_) => println!(
-                            "[AudioLevel] Emitted: rms={:.4}, peak={:.4}, points={}",
-                            event.rms,
-                            event.peak,
-                            event.waveform.len()
+                        Ok(_) => tracing::trace!(
+                            rms = event.rms,
+                            peak = event.peak,
+                            points = event.waveform.len(),
+                            "Audio level event emitted"
                         ),
-                        Err(e) => eprintln!("[AudioLevel] Emit failed: {:?}", e),
+                        Err(e) => tracing::error!(error = ?e, "Audio level emit failed"),
                     }
 
                     pending_samples.clear();
@@ -544,7 +544,7 @@ fn capture_packets_with_events(
             } else {
                 // 没有 app_handle，无法发射事件
                 if !pending_samples.is_empty() {
-                    println!("[AudioLevel] No app_handle, skipping emit");
+                    tracing::debug!("No app_handle, skipping audio level emit");
                     pending_samples.clear();
                 }
             }

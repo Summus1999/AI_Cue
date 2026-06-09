@@ -43,6 +43,7 @@ import {
 } from "./services/aiChat";
 import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
+import { createLogger } from "./services/logger";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
 import { cleanupHoverRestore, togglePassthrough, cleanupPassthrough, toggleCompactMode, saveWindowBounds, setCompactMode, isCompactMode, isPassthroughEnabled, setPassthrough, minimizeToRightDock } from './services/windowManager';
 import { saveMessage, updateSessionTitle, getSessionMessages, listSessions, deleteSession, searchSessions, endInterview, Session } from './services/sessionManager';
@@ -174,10 +175,12 @@ async function getKnowledgeReadyState(): Promise<boolean | null> {
       documents.some((document) => document.indexState === 'ready'),
     );
   } catch (error) {
-    console.warn('[RAG] 检查知识库索引状态失败，将按未知状态降级:', error);
+    log.warn('检查知识库索引状态失败，将按未知状态降级:', error);
     return null;
   }
 }
+
+const log = createLogger('App');
 
 function App() {
   // 网络韧性状态管理
@@ -474,7 +477,7 @@ function App() {
         }
       }
     } catch (dbError) {
-      console.error('Failed to save user message:', dbError);
+      log.error('Failed to save user message:', dbError);
     }
 
     let fullAssistantContent = '';
@@ -525,7 +528,7 @@ function App() {
 
           if (sessionId && fullAssistantContent) {
             saveMessage(sessionId, 'assistant', finalAssistantContent).catch((err) => {
-              console.error('Failed to save assistant message:', err);
+              log.error('Failed to save assistant message:', err);
             });
           }
 
@@ -815,7 +818,7 @@ function App() {
             (window as any).__aiCueHidden = true;
           }
         } catch (e) {
-          console.warn('紧急隐藏失败:', e);
+          log.warn('紧急隐藏失败:', e);
         }
       },
     };
@@ -846,7 +849,7 @@ function App() {
           setIsInterviewEnded(false);
         }
       } catch (error) {
-        console.error('[Bootstrap] 启动编排失败:', error);
+        log.error('启动编排失败:', error);
       }
     }
 
@@ -949,7 +952,7 @@ function App() {
       setSessions(sessionList);
       setCurrentView('sessions');
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      log.error('Failed to load sessions:', error);
     }
   };
 
@@ -992,7 +995,7 @@ function App() {
       const currentSession = sessions.find(s => s.id === currentSessionId);
       handleReview(currentSessionId, currentSession?.title || '当前会话');
     } catch (error) {
-      console.error('结束面试失败:', error);
+      log.error('结束面试失败:', error);
     }
   };
 
@@ -1087,7 +1090,7 @@ function App() {
     try {
       await refreshKnowledgeBases();
     } catch (error) {
-      console.error('Failed to load knowledge bases:', error);
+      log.error('Failed to load knowledge bases:', error);
     }
   };
 
@@ -1134,7 +1137,7 @@ function App() {
       setInterviewResume('');
       setCurrentView('main');
     } catch (error) {
-      console.error('Failed to load session messages:', error);
+      log.error('Failed to load session messages:', error);
     }
   };
 
@@ -1151,7 +1154,7 @@ function App() {
         setCurrentSessionId(null);
       }
     } catch (error) {
-      console.error('Failed to delete session:', error);
+      log.error('Failed to delete session:', error);
     }
   };
 
@@ -1166,7 +1169,7 @@ function App() {
         setSessions(sessionList);
       }
     } catch (error) {
-      console.error('Failed to search sessions:', error);
+      log.error('Failed to search sessions:', error);
     }
   };
 
@@ -1280,7 +1283,7 @@ function App() {
         }
         
       } catch (err) {
-        console.error("停止录音失败:", err);
+        log.error("停止录音失败:", err);
         setMessages(prev => [...prev, {
           id: generateId(),
           role: "assistant",
@@ -1309,7 +1312,7 @@ function App() {
         }]);
         
       } catch (err) {
-        console.error("开始录音失败:", err);
+        log.error("开始录音失败:", err);
         setMessages(prev => [...prev, {
           id: generateId(),
           role: "assistant",

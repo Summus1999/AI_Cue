@@ -1,6 +1,9 @@
 // 窗口状态管理服务
 import { getCurrentWindow, availableMonitors, currentMonitor, primaryMonitor, LogicalPosition, LogicalSize, PhysicalPosition, cursorPosition } from '@tauri-apps/api/window';
 import { loadConfig, saveConfig, WindowBounds } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('WindowManager');
 
 // 注意：不要在模块顶层调用 getCurrentWindow()，因为在 Tauri IPC 就绪前可能导致错误
 
@@ -54,7 +57,7 @@ export async function saveWindowBounds(mode?: 'main' | 'compact'): Promise<void>
       config.window.bounds[actualMode] = bounds;
       await saveConfig(config);
     } catch (err) {
-      console.warn('保存窗口位置失败:', err);
+      log.warn('保存窗口位置失败:', err);
     }
   }, 500);
 }
@@ -83,11 +86,11 @@ export async function restoreWindowBounds(mode: 'main' | 'compact' = 'main'): Pr
       await appWindow.setSize(new LogicalSize(bounds.width, bounds.height));
     } else {
       // 降级：移至主显示器中央
-      console.warn('窗口位置超出可用屏幕区域，执行降级');
+      log.warn('窗口位置超出可用屏幕区域，执行降级');
       await centerOnPrimaryMonitor(appWindow, bounds.width, bounds.height);
     }
   } catch (err) {
-    console.warn('恢复窗口位置失败:', err);
+    log.warn('恢复窗口位置失败:', err);
   }
 }
 
@@ -145,7 +148,7 @@ async function centerOnPrimaryMonitor(appWindow: ReturnType<typeof getCurrentWin
     await appWindow.setSize(new LogicalSize(finalWidth, finalHeight));
     await appWindow.setPosition(new LogicalPosition(centerX, centerY));
   } catch (err) {
-    console.warn('居中窗口失败:', err);
+    log.warn('居中窗口失败:', err);
   }
 }
 
@@ -336,7 +339,7 @@ export async function setPassthrough(enabled: boolean): Promise<boolean> {
     
     return passthroughEnabled;
   } catch (err) {
-    console.warn('设置穿透模式失败:', err);
+    log.warn('设置穿透模式失败:', err);
     return passthroughEnabled;
   }
 }
@@ -471,7 +474,7 @@ export async function minimizeToRightDock(): Promise<boolean> {
     await saveWindowBoundsImmediate('compact');
     return compactModeEnabled;
   } catch (err) {
-    console.warn('最小化到右侧失败:', err);
+    log.warn('最小化到右侧失败:', err);
     return compactModeEnabled;
   }
 }
@@ -516,7 +519,7 @@ export async function setCompactMode(enabled: boolean): Promise<void> {
     config.window.compactMode.enabled = enabled;
     await saveConfig(config);
   } catch (err) {
-    console.warn('切换紧凑模式失败:', err);
+    log.warn('切换紧凑模式失败:', err);
   }
 }
 
@@ -538,7 +541,7 @@ async function saveWindowBoundsImmediate(mode: 'main' | 'compact'): Promise<void
     config.window.bounds[mode] = bounds;
     await saveConfig(config);
   } catch (err) {
-    console.warn('立即保存窗口位置失败:', err);
+    log.warn('立即保存窗口位置失败:', err);
   }
 }
 

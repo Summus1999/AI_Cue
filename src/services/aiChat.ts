@@ -4,6 +4,9 @@ import type { AppConfig, ProviderType, ProviderConfig, InterviewBackground } fro
 import { PROMPT_TEMPLATES } from '../store/config';
 import { ensureRagRuntimeConfigured } from './ragRuntimeConfig';
 import { selectProvider } from './smartRouter';
+import { createLogger } from './logger';
+
+const log = createLogger('AIChat');
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -21,7 +24,7 @@ export function buildContextHistory(
   windowSize: number,
 ): ChatMessage[] {
   if (windowSize <= 0 || messages.length === 0) {
-    console.log(`[Context] 上下文窗口已禁用或无历史消息 (windowSize=${windowSize}, messages=${messages.length})`);
+    log.debug(`上下文窗口已禁用或无历史消息 (windowSize=${windowSize}, messages=${messages.length})`);
     return [];
   }
 
@@ -32,7 +35,7 @@ export function buildContextHistory(
   const maxMessages = windowSize * 2;
   const history = validMessages.slice(-maxMessages);
 
-  console.log(`[Context] 构建上下文历史: windowSize=${windowSize}, 可用消息=${validMessages.length}, 提取历史=${history.length}条`);
+  log.debug(`构建上下文历史: windowSize=${windowSize}, 可用消息=${validMessages.length}, 提取历史=${history.length}条`);
 
   return history.map((m) => ({
     role: m.role as 'user' | 'assistant',
@@ -144,7 +147,7 @@ function getSystemPrompt(config: AppConfig, retrievalContext?: string, templateP
   // 3. 注入面试背景信息
   const bg = config.interviewBackground;
   if (bg?.enabled && (bg.company || bg.position || bg.jd || bg.resume)) {
-    console.log(`[Interview] 注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
+    log.debug(`注入面试背景: 公司=${bg.company || 'N/A'}, 岗位=${bg.position || 'N/A'}, JD长度=${bg.jd?.length || 0}字符, 简历长度=${bg.resume?.length || 0}字符`);
     const bgSection = buildInterviewBackgroundPrompt(bg);
     return appendRetrievalContext(`${basePrompt}\n\n${bgSection}`, retrievalContext);
   }
@@ -182,7 +185,7 @@ export function cancelStreamRequest(requestId: string): void {
 
   // 后端异步取消，不阻塞前端
   invoke('ai_cancel_stream', { requestId }).catch((error) => {
-    console.warn('[AI] 后端取消流请求失败（本地已停止）:', error);
+    log.warn('后端取消流请求失败（本地已停止）:', error);
   });
 }
 
@@ -214,7 +217,7 @@ async function streamWithEvent(
       try {
         unlistenFn();
       } catch (e) {
-        console.warn('[AI] 事件监听器清理异常:', e);
+        log.warn('事件监听器清理异常:', e);
       } finally {
         unlistenFn = null;
       }

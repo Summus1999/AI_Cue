@@ -2,6 +2,9 @@
  * 消息搜索引擎
  * 提供纯函数式的搜索能力，无 UI 依赖
  */
+import { createLogger } from './logger';
+
+const log = createLogger('SearchEngine');
 
 // 消息接口（与 App.tsx 中 Message 保持一致）
 export interface Message {
@@ -155,7 +158,7 @@ export class SearchEngine {
       return new RegExp(pattern, flags);
     } catch (error) {
       // 正则语法错误时返回 null
-      console.warn('无效的搜索模式:', error);
+      log.warn('无效的搜索模式:', error);
       return null;
     }
   }

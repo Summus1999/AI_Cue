@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ReviewReport, TrendData, ReviewProgress, ReviewedSession } from '../types/review';
+import { createLogger } from './logger';
+
+const log = createLogger('ReviewService');
 
 /**
  * 启动复盘
@@ -60,7 +63,7 @@ export async function getSessionReviewStatus(sessionId: string): Promise<'comple
     const report = await getReviewReport(sessionId);
     return report ? 'completed' : 'none';
   } catch (err) {
-    console.error('获取复盘状态失败:', err);
+    log.error('获取复盘状态失败:', err);
     return 'error';
   }
 }

@@ -438,7 +438,7 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 2 {
-        println!("执行数据库迁移 v1 -> v2...");
+        tracing::info!("执行数据库迁移 v1 -> v2...");
 
         // 使用事务确保原子性
         let tx = conn.unchecked_transaction()?;
@@ -466,7 +466,7 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
 
-        println!("数据库迁移 v1 -> v2 完成");
+        tracing::info!("数据库迁移 v1 -> v2 完成");
     }
 
     Ok(())
@@ -477,7 +477,7 @@ fn migrate_v2_to_v3(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 3 {
-        println!("执行数据库迁移 v2 -> v3...");
+        tracing::info!("执行数据库迁移 v2 -> v3...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -537,7 +537,7 @@ fn migrate_v2_to_v3(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 3)?;
         tx.commit()?;
 
-        println!("数据库迁移 v2 -> v3 完成");
+        tracing::info!("数据库迁移 v2 -> v3 完成");
     }
 
     Ok(())
@@ -548,7 +548,7 @@ fn migrate_v3_to_v4(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 4 {
-        println!("执行数据库迁移 v3 -> v4...");
+        tracing::info!("执行数据库迁移 v3 -> v4...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -566,7 +566,7 @@ fn migrate_v3_to_v4(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 4)?;
         tx.commit()?;
 
-        println!("数据库迁移 v3 -> v4 完成");
+        tracing::info!("数据库迁移 v3 -> v4 完成");
     }
 
     Ok(())
@@ -577,7 +577,7 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 5 {
-        println!("执行数据库迁移 v4 -> v5...");
+        tracing::info!("执行数据库迁移 v4 -> v5...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -655,7 +655,7 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 5)?;
         tx.commit()?;
 
-        println!("数据库迁移 v4 -> v5 完成");
+        tracing::info!("数据库迁移 v4 -> v5 完成");
     }
 
     Ok(())
@@ -666,7 +666,7 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 6 {
-        println!("执行数据库迁移 v5 -> v6...");
+        tracing::info!("执行数据库迁移 v5 -> v6...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -690,7 +690,7 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 6)?;
         tx.commit()?;
 
-        println!("数据库迁移 v5 -> v6 完成");
+        tracing::info!("数据库迁移 v5 -> v6 完成");
     }
 
     Ok(())
@@ -701,7 +701,7 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 7 {
-        println!("执行数据库迁移 v6 -> v7...");
+        tracing::info!("执行数据库迁移 v6 -> v7...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -791,7 +791,7 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 7)?;
         tx.commit()?;
 
-        println!("数据库迁移 v6 -> v7 完成");
+        tracing::info!("数据库迁移 v6 -> v7 完成");
     }
 
     Ok(())
@@ -802,7 +802,7 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     if version < 8 {
-        println!("执行数据库迁移 v7 -> v8...");
+        tracing::info!("执行数据库迁移 v7 -> v8...");
 
         let tx = conn.unchecked_transaction()?;
 
@@ -851,7 +851,7 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), Box<dyn std::error::Error>>
         tx.pragma_update(None, "user_version", 8)?;
         tx.commit()?;
 
-        println!("数据库迁移 v7 -> v8 完成");
+        tracing::info!("数据库迁移 v7 -> v8 完成");
     }
 
     Ok(())

@@ -3,6 +3,9 @@ import { AlertCircle, Clock3, FileText, Hash, LoaderCircle, MapPin, RefreshCw, T
 import { loadConfig } from '../../store/config';
 import { useRagStore } from '../../store/rag';
 import type { KnowledgeChunkRecord, KnowledgeDocumentRecord } from '../../services/ragService';
+import { createLogger } from '../../services/logger';
+
+const log = createLogger('KnowledgeDocumentPreview');
 
 interface KnowledgeDocumentPreviewProps {
   knowledgeBaseId: string | null;
@@ -110,7 +113,7 @@ export function KnowledgeDocumentPreview({
         }
       })
       .catch((loadError) => {
-        console.error('Failed to load config for knowledge document preview:', loadError);
+        log.error('Failed to load config for knowledge document preview:', loadError);
       });
 
     return () => {
@@ -140,7 +143,7 @@ export function KnowledgeDocumentPreview({
         },
       });
     } catch (reindexError) {
-      console.error('Failed to reindex knowledge document:', reindexError);
+      log.error('Failed to reindex knowledge document:', reindexError);
     }
   };
 
@@ -159,7 +162,7 @@ export function KnowledgeDocumentPreview({
       await deleteKnowledgeDocument(document.id, knowledgeBaseId ?? undefined);
       setConfirmDeleteDocumentId(null);
     } catch (deleteError) {
-      console.error('Failed to delete knowledge document:', deleteError);
+      log.error('Failed to delete knowledge document:', deleteError);
     }
   };
 

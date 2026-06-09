@@ -6,6 +6,9 @@ import { ReviewReport as ReviewReportComponent } from './ReviewReport';
 import { TrendComparison } from './TrendComparison';
 import { ReviewHistoryList } from './ReviewHistoryList';
 import { getSessionReviewStatus, getReviewReport, deleteReview } from '../../services/reviewService';
+import { createLogger } from '../../services/logger';
+
+const log = createLogger('ReviewDialog');
 import { exportService } from '../../services/export/exportService';
 import type { TimingStats } from '../../types/review';
 
@@ -97,7 +100,7 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
           resetReview();
         }
       } catch (err) {
-        console.error('检查复盘状态失败:', err);
+        log.error('检查复盘状态失败:', err);
         setStatusError('检查复盘状态失败');
         setHasExistingReview(false);
         resetReview();
@@ -123,7 +126,7 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
       );
       setHasExistingReview(true);
     } catch (err) {
-      console.error('启动复盘失败:', err);
+      log.error('启动复盘失败:', err);
     }
   }, [sessionId, startReview]);
 
@@ -141,7 +144,7 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
     try {
       await exportService.exportReviewReport(targetReport);
     } catch (err) {
-      console.error('导出复盘 PDF 失败:', err);
+      log.error('导出复盘 PDF 失败:', err);
     }
   }, [report, historyReport]);
 
@@ -152,7 +155,7 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
       const reportData = await getReviewReport(sessionId);
       setHistoryReport(reportData);
     } catch (err) {
-      console.error('加载历史报告失败:', err);
+      log.error('加载历史报告失败:', err);
     }
   }, []);
 
@@ -165,7 +168,7 @@ export function ReviewDialog({ isOpen, onClose, sessionId, sessionTitle, questio
         setHistoryReport(null);
       }
     } catch (err) {
-      console.error('删除报告失败:', err);
+      log.error('删除报告失败:', err);
     }
   }, [viewHistorySessionId]);
 

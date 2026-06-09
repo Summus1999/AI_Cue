@@ -4,6 +4,9 @@ import {
   loadConfig,
   RagEmbeddingProviderType,
 } from '../store/config';
+import { createLogger } from './logger';
+
+const log = createLogger('RagRuntimeConfig');
 
 export interface RagRuntimeEmbeddingConfig {
   provider: RagEmbeddingProviderType;
@@ -103,8 +106,8 @@ async function syncRuntimeConfig(
   if (!config) {
     syncState.lastProcessedSignature = signature;
     syncState.lastConfiguredSignature = null;
-    console.info(
-      `[RAG] Skip runtime configure (${reason}): missing API key for ${provider}`,
+    log.info(
+      `Skip runtime configure (${reason}): missing API key for ${provider}`,
     );
     return false;
   }
@@ -117,15 +120,15 @@ async function syncRuntimeConfig(
 
     syncState.lastProcessedSignature = signature;
     syncState.lastConfiguredSignature = signature;
-    console.info(
-      `[RAG] Runtime configured (${reason}): provider=${normalizedConfig.provider}, model=${normalizedConfig.model ?? '<default>'}`,
+    log.info(
+      `Runtime configured (${reason}): provider=${normalizedConfig.provider}, model=${normalizedConfig.model ?? '<default>'}`,
     );
     return true;
   })()
     .catch((error) => {
       syncState.lastProcessedSignature = null;
       syncState.lastConfiguredSignature = null;
-      console.warn(`[RAG] Runtime configure failed (${reason}):`, error);
+      log.warn(`Runtime configure failed (${reason}):`, error);
       return false;
     })
     .finally(() => {

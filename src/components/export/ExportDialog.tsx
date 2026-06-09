@@ -5,6 +5,9 @@ import { exportService } from '../../services/export/exportService';
 import { Session } from '../../services/sessionManager';
 import { MessageSelector } from './MessageSelector';
 import { getSessionMessages, SessionMessage } from '../../services/sessionManager';
+import { createLogger } from '../../services/logger';
+
+const log = createLogger('ExportDialog');
 
 interface ExportDialogProps {
   isOpen: boolean;
@@ -38,7 +41,7 @@ export function ExportDialog({ isOpen, onClose, session, messageCount }: ExportD
       const msgs = await getSessionMessages(session.id);
       setMessages(msgs);
     } catch (error) {
-      console.error('加载消息失败:', error);
+      log.error('加载消息失败:', error);
     }
   }, [session.id]);
 

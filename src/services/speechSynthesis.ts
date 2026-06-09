@@ -2,6 +2,9 @@
 // 调用 Rust 后端的 Windows SAPI TTS，实现离线语音朗读
 
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from './logger';
+
+const log = createLogger('SpeechSynthesis');
 
 let isSpeaking = false;
 
@@ -27,7 +30,7 @@ export async function speakText(text: string, rate?: number, volume?: number): P
       volume: volume ?? 100,
     });
   } catch (err) {
-    console.warn('TTS 朗读失败:', err);
+    log.warn('TTS 朗读失败:', err);
     isSpeaking = false;
   }
 }
@@ -37,7 +40,7 @@ export async function stopSpeaking(): Promise<void> {
   try {
     await invoke('tts_stop');
   } catch (err) {
-    console.warn('TTS 停止失败:', err);
+    log.warn('TTS 停止失败:', err);
   }
 }
 

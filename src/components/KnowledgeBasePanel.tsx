@@ -5,6 +5,9 @@ import { loadConfig } from '../store/config';
 import { KnowledgeImportPanel } from './knowledge/KnowledgeImportPanel';
 import { KnowledgeDocumentList } from './knowledge/KnowledgeDocumentList';
 import { KnowledgeDocumentPreview } from './knowledge/KnowledgeDocumentPreview';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('KnowledgeBasePanel');
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) {
@@ -223,7 +226,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     }
 
     void refreshKnowledgeBaseStats(currentKnowledgeBaseId).catch((refreshError) => {
-      console.error('Failed to load knowledge base stats:', refreshError);
+      log.error('Failed to load knowledge base stats:', refreshError);
     });
   }, [currentKnowledgeBaseId, refreshKnowledgeBaseStats]);
 
@@ -233,7 +236,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
     }
 
     void refreshKnowledgeDocuments(currentKnowledgeBaseId).catch((refreshError) => {
-      console.error('Failed to load knowledge documents:', refreshError);
+      log.error('Failed to load knowledge documents:', refreshError);
     });
   }, [currentKnowledgeBaseId, refreshKnowledgeDocuments]);
 
@@ -249,7 +252,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           refreshKnowledgeDocumentChunks(currentDocumentId),
         ]);
       } catch (refreshError) {
-        console.error('Failed to load knowledge document preview:', refreshError);
+        log.error('Failed to load knowledge document preview:', refreshError);
       }
     })();
   }, [currentDocumentId, refreshKnowledgeDocument, refreshKnowledgeDocumentChunks]);
@@ -281,7 +284,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
           }
         }
       } catch (refreshError) {
-        console.error('Failed to refresh knowledge bases:', refreshError);
+        log.error('Failed to refresh knowledge bases:', refreshError);
       }
     })();
   };
@@ -308,7 +311,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
       setNewKnowledgeBaseName('');
       setNewKnowledgeBaseDescription('');
     } catch (createError) {
-      console.error('Failed to create knowledge base:', createError);
+      log.error('Failed to create knowledge base:', createError);
     } finally {
       setIsCreatingKnowledgeBase(false);
     }
@@ -329,7 +332,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
       await deleteKnowledgeBase(currentKnowledgeBaseId);
       setConfirmDeleteKnowledgeBaseId(null);
     } catch (deleteError) {
-      console.error('Failed to delete knowledge base:', deleteError);
+      log.error('Failed to delete knowledge base:', deleteError);
     }
   };
 
@@ -348,7 +351,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
         },
       });
     } catch (reindexError) {
-      console.error('Failed to reindex knowledge base:', reindexError);
+      log.error('Failed to reindex knowledge base:', reindexError);
     }
   };
 
@@ -367,7 +370,7 @@ export function KnowledgeBasePanel({ onBack }: KnowledgeBasePanelProps) {
         },
       });
     } catch (retryError) {
-      console.error('Failed to retry pending or failed knowledge documents:', retryError);
+      log.error('Failed to retry pending or failed knowledge documents:', retryError);
     }
   };
 
