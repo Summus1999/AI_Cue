@@ -51,15 +51,15 @@ class Logger {
   /** 创建模块化 logger */
   createModuleLogger(module: string) {
     return {
-      trace: (message: string, data?: Record<string, unknown>) =>
+      trace: (message: string, data?: unknown) =>
         this.log('trace', module, message, data),
-      debug: (message: string, data?: Record<string, unknown>) =>
+      debug: (message: string, data?: unknown) =>
         this.log('debug', module, message, data),
-      info: (message: string, data?: Record<string, unknown>) =>
+      info: (message: string, data?: unknown) =>
         this.log('info', module, message, data),
-      warn: (message: string, data?: Record<string, unknown>) =>
+      warn: (message: string, data?: unknown) =>
         this.log('warn', module, message, data),
-      error: (message: string, data?: Record<string, unknown>) =>
+      error: (message: string, data?: unknown) =>
         this.log('error', module, message, data),
     };
   }
@@ -69,7 +69,7 @@ class Logger {
     level: LogLevel,
     module: string,
     message: string,
-    data?: Record<string, unknown>
+    data?: unknown
   ): void {
     // 级别过滤
     if (this.levelPriority[level] < this.levelPriority[this.level]) {
@@ -81,7 +81,7 @@ class Logger {
       module,
       message: this.sanitize(message),
       timestamp: Date.now(),
-      data: data ? this.sanitizeObject(data) : undefined,
+      data: data ? this.sanitizeData(data) : undefined,
     };
 
     // 添加到缓冲
@@ -148,10 +148,10 @@ class Logger {
         filePath: result.filePath,
         error: result.error,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
-        error: String(error),
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -165,6 +165,20 @@ class Logger {
       .replace(/Bearer\s+[a-zA-Z0-9\-_.]+/gi, 'Bearer [REDACTED]')
       // 阿里云 Access Key
       .replace(/(LTAI|STS)[a-zA-Z0-9]{20,}/g, '[REDACTED]');
+  }
+
+  /** 将任意类型安全转为可脱敏对象 */
+  private sanitizeData(data: unknown): Record<string, unknown> {
+    if (data instanceof Error) {
+      return { error: data.message, stack: data.stack };
+    }
+    if (typeof data === 'string') {
+      return { message: this.sanitize(data) };
+    }
+    if (typeof data === 'object' && data !== null) {
+      return this.sanitizeObject(data as Record<string, unknown>);
+    }
+    return { value: String(data) };
   }
 
   /** 敏感信息脱敏 - 对象 */

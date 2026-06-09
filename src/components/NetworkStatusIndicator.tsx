@@ -24,7 +24,7 @@ export function NetworkStatusIndicator({ className }: Props) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [showDegradationHistory, setShowDegradationHistory] = useState(false);
   const [toastEvent, setToastEvent] = useState<import('../store/networkResilience').DegradationEvent | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const lastUnreadDegradation = useNetworkResilience((s) => s.lastUnreadDegradation);
   const degradationEvents = useNetworkResilience((s) => s.degradationEvents);
