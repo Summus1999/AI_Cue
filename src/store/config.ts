@@ -98,22 +98,23 @@ export const PROVIDERS: ProviderMeta[] = [
 // Provider 默认模型
 export const PROVIDER_MODELS: Record<ProviderType, { id: string; name: string; description: string }[]> = {
   qwen: [
-    { id: 'qwen-turbo', name: 'Qwen Turbo', description: '快速响应，成本低，适合简单问题' },
-    { id: 'qwen-plus', name: 'Qwen Plus', description: '平衡性能与质量，适合大多数场景' },
-    { id: 'qwen-max', name: 'Qwen Max', description: '最强性能，适合复杂推理和代码问题' },
-    { id: 'qwen-coder-plus', name: 'Qwen Coder Plus', description: '专门针对编程优化' },
-    { id: 'qwen-vl-max', name: 'Qwen VL Max', description: '视觉理解模型，支持截图识别' },
+    { id: 'qwen3.7-max', name: 'Qwen 3.7 Max', description: '当前最强性能，适合复杂推理和代码问题' },
+    { id: 'qwen3.6-plus', name: 'Qwen 3.6 Plus', description: '平衡性能与质量，适合大多数场景' },
+    { id: 'qwen3.6-flash', name: 'Qwen 3.6 Flash', description: '快速响应，成本低，适合简单问题' },
+    { id: 'qwen3-coder-plus', name: 'Qwen 3 Coder Plus', description: '专门针对编程优化' },
+    { id: 'qwen3-vl-max', name: 'Qwen 3 VL Max', description: '视觉理解模型，支持截图识别' },
   ],
   openai_compat: [
-    { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI 多模态旗舰模型' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '轻量级，性价比高' },
-    { id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'DeepSeek 对话模型' },
-    { id: 'deepseek-reasoner', name: 'DeepSeek R1', description: 'DeepSeek 推理模型' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', description: 'OpenAI 当前旗舰对话模型' },
+    { id: 'gpt-5.4', name: 'GPT-5.4', description: 'OpenAI 高性能多模态模型' },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', description: '轻量级，性价比高' },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', description: 'DeepSeek 旗舰推理模型' },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', description: 'DeepSeek 高速低成本模型' },
   ],
   claude: [
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: '平衡性能与质量' },
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', description: '最强推理能力' },
-    { id: 'claude-haiku-3-5-20241022', name: 'Claude 3.5 Haiku', description: '快速响应' },
+    { id: 'claude-opus-4.8', name: 'Claude Opus 4.8', description: '最强推理能力' },
+    { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', description: '平衡性能与质量' },
+    { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', description: '快速响应' },
   ],
 };
 
@@ -284,10 +285,10 @@ export const SHORTCUT_LABELS: Record<keyof ShortcutConfig, string> = {
 // 支持的千问模型列表（已弃用，请使用 PROVIDER_MODELS）
 /** @deprecated 请使用 PROVIDER_MODELS */
 export const QWEN_MODELS = [
-  { id: 'qwen-turbo', name: 'qwen-turbo', description: '快速响应，成本低，适合简单问题' },
-  { id: 'qwen-plus', name: 'qwen-plus', description: '平衡性能与质量，适合大多数场景' },
-  { id: 'qwen-max', name: 'qwen-max', description: '最强性能，适合复杂推理和代码问题' },
-  { id: 'qwen-coder-plus', name: 'qwen-coder-plus', description: '专门针对编程优化' },
+  { id: 'qwen3.7-max', name: 'qwen3.7-max', description: '当前最强性能，适合复杂推理和代码问题' },
+  { id: 'qwen3.6-plus', name: 'qwen3.6-plus', description: '平衡性能与质量，适合大多数场景' },
+  { id: 'qwen3.6-flash', name: 'qwen3.6-flash', description: '快速响应，成本低，适合简单问题' },
+  { id: 'qwen3-coder-plus', name: 'qwen3-coder-plus', description: '专门针对编程优化' },
 ] as const;
 
 // NLS region options for speech recognition
@@ -486,17 +487,17 @@ export const DEFAULT_CONFIG: AppConfig = {
   providerConfigs: {
     qwen: {
       apiKey: '',
-      model: 'qwen-plus',
+      model: 'qwen3.7-max',
       baseUrl: '',
     },
     openai_compat: {
       apiKey: '',
-      model: 'gpt-4o',
+      model: 'gpt-5.5',
       baseUrl: '',
     },
     claude: {
       apiKey: '',
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4.8',
       baseUrl: '',
     },
   },
@@ -635,10 +636,10 @@ function migrateConfig(parsed: any): AppConfig {
       providerConfigs: {
         qwen: {
           apiKey: parsed.apiKey || '',
-          model: parsed.model || 'qwen-plus',
+          model: parsed.model || 'qwen3.7-max',
         },
-        openai_compat: { apiKey: '', model: 'gpt-4o' },
-        claude: { apiKey: '', model: 'claude-sonnet-4-20250514' },
+        openai_compat: { apiKey: '', model: 'gpt-5.5' },
+        claude: { apiKey: '', model: 'claude-opus-4.8' },
       },
       speechThreshold: parsed.speechThreshold ?? DEFAULT_CONFIG.speechThreshold,
       nlsAppKey: parsed.nlsAppKey || '',

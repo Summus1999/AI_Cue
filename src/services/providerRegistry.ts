@@ -92,9 +92,9 @@ export async function testProviderConnection(
  */
 export function getDefaultProviderConfig(provider: ProviderType): ProviderConfig {
   const defaultModels: Record<ProviderType, string> = {
-    qwen: 'qwen-plus',
-    openai_compat: 'gpt-4o',
-    claude: 'claude-sonnet-4-20250514',
+    qwen: 'qwen3.7-max',
+    openai_compat: 'gpt-5.5',
+    claude: 'claude-opus-4.8',
   };
 
   return {

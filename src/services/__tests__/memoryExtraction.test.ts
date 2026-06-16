@@ -13,7 +13,7 @@ function createConfig(overrides?: Partial<AppConfig>): AppConfig {
     providerConfigs: {
       qwen: {
         apiKey: 'chat-key',
-        model: 'qwen-plus',
+        model: 'qwen3.7-max',
         baseUrl: '',
       },
       openai_compat: {
@@ -23,7 +23,7 @@ function createConfig(overrides?: Partial<AppConfig>): AppConfig {
       },
       claude: {
         apiKey: '',
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-4.8',
         baseUrl: '',
       },
     },
@@ -92,7 +92,7 @@ describe('assistant memory extraction trigger', () => {
         config: createConfig({
           providerConfigs: {
             ...createConfig().providerConfigs,
-            qwen: { apiKey: '', model: 'qwen-plus', baseUrl: '' },
+            qwen: { apiKey: '', model: 'qwen3.7-max', baseUrl: '' },
           },
         }),
       }),
@@ -119,7 +119,7 @@ describe('assistant memory extraction trigger', () => {
     });
 
     expect(request.provider).toBe('qwen');
-    expect(request.model).toBe('qwen-plus');
+    expect(request.model).toBe('qwen3.7-max');
     expect(request.config.apiKey).toBe('chat-key');
     expect(request.embeddingConfig.provider).toBe('openai_compat');
     expect(request.embeddingConfig.apiKey).toBe('embedding-key');

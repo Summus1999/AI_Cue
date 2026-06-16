@@ -537,8 +537,8 @@ export async function sendToQwen(
 
   // 兼容旧配置格式
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
-  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
-  
+  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen3.7-max';
+
   if (!apiKey?.trim()) {
     throw new Error('请先在设置中配置 DashScope API Key');
   }
@@ -566,8 +566,8 @@ export async function sendToQwenStream(
 
   // 兼容旧配置格式
   const apiKey = config.providerConfigs?.qwen?.apiKey || config.apiKey || '';
-  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen-turbo';
-  
+  const model = config.providerConfigs?.qwen?.model || config.model || 'qwen3.7-max';
+
   if (!apiKey?.trim()) {
     throw new Error('请先在设置中配置 DashScope API Key');
   }

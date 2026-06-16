@@ -9,17 +9,17 @@ function createConfig(overrides?: Partial<AppConfig>): AppConfig {
     providerConfigs: {
       qwen: {
         apiKey: 'rag-key',
-        model: 'qwen-plus',
+        model: 'qwen3.7-max',
         baseUrl: '',
       },
       openai_compat: {
         apiKey: '',
-        model: 'gpt-4o',
+        model: 'gpt-5.5',
         baseUrl: '',
       },
       claude: {
         apiKey: '',
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-4.8',
         baseUrl: '',
       },
     },
