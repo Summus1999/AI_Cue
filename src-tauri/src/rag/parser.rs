@@ -40,10 +40,9 @@ pub enum BlockKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ParseOptions {
     pub max_file_size_bytes: u64,
-    #[serde(default)]
     pub enable_ocr: bool,
 }
 

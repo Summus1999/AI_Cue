@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-const QWEN_DEFAULT_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/text-embedding";
+const QWEN_DEFAULT_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_DEFAULT_MODEL: &str = "text-embedding-v2";
+const QWEN_COMPATIBLE_BATCH_SIZE: usize = 10;
 const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const OPENAI_DEFAULT_MODEL: &str = "text-embedding-3-small";
 
@@ -52,6 +53,13 @@ fn normalize_optional_string(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn build_openai_compatible_embedding_body(model: &str, texts: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "input": texts,
+    })
 }
 
 /// Build a concrete embedding provider from runtime config.
@@ -144,16 +152,7 @@ impl QwenEmbedding {
 
     async fn embed_internal(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
         let url = format!("{}/embeddings", self.base_url);
-
-        let body = serde_json::json!({
-            "model": self.model.as_str(),
-            "input": {
-                "texts": texts
-            },
-            "parameters": {
-                "text_type": "query"
-            }
-        });
+        let body = build_openai_compatible_embedding_body(&self.model, texts);
 
         let resp = self
             .client
@@ -211,7 +210,7 @@ impl EmbeddingProvider for QwenEmbedding {
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
         let mut results = Vec::new();
 
-        for chunk in texts.chunks(25) {
+        for chunk in texts.chunks(QWEN_COMPATIBLE_BATCH_SIZE) {
             let embeddings = self.embed_internal(chunk).await?;
             results.extend(embeddings);
         }
@@ -438,5 +437,19 @@ mod tests {
         .unwrap();
 
         assert!(err.contains("API key"));
+    }
+
+    #[test]
+    fn test_qwen_embedding_request_uses_openai_compatible_input_array() {
+        let texts = vec!["ARP 协议会把 IP 地址解析为 MAC 地址".to_string()];
+
+        let body = build_openai_compatible_embedding_body("text-embedding-v2", &texts);
+
+        assert_eq!(body["model"], "text-embedding-v2");
+        assert_eq!(
+            body["input"],
+            serde_json::json!(["ARP 协议会把 IP 地址解析为 MAC 地址"])
+        );
+        assert!(body.get("parameters").is_none());
     }
 }

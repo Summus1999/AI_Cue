@@ -5,6 +5,7 @@ use tauri::Manager;
 
 mod ai;
 mod audio;
+mod capture_detection;
 mod commands;
 mod database;
 mod export;
@@ -17,8 +18,7 @@ pub mod rag;
 mod review;
 mod screenshot;
 mod startup; // 启动管理
-mod tts; // TTS 语音合成
-mod capture_detection; // 屏幕捕获检测
+mod tts; // TTS 语音合成 // 屏幕捕获检测
 
 pub fn run() {
     tauri::Builder::default()

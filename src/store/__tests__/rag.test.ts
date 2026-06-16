@@ -400,6 +400,7 @@ describe('useRagStore state', () => {
       embeddingCount: 4,
     });
     expect(store.getState().error).toContain('1 个文档失败');
+    expect(store.getState().error).toContain('parse failed');
   });
 
   it('tracks retry progress for pending and failed documents in a knowledge base', async () => {

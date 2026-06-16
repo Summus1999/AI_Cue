@@ -760,10 +760,7 @@ impl KnowledgeBaseImportOrchestrator {
         let post_parse_snapshot = SourceDocumentSnapshot::from_path(&request.path)
             .map_err(|e| format!("解析后校验失败: {e}"))?;
         if post_parse_snapshot.fingerprint != snapshot.fingerprint {
-            let _ = self.mark_document_failed(
-                &document.id,
-                "文件在解析期间被外部修改，导入已中止",
-            );
+            let _ = self.mark_document_failed(&document.id, "文件在解析期间被外部修改，导入已中止");
             self.report_progress(
                 progress_callback,
                 progress_context.event(

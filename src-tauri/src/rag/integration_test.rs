@@ -285,10 +285,7 @@ async fn duplicate_import_of_changed_file_is_rejected_without_creating_dirty_row
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].id, first.document.id);
     assert_eq!(documents[0].index_state, KnowledgeDocumentIndexState::Ready);
-    assert_eq!(
-        count_rows(&db, "kb_chunks"),
-        first.persisted_chunks.len()
-    );
+    assert_eq!(count_rows(&db, "kb_chunks"), first.persisted_chunks.len());
     assert_eq!(
         count_rows(&db, "kb_embeddings"),
         first.persisted_embeddings.len()

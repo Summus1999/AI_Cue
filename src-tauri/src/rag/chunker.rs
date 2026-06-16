@@ -4,7 +4,7 @@ use super::parser::{BlockKind, DocumentType, ParsedBlock, ParsedDocument};
 
 /// 分块配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ChunkConfig {
     /// 最大分块字符数
     pub max_chunk_size: usize,
@@ -184,6 +184,7 @@ fn split_by_code_blocks(content: &str, code_blocks: &[CodeBlock]) -> Vec<(String
 fn split_text_windows(text: &str, base_offset: usize, config: &ChunkConfig) -> Vec<TextWindow> {
     let mut windows = Vec::new();
     let sentences = split_by_sentences(text);
+    let max_chunk_size = config.max_chunk_size.max(1);
 
     if sentences.is_empty() {
         return windows;
@@ -198,7 +199,27 @@ fn split_text_windows(text: &str, base_offset: usize, config: &ChunkConfig) -> V
         let current_chars = current_chunk.chars().count();
         let sentence_chars = sentence.chars().count();
 
-        if current_chars > 0 && current_chars + sentence_chars > config.max_chunk_size {
+        if sentence_chars > max_chunk_size {
+            if current_chars > 0 {
+                let chunk_text = current_chunk.trim().to_string();
+                if !chunk_text.is_empty() {
+                    let chunk_end = current_start + chunk_text.len();
+                    windows.push(TextWindow {
+                        text: chunk_text,
+                        start_offset: current_start,
+                        end_offset: chunk_end,
+                    });
+                }
+                current_chunk.clear();
+            }
+
+            windows.extend(split_long_text_window(&sentence, cursor, max_chunk_size));
+            cursor += sentence_len + 1;
+            current_start = cursor;
+            continue;
+        }
+
+        if current_chars > 0 && current_chars + sentence_chars > max_chunk_size {
             if current_chars >= config.min_chunk_size {
                 let chunk_text = current_chunk.trim().to_string();
                 let chunk_end = current_start + chunk_text.len();
@@ -300,6 +321,69 @@ fn split_code_windows(text: &str, base_offset: usize, config: &ChunkConfig) -> V
     }
 
     windows
+}
+
+fn split_long_text_window(
+    text: &str,
+    base_offset: usize,
+    max_chunk_size: usize,
+) -> Vec<TextWindow> {
+    let mut windows = Vec::new();
+    let mut segment_start_byte = 0usize;
+    let mut segment_chars = 0usize;
+
+    for (byte_idx, _) in text.char_indices() {
+        if segment_chars == max_chunk_size {
+            push_text_window_segment(
+                &mut windows,
+                text,
+                segment_start_byte,
+                byte_idx,
+                base_offset,
+            );
+            segment_start_byte = byte_idx;
+            segment_chars = 0;
+        }
+
+        segment_chars += 1;
+    }
+
+    if segment_start_byte < text.len() {
+        push_text_window_segment(
+            &mut windows,
+            text,
+            segment_start_byte,
+            text.len(),
+            base_offset,
+        );
+    }
+
+    windows
+}
+
+fn push_text_window_segment(
+    windows: &mut Vec<TextWindow>,
+    text: &str,
+    start_byte: usize,
+    end_byte: usize,
+    base_offset: usize,
+) {
+    let raw_segment = &text[start_byte..end_byte];
+    let segment = raw_segment.trim();
+    if segment.is_empty() {
+        return;
+    }
+
+    let leading_trimmed_bytes = raw_segment.len() - raw_segment.trim_start().len();
+    let trailing_trimmed_bytes = raw_segment.len() - raw_segment.trim_end().len();
+    let start_offset = base_offset + start_byte + leading_trimmed_bytes;
+    let end_offset = base_offset + end_byte - trailing_trimmed_bytes;
+
+    windows.push(TextWindow {
+        text: segment.to_string(),
+        start_offset,
+        end_offset,
+    });
 }
 
 /// 按句子分割
@@ -786,5 +870,49 @@ mod tests {
         let chunks = chunk_document(&document, &ChunkConfig::document_default());
         assert!(chunks.len() > 1);
         assert!(matches!(chunks[0].chunk_type, ChunkType::Code { .. }));
+    }
+
+    #[test]
+    fn test_chunk_document_splits_long_unpunctuated_chinese_paragraph() {
+        let text = "地址解析协议用于根据已知的网络层地址解析对应的数据链路层地址".repeat(80);
+        let document = ParsedDocument {
+            metadata: ParsedDocumentMetadata {
+                source_path: "C:/ARP 协议详解.md".to_string(),
+                file_name: "ARP 协议详解.md".to_string(),
+                extension: Some("md".to_string()),
+                title: "ARP 协议详解".to_string(),
+                document_type: DocumentType::Markdown,
+                byte_size: text.len() as u64,
+                language: Some("markdown".to_string()),
+            },
+            blocks: vec![ParsedBlock {
+                index: 0,
+                block_kind: BlockKind::Paragraph,
+                text,
+                heading_path: vec!["ARP 协议详解".to_string()],
+                page_number: None,
+                language: None,
+                symbol: None,
+                start_offset: 0,
+                end_offset: 4096,
+                line_start: Some(1),
+                line_end: Some(1),
+            }],
+            total_chars: 4096,
+            total_pages: None,
+        };
+        let config = ChunkConfig {
+            max_chunk_size: 120,
+            overlap_size: 0,
+            min_chunk_size: 20,
+            prefer_structure_boundary: true,
+        };
+
+        let chunks = chunk_document(&document, &config);
+
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.text.chars().count() <= config.max_chunk_size));
     }
 }

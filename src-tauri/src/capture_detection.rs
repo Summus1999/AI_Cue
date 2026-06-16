@@ -1,30 +1,30 @@
 // 屏幕捕获检测模块
 // 通过进程名检测已知会议/录屏软件是否在运行，并支持运行时切换 contentProtected
 
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use sysinfo::{ProcessesToUpdate, System};
 
-use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetWindowDisplayAffinity, SetWindowDisplayAffinity,
-    WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
-};
 use windows::core::PCWSTR;
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, GetWindowDisplayAffinity, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    WDA_NONE,
+};
 
 // 已知的会议/录屏软件进程名（小写比较）
 const CAPTURE_PROCESS_NAMES: &[&str] = &[
     "meetingscreenshare", // 腾讯会议屏幕共享
-    "wemeetapp",           // 腾讯会议
-    "zoom",                // Zoom
-    "feishu",              // 飞书
-    "lark",                // 飞书国际版
-    "dingtalk",            // 钉钉
-    "teams",               // Microsoft Teams
-    "obs64",               // OBS Studio 64-bit
-    "obs32",               // OBS Studio 32-bit
-    "vstudio",             // VMware
-    "vmware",              // VMware
-    "virtualbox",          // VirtualBox
+    "wemeetapp",          // 腾讯会议
+    "zoom",               // Zoom
+    "feishu",             // 飞书
+    "lark",               // 飞书国际版
+    "dingtalk",           // 钉钉
+    "teams",              // Microsoft Teams
+    "obs64",              // OBS Studio 64-bit
+    "obs32",              // OBS Studio 32-bit
+    "vstudio",            // VMware
+    "vmware",             // VMware
+    "virtualbox",         // VirtualBox
 ];
 
 static SYS_INFO: Lazy<Mutex<System>> = Lazy::new(|| Mutex::new(System::new_all()));
@@ -58,12 +58,7 @@ fn get_tauri_hwnd(window_title: &str) -> Result<windows::Win32::Foundation::HWND
         .chain(std::iter::once(0))
         .collect();
 
-    let result = unsafe {
-        FindWindowW(
-            PCWSTR::null(),
-            PCWSTR::from_raw(title_wide.as_ptr()),
-        )
-    };
+    let result = unsafe { FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title_wide.as_ptr())) };
 
     match result {
         Ok(hwnd) if !hwnd.0.is_null() => Ok(hwnd),

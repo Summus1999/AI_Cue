@@ -200,6 +200,22 @@ function createEmptyKnowledgeBaseStats(knowledgeBaseId: string): KnowledgeBaseSt
   };
 }
 
+function formatKnowledgeBaseFailureSummary(
+  prefix: string,
+  failures: CompletedKnowledgeBaseReindex['failures'],
+): string | null {
+  if (failures.length === 0) {
+    return null;
+  }
+
+  const firstFailure = failures[0];
+  const fileName = firstFailure?.fileName || '未知文档';
+  const errorDetail = firstFailure?.error?.trim();
+  const firstFailureText = errorDetail ? `${fileName}（${errorDetail}）` : fileName;
+
+  return `${prefix}，但有 ${failures.length} 个文档失败：${firstFailureText}`;
+}
+
 function mergeTaskSnapshot(
   tasksByRequestId: Record<string, KnowledgeBaseImportTaskSnapshot>,
   task: KnowledgeBaseImportTaskSnapshot,
@@ -1008,9 +1024,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
             ...state.isReindexingKnowledgeBaseById,
             [request.knowledgeBaseId]: false,
           },
-          error: result.failures.length > 0
-            ? `整库重建完成，但有 ${result.failures.length} 个文档失败：${result.failures[0]?.fileName ?? '未知文档'}`
-            : state.error,
+          error: formatKnowledgeBaseFailureSummary('整库重建完成', result.failures) ?? state.error,
         }));
 
         return result;
@@ -1079,9 +1093,7 @@ export function createRagState(service: RagStoreService = ragService): StateCrea
             ...state.isRetryingKnowledgeBaseById,
             [request.knowledgeBaseId]: false,
           },
-          error: result.failures.length > 0
-            ? `后台重试完成，但有 ${result.failures.length} 个文档仍失败：${result.failures[0]?.fileName ?? '未知文档'}`
-            : state.error,
+          error: formatKnowledgeBaseFailureSummary('后台重试完成', result.failures) ?? state.error,
         }));
 
         return result;

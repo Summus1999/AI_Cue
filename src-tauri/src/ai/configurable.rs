@@ -97,23 +97,19 @@ impl ConfigurableProvider {
         });
 
         // 重命名字段（因为 json! 宏使用的是字面量 key）
-        let body_obj = body.as_object_mut()
-            .ok_or_else(|| super::traits::AIError::Config(
-                "请求体构建异常：不是 JSON 对象".into(),
-            ))?;
+        let body_obj = body.as_object_mut().ok_or_else(|| {
+            super::traits::AIError::Config("请求体构建异常：不是 JSON 对象".into())
+        })?;
 
-        let model_value = body_obj.remove("model_field")
-            .ok_or_else(|| super::traits::AIError::Config(
-                "请求体构建异常：model_field 缺失".into(),
-            ))?;
-        let messages_value = body_obj.remove("messages_field")
-            .ok_or_else(|| super::traits::AIError::Config(
-                "请求体构建异常：messages_field 缺失".into(),
-            ))?;
-        let stream_value = body_obj.remove("stream_field")
-            .ok_or_else(|| super::traits::AIError::Config(
-                "请求体构建异常：stream_field 缺失".into(),
-            ))?;
+        let model_value = body_obj.remove("model_field").ok_or_else(|| {
+            super::traits::AIError::Config("请求体构建异常：model_field 缺失".into())
+        })?;
+        let messages_value = body_obj.remove("messages_field").ok_or_else(|| {
+            super::traits::AIError::Config("请求体构建异常：messages_field 缺失".into())
+        })?;
+        let stream_value = body_obj.remove("stream_field").ok_or_else(|| {
+            super::traits::AIError::Config("请求体构建异常：stream_field 缺失".into())
+        })?;
 
         body_obj.insert(model_field.to_string(), model_value);
         body_obj.insert(messages_field.to_string(), messages_value);

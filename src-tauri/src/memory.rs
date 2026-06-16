@@ -542,14 +542,8 @@ async fn run_reflection(
 
     let mut persisted_count = 0;
     for candidate in profile_candidates {
-        persist_candidate_with_consolidation(
-            db,
-            embedder,
-            candidate,
-            None,
-            similarity_threshold,
-        )
-        .await?;
+        persist_candidate_with_consolidation(db, embedder, candidate, None, similarity_threshold)
+            .await?;
         persisted_count += 1;
     }
 

@@ -1138,7 +1138,9 @@ pub fn list_all_memories(
                  ORDER BY last_seen_at DESC, updated_at DESC, id DESC",
             )
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], map_memory_row).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], map_memory_row)
+            .map_err(|e| e.to_string())?;
         let mut vec = Vec::new();
         for row in rows {
             vec.push(row.map_err(|e| e.to_string())?);
@@ -1513,10 +1515,8 @@ pub fn list_active_memories_by_types(
     }
     param_values.push(Box::new(limit as i64));
 
-    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|v| v.as_ref())
-        .collect();
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
 
     let rows = stmt
         .query_map(params_ref.as_slice(), map_memory_row)
@@ -1588,10 +1588,8 @@ pub fn count_active_memories_by_types(
         param_values.push(Box::new(t.as_str().to_string()));
     }
 
-    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|v| v.as_ref())
-        .collect();
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
 
     conn.query_row(&sql, params_ref.as_slice(), |row| row.get(0))
         .map_err(|e| e.to_string())
@@ -2382,9 +2380,12 @@ pub fn get_knowledge_document_by_source_path(
         )
         .map_err(|e| e.to_string())?;
 
-    stmt.query_row(params![knowledge_base_id, source_path], map_knowledge_document_row)
-        .optional()
-        .map_err(|e| e.to_string())
+    stmt.query_row(
+        params![knowledge_base_id, source_path],
+        map_knowledge_document_row,
+    )
+    .optional()
+    .map_err(|e| e.to_string())
 }
 
 /// 列出单个知识库文档的分块明细，供预览界面使用
@@ -3605,8 +3606,14 @@ mod tests {
         assert_eq!(stats.chunk_count, 2);
         assert_eq!(stats.embedding_count, 2);
         assert_eq!(stats.source_bytes, 1024 + second_document.source_byte_size);
-        assert_eq!(stats.chunk_bytes, "alpha".len() as u64 + "beta beta".len() as u64);
-        assert_eq!(stats.embedding_bytes, (3 * std::mem::size_of::<f32>() * 2) as u64);
+        assert_eq!(
+            stats.chunk_bytes,
+            "alpha".len() as u64 + "beta beta".len() as u64
+        );
+        assert_eq!(
+            stats.embedding_bytes,
+            (3 * std::mem::size_of::<f32>() * 2) as u64
+        );
         assert_eq!(
             stats.storage_bytes,
             stats.source_bytes + stats.chunk_bytes + stats.embedding_bytes
@@ -3672,7 +3679,10 @@ mod tests {
 
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].id, indexing_document.id);
-        assert_eq!(recovered[0].index_state, KnowledgeDocumentIndexState::Failed);
+        assert_eq!(
+            recovered[0].index_state,
+            KnowledgeDocumentIndexState::Failed
+        );
         assert_eq!(
             recovered[0].last_error.as_deref(),
             Some(KNOWLEDGE_DOCUMENT_RESTART_RECOVERY_ERROR)
@@ -3693,7 +3703,10 @@ mod tests {
         let persisted_ready = get_knowledge_document(&db, &ready_document.id)
             .unwrap()
             .unwrap();
-        assert_eq!(persisted_ready.index_state, KnowledgeDocumentIndexState::Ready);
+        assert_eq!(
+            persisted_ready.index_state,
+            KnowledgeDocumentIndexState::Ready
+        );
         assert_eq!(persisted_ready.last_error, None);
     }
 
@@ -3849,12 +3862,9 @@ mod tests {
         .unwrap();
 
         // 只查 episodic + semantic，应该只返回 2 条 active
-        let results = list_active_memories_by_types(
-            &db,
-            &[MemoryType::Episodic, MemoryType::Semantic],
-            10,
-        )
-        .unwrap();
+        let results =
+            list_active_memories_by_types(&db, &[MemoryType::Episodic, MemoryType::Semantic], 10)
+                .unwrap();
 
         assert_eq!(results.len(), 2);
         let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
@@ -3865,12 +3875,9 @@ mod tests {
         assert!(empty.is_empty());
 
         // limit 限制生效
-        let limited = list_active_memories_by_types(
-            &db,
-            &[MemoryType::Episodic, MemoryType::Semantic],
-            1,
-        )
-        .unwrap();
+        let limited =
+            list_active_memories_by_types(&db, &[MemoryType::Episodic, MemoryType::Semantic], 1)
+                .unwrap();
         assert_eq!(limited.len(), 1);
     }
 

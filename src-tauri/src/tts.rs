@@ -51,14 +51,16 @@ fn speak_internal(text: &str, rate: i32, volume: u16) -> Result<(), String> {
     // 设置语速 -10..10，默认 +2 稍快适合面试场景
     let clamped_rate = rate.clamp(-10, 10);
     unsafe {
-        voice.SetRate(clamped_rate)
+        voice
+            .SetRate(clamped_rate)
             .map_err(|e| format!("设置语速失敗: {e:?}"))?;
     }
 
     // 设置音量 0..100
     let clamped_vol = volume.clamp(0, 100) as u16;
     unsafe {
-        voice.SetVolume(clamped_vol)
+        voice
+            .SetVolume(clamped_vol)
             .map_err(|e| format!("设置音量失敗: {e:?}"))?;
     }
 
@@ -67,11 +69,13 @@ fn speak_internal(text: &str, rate: i32, volume: u16) -> Result<(), String> {
 
     // 异步朗读，立即返回
     unsafe {
-        voice.Speak(
-            windows::core::PCWSTR::from_raw(wide_text.as_ptr()),
-            SPF_ASYNC.0 as u32,
-            None,
-        ).map_err(|e| format!("朗读失敗: {e:?}"))?;
+        voice
+            .Speak(
+                windows::core::PCWSTR::from_raw(wide_text.as_ptr()),
+                SPF_ASYNC.0 as u32,
+                None,
+            )
+            .map_err(|e| format!("朗读失敗: {e:?}"))?;
     }
 
     // 轮询等待朗读完成或被取消
@@ -79,11 +83,13 @@ fn speak_internal(text: &str, rate: i32, volume: u16) -> Result<(), String> {
         if !TTS_ACTIVE.load(Ordering::Relaxed) {
             // 停止朗读：purge 当前缓冲区
             unsafe {
-                voice.Speak(
-                    windows::core::PCWSTR::null(),
-                    SPF_PURGEBEFORESPEAK.0 as u32,
-                    None,
-                ).ok();
+                voice
+                    .Speak(
+                        windows::core::PCWSTR::null(),
+                        SPF_PURGEBEFORESPEAK.0 as u32,
+                        None,
+                    )
+                    .ok();
             }
             return Ok(());
         }
