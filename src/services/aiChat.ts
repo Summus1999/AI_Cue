@@ -17,6 +17,57 @@ export interface ChatMessage {
 }
 
 /**
+ * 将模型输出清理为纯文本，保留代码块和 cheat 模式的高亮标记【】。
+ * 用于兜底：当模型未遵守 "禁止 Markdown" 指令时，在展示前做最后清理。
+ */
+export function normalizePlainText(content: string): string {
+  // 保护代码块，避免被误清理
+  const codeBlocks: string[] = [];
+  let text = content.replace(/```[\s\S]*?```/g, (block) => {
+    codeBlocks.push(block);
+    return `\u0000CODE_BLOCK_${codeBlocks.length - 1}\u0000`;
+  });
+
+  // 保护行内代码
+  const inlineCodes: string[] = [];
+  text = text.replace(/`([^`]+)`/g, (_, code) => {
+    inlineCodes.push(code);
+    return `\u0000INLINE_CODE_${inlineCodes.length - 1}\u0000`;
+  });
+
+  // 清理常见 Markdown 标记
+  text = text
+    // 标题
+    .replace(/^#{1,6}\s+/gm, '')
+    // 粗体 **text** / __text__
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    // 斜体 *text* / _text_（保守：只在成对出现且前后非字母数字时清理）
+    .replace(/(?<![A-Za-z0-9])\*([^*\n]+)\*(?![A-Za-z0-9])/g, '$1')
+    .replace(/(?<![A-Za-z0-9])_([^_\n]+)_(?![A-Za-z0-9])/g, '$1')
+    // 删除线 ~~text~~
+    .replace(/~~([^~]+)~~/g, '$1')
+    // 引用
+    .replace(/^>\s?/gm, '')
+    // 无序列表
+    .replace(/^[-*+]\s+/gm, '')
+    // 有序列表
+    .replace(/^\d+\.\s+/gm, '')
+    // 链接 [text](url)
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 图片 ![alt](url)
+    .replace(/!\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+  // 恢复行内代码
+  text = text.replace(/\u0000INLINE_CODE_(\d+)\u0000/g, (_, index) => inlineCodes[Number(index)]);
+
+  // 恢复代码块
+  text = text.replace(/\u0000CODE_BLOCK_(\d+)\u0000/g, (_, index) => codeBlocks[Number(index)]);
+
+  return text;
+}
+
+/**
  * 从消息列表中提取最近 N 轮对话作为上下文
  * @param messages  当前会话的全部消息（按时间升序）
  * @param windowSize  上下文窗口大小（轮数），1轮 = 1条user + 1条assistant
@@ -140,12 +191,17 @@ function resolveBasePrompt(config: AppConfig): string {
   return template?.prompt || PROMPT_TEMPLATES[0].prompt;
 }
 
+// 强制输出纯文本的约束，会放在 System Prompt 最前面，确保任何模板/背景注入后都不会输出 Markdown
+const PLAIN_TEXT_RULE = `【输出格式强制约束】
+你必须使用纯文本格式回答，严禁使用任何 Markdown 标记（包括但不限于 **粗体**、*斜体*、# 标题、- 列表、> 引用、\`行内代码\`、\`\`\`代码块\`\`\` 等）。只输出普通文字，段落之间用自然换行分隔。`;
+
 // 构建发送给 AI 的 System Prompt。
 // 拼接顺序（优先级从高到低）：
 //   1. 面试模板 Prompt（来自 interviewTemplates.ts，用户主动选择，最高优先级）
 //   2. 基础 Prompt（来自设置页的 Prompt 模板，默认 "通用助手"）
 //   3. 面试背景信息（JD、简历、公司、岗位，来自面试设置弹窗）
 //   4. RAG 检索上下文（知识库中检索到的相关文档片段）
+//   5. 最外层强制追加的纯文本约束（始终生效）
 function getSystemPrompt(config: AppConfig, promptMode: PromptMode, retrievalContext?: string): string {
   let prompt = resolveBasePrompt(config);
 
@@ -165,7 +221,10 @@ function getSystemPrompt(config: AppConfig, promptMode: PromptMode, retrievalCon
     prompt = `${prompt}\n\n${buildInterviewBackgroundPrompt(bg, promptMode)}`;
   }
 
-  return appendRetrievalContext(prompt, retrievalContext);
+  prompt = appendRetrievalContext(prompt, retrievalContext);
+
+  // 无论使用哪种 Prompt 模板或面试模板，都在最外层强制追加纯文本约束
+  return `${PLAIN_TEXT_RULE}\n\n---\n\n${prompt}`;
 }
 
 /** 流结果 */

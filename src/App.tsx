@@ -40,6 +40,7 @@ import {
   sendToQwenStreamWithImage,
   sendStream,
   buildContextHistory,
+  normalizePlainText,
 } from "./services/aiChat";
 import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
@@ -508,7 +509,16 @@ function App() {
         }
 
         if (done) {
-          const finalAssistantContent = assistantPrefixContent + fullAssistantContent;
+          const rawAssistantContent = assistantPrefixContent + fullAssistantContent;
+          // 截图视觉识别需要保留代码块等原始格式，其他对话统一做 Markdown 兜底清理
+          const finalAssistantContent = imageBase64
+            ? rawAssistantContent
+            : normalizePlainText(rawAssistantContent);
+
+          // 如果做了兜底清理，替换掉流式过程中追加的原始内容
+          if (!imageBase64 && rawAssistantContent !== finalAssistantContent) {
+            updateAssistantMessage(assistantId, finalAssistantContent);
+          }
 
           setMessages((prev) =>
             prev.map((msg) =>
