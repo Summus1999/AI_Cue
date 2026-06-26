@@ -42,7 +42,7 @@ import {
   buildContextHistory,
   normalizePlainText,
 } from "./services/aiChat";
-import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming } from "./store/config";
+import { loadConfig, saveConfig, PromptMode, getPromptMode, QuestionTiming, type AppConfig } from "./store/config";
 import { bootstrap } from "./bootstrap/bootstrapCoordinator";
 import { createLogger } from "./services/logger";
 import { InterviewSetupDialog } from './components/InterviewSetupDialog';
@@ -105,6 +105,8 @@ interface RequestAssistantReplyOptions {
   retrievalQuery?: string;
   fallbackCitations?: CitationMetadata[];
   existingAssistantContentPrefix?: string;
+  /** 调用方已预加载的配置，传入后避免重复跨 IPC 读盘 */
+  prefetchedConfig?: AppConfig;
 }
 
 interface ScreenshotContext {
@@ -484,7 +486,7 @@ function App() {
     let fullAssistantContent = '';
 
     try {
-      const config = await loadConfig();
+      const config = options.prefetchedConfig ?? await loadConfig();
       let hasReceivedContent = false;
       const isLocallyCancelled = () =>
         locallyCancelledRequestIdsRef.current.has(requestId);
@@ -1274,7 +1276,9 @@ function App() {
               setCurrentQuestionAskedAt(null);
             }
 
-            await requestAssistantReply(text, requestText, imageBase64, responseTimeMs);
+            await requestAssistantReply(text, requestText, imageBase64, responseTimeMs, {
+              prefetchedConfig: config,
+            });
           } else {
             setMessages(prev => prev.slice(0, -1).concat([{
               id: generateId(),

@@ -84,6 +84,29 @@ export function resolveChatRetrievalStrategy(
   };
 }
 
+/// 检索链路硬超时：超过此时长仍未完成检索，则放弃并降级到普通聊天，
+/// 避免向量检索/embedding 慢请求阻塞 LLM 首字输出。
+const RETRIEVAL_HARD_TIMEOUT_MS = 1200;
+
+/**
+ * 带硬超时的包装：超时则返回 undefined，主链路不等待检索结果。
+ * 用 Promise.race + 一个定时器实现，定时器始终清理避免泄漏。
+ */
+async function withRetrievalTimeout<T>(
+  task: Promise<T>,
+  timeoutMs = RETRIEVAL_HARD_TIMEOUT_MS,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // 检索链路只能增强回答，不能阻塞主聊天链路。
 export async function resolveChatRetrievalContext(
   config: AppConfig,
@@ -112,11 +135,15 @@ export async function resolveChatRetrievalContext(
       return undefined;
     }
 
-    const retrievalBundle = await dependencies.retrieveWithCitations(query, 2000, 5, {
-      sessionId: strategy.sessionId,
-      sourceKinds: strategy.sourceKinds,
-    });
-    if (retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
+    // 检索包一层硬超时，避免慢检索拖住首字
+    const retrievalBundle = await withRetrievalTimeout(
+      dependencies.retrieveWithCitations(query, 2000, 5, {
+        sessionId: strategy.sessionId,
+        sourceKinds: strategy.sourceKinds,
+      }),
+    ).then((bundle) => bundle ?? null);
+
+    if (retrievalBundle && retrievalBundle.citations.length > 0 && retrievalBundle.promptContext.trim()) {
       return {
         promptContext: retrievalBundle.promptContext,
         citations: retrievalBundle.citations,
@@ -124,7 +151,9 @@ export async function resolveChatRetrievalContext(
     }
 
     if (strategy.sourceKinds.includes('KnowledgeBaseDocument')) {
-      const knowledgeReadyState = await dependencies.getKnowledgeReadyState();
+      const knowledgeReadyState = await withRetrievalTimeout(
+        dependencies.getKnowledgeReadyState(),
+      );
       if (knowledgeReadyState === false) {
         log.info('聊天降级到普通模式: 当前没有 ready 状态的知识库文档');
         return undefined;

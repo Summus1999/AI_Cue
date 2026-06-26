@@ -50,6 +50,23 @@ impl Default for QwenProvider {
     }
 }
 
+/// 构建 DashScope chat/completions 请求体。
+///
+/// 面试助手场景默认关闭深度思考（enable_thinking=false）：qwen3.5/3.6/3.7 系列默认开启
+/// 思考模式，会先输出大段 reasoning_content 再给正式答案，导致正式答案首字延迟飙到十几秒。
+/// 关闭后模型直接输出答案，首字延迟回到正常水平。
+///
+/// 适用范围：混合思考模型（以及默认不思考的模型，此参数会被忽略，安全无害）。
+/// thinking-only 模型（如 QwQ、*-thinking）无法关闭思考，也与本低延迟场景相悖，不在支持范围内。
+fn build_chat_body(model: &str, messages: &[ChatMessage], stream: bool) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "enable_thinking": false
+    })
+}
+
 #[async_trait]
 impl AIProvider for QwenProvider {
     async fn chat(
@@ -61,11 +78,7 @@ impl AIProvider for QwenProvider {
         let url = format!("{}/chat/completions", Self::base_url(config));
         let client = create_http_client(60)?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": false
-        });
+        let body = build_chat_body(model, &messages, false);
 
         let response = client
             .post(&url)
@@ -110,11 +123,7 @@ impl AIProvider for QwenProvider {
         let url = format!("{}/chat/completions", Self::base_url(config));
         let client = create_http_client(120)?;
 
-        let body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": true
-        });
+        let body = build_chat_body(model, &messages, true);
 
         let response = client
             .post(&url)
@@ -212,5 +221,35 @@ impl AIProvider for QwenProvider {
 
     fn display_name(&self) -> &'static str {
         "阿里云千问"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_messages() -> Vec<ChatMessage> {
+        vec![ChatMessage {
+            role: "user".to_string(),
+            content: "你好".to_string(),
+        }]
+    }
+
+    #[test]
+    fn build_chat_body_stream_disables_thinking() {
+        let body = build_chat_body("qwen3.7-max", &sample_messages(), true);
+        assert_eq!(body["enable_thinking"], serde_json::Value::Bool(false));
+        assert_eq!(body["stream"], serde_json::Value::Bool(true));
+        assert_eq!(body["model"], "qwen3.7-max");
+        // 校验 messages 原样透传，确保提取的纯函数契约完整
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "你好");
+    }
+
+    #[test]
+    fn build_chat_body_non_stream_disables_thinking() {
+        let body = build_chat_body("qwen3.7-max", &sample_messages(), false);
+        assert_eq!(body["enable_thinking"], serde_json::Value::Bool(false));
+        assert_eq!(body["stream"], serde_json::Value::Bool(false));
     }
 }

@@ -81,6 +81,24 @@ export async function selectProvider(
     return null;
   }
 
+  // 仅有一个可用候选时无需 pre-flight 探测：探测只会徒增首字延迟，
+  // 且单 provider 场景下即使探测失败也无备选可切换。直接选中该候选。
+  const availableEntries = smartRouting.entries.filter(
+    (e) => !degradedModels.has(e.id) && config.providerConfigs[e.provider]?.apiKey?.trim(),
+  );
+  if (availableEntries.length <= 1) {
+    if (availableEntries.length === 0) {
+      return null;
+    }
+    const entry = availableEntries[0];
+    return {
+      provider: entry.provider,
+      model: entry.model,
+      entryId: entry.id,
+      skippedCandidates: undefined,
+    };
+  }
+
   const priorityGroups = groupByPriority(smartRouting.entries);
   const allSkipped: SkippedCandidate[] = [];
 
