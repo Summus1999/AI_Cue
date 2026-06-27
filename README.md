@@ -4,6 +4,11 @@
 > 窗口不被腾讯会议等软件捕获，面试时安心使用。
 > 精准提升表达力、增强自信，助您高效斩获心仪职位。
 
+[![Release](https://img.shields.io/github/v/release/Summus1999/AI_Cue?label=%E4%B8%8B%E8%BD%BD&style=flat-square&color=blue)](https://github.com/Summus1999/AI_Cue/releases)
+![License](https://img.shields.io/github/license/Summus1999/AI_Cue?style=flat-square)
+
+📥 **最新安装包下载**：[GitHub Releases](https://github.com/Summus1999/AI_Cue/releases/latest)
+
 [English](README_en.md) | 中文
 
 > 📖 初次使用？请阅读 [用户指南](docs/USER_GUIDE.md)，手把手教你从零开始。
