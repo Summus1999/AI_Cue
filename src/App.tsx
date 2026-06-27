@@ -1855,7 +1855,7 @@ function App() {
                 ? 'bg-amber-500 text-white hover:bg-amber-600'
                 : 'hover:bg-amber-200/50'
             }`}
-            title={promptMode === 'cheat' ? '极速模式 · 点击切回' : '切换到极速模式'}
+            title={promptMode === 'cheat' ? '极速面试 · 点击切回' : '切换到极速面试'}
           >
             <Zap className={`w-3.5 h-3.5 ${promptMode === 'cheat' ? 'text-white' : 'text-amber-700'}`} />
           </button>

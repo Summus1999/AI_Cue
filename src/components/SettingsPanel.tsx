@@ -415,7 +415,7 @@ export function SettingsPanel({ isOpen, onClose, onOpenKnowledgeBase, onOpenMemo
 
             {/* Prompt 设置 */}
             <div className="space-y-3">
-              <label className="text-xs font-medium text-amber-700 uppercase tracking-wider">
+              <label className="text-xs font-medium text-amber-700 tracking-wider">
                 Prompt 设置
               </label>
               
