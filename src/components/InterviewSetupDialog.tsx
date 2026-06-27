@@ -1,20 +1,30 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { X, Briefcase, FileText, Building2, Target } from 'lucide-react';
+import { X, Briefcase, FileText, Building2, Target, Upload, Loader2 } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { ragService } from '../services/ragService';
+import { createLogger } from '../services/logger';
+
+const log = createLogger('InterviewSetupDialog');
 
 interface InterviewSetupDialogProps {
   isOpen: boolean;
   onClose: () => void;
   // 新增 company 和 position 参数，用于个性化 prompt 注入
   onSubmit: (jd: string, resume: string, company: string, position: string) => void;
+  // 提交按钮文字：面试官模式默认「开始面试」，其他模式建议传「保存」
+  submitLabel?: string;
 }
 
-export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSetupDialogProps) {
+export function InterviewSetupDialog({ isOpen, onClose, onSubmit, submitLabel = '开始面试' }: InterviewSetupDialogProps) {
   const [jd, setJd] = useState('');
   const [resume, setResume] = useState('');
   const [company, setCompany] = useState('');
   const [position, setPosition] = useState('');
   const [positionError, setPositionError] = useState('');
   const positionRef = useRef<HTMLInputElement>(null);
+  // 简历文件导入状态
+  const [isImportingResume, setIsImportingResume] = useState(false);
+  const [resumeImportError, setResumeImportError] = useState('');
 
   // 打开对话框时聚焦到岗位输入框
   useEffect(() => {
@@ -31,6 +41,8 @@ export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSet
       setCompany('');
       setPosition('');
       setPositionError('');
+      setResumeImportError('');
+      setIsImportingResume(false);
     }
   }, [isOpen]);
 
@@ -45,6 +57,35 @@ export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSet
     setPositionError('');
     onSubmit(jd.trim(), resume.trim(), company.trim(), trimmedPosition);
   }, [jd, resume, company, position, onSubmit]);
+
+  // 导入简历文件（PDF / Markdown），复用 RAG 文档解析能力，导入后覆盖
+  const handleImportResume = useCallback(async () => {
+    setResumeImportError('');
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: '简历文件', extensions: ['pdf', 'md', 'markdown'] }],
+      });
+      if (!selected || typeof selected !== 'string') return;
+
+      setIsImportingResume(true);
+      // enableOcr 兜底扫描版 PDF；文字版 PDF 不会触发 OCR，无副作用
+      const parsed = await ragService.parseDocument(selected, { enableOcr: true });
+      const text = parsed.blocks.map((b) => b.text).filter(Boolean).join('\n').trim();
+      if (!text) {
+        setResumeImportError('未从文件中提取到文字，请改用文字版简历或直接粘贴');
+        return;
+      }
+      setResume(text);
+      log.info(`简历导入成功: ${parsed.metadata.fileName}, ${text.length} 字符`);
+    } catch (err) {
+      log.error('简历导入失败', err);
+      setResumeImportError(`导入失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsImportingResume(false);
+    }
+  }, []);
 
   // 键盘事件处理
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -163,6 +204,29 @@ export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSet
               rows={6}
               className="w-full px-3 py-2 text-sm bg-amber-100/50 border border-amber-200 rounded-lg resize-none placeholder:text-amber-400 text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-300 transition-colors"
             />
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleImportResume}
+                disabled={isImportingResume}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-amber-100 text-amber-700 border border-amber-300 rounded-lg hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isImportingResume ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Upload className="w-3.5 h-3.5" />
+                )}
+                {isImportingResume ? '导入中...' : '导入 PDF / Markdown'}
+              </button>
+              {resume && !isImportingResume && (
+                <span className="text-[11px] text-amber-500">
+                  已填入 {resume.length} 字符
+                </span>
+              )}
+            </div>
+            {resumeImportError && (
+              <p className="mt-1.5 text-xs text-red-500">{resumeImportError}</p>
+            )}
           </div>
 
           {/* 提示文字 */}
@@ -191,7 +255,7 @@ export function InterviewSetupDialog({ isOpen, onClose, onSubmit }: InterviewSet
             className="px-4 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5"
           >
             <Briefcase className="w-3.5 h-3.5" />
-            开始面试
+            {submitLabel}
           </button>
         </div>
       </div>

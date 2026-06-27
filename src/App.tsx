@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy } from "react";
-import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search, Database, Zap } from "lucide-react";
+import { Send, Minus, X, Settings, Mic, Square, Keyboard, Camera, ChevronDown, Plus, History, Download, StopCircle, PlayCircle, Clock, Search, Database, Zap, UserCircle } from "lucide-react";
 // 懒加载非核心面板
 const SettingsPanel = lazy(() => 
   import("./components/SettingsPanel").then(m => ({ default: m.SettingsPanel }))
@@ -1046,18 +1046,8 @@ function App() {
     setInterviewCompany(company);
     setInterviewPosition(position);
     setShowInterviewSetup(false);
-    setIsInterviewStarted(true);
-    setQuestionTimings([]);
-    setCurrentQuestionIndex(0);
-    setCurrentQuestionAskedAt(null);
-    setElapsedSeconds(0);
 
-    // 先清空历史消息，确保新面试不受旧消息影响
-    setMessages([]);
-    setCurrentSessionId(null);
-    setSessionResumeTimestamp(Date.now());
-
-    // 更新 config 的 interviewBackground，company + position 用于个性化 prompt
+    // 更新 config 的 interviewBackground，三种模式共用此背景信息
     const config = await loadConfig();
     await saveConfig({
       ...config,
@@ -1070,7 +1060,24 @@ function App() {
         position,
       }
     });
-    
+
+    // 面试官模式：启动模拟面试（清空会话 + 自动发开场白）
+    // 其他模式：仅保存背景信息，不影响当前会话，后续回复自动注入
+    if (promptMode !== 'interviewer') {
+      return;
+    }
+
+    setIsInterviewStarted(true);
+    setQuestionTimings([]);
+    setCurrentQuestionIndex(0);
+    setCurrentQuestionAskedAt(null);
+    setElapsedSeconds(0);
+
+    // 先清空历史消息，确保新面试不受旧消息影响
+    setMessages([]);
+    setCurrentSessionId(null);
+    setSessionResumeTimestamp(Date.now());
+
     // 自动发送面试开始消息，触发 AI 面试官的开场白
     const triggerMessage = "你好面试官，我已准备好，请开始面试。";
     await requestAssistantReply(triggerMessage, triggerMessage, undefined);
@@ -1741,6 +1748,16 @@ function App() {
           >
             <Download className="w-3.5 h-3.5 text-amber-700" />
           </button>
+          {/* 面试背景：所有模式常驻，用于填写公司/岗位/JD/简历 */}
+          <button
+            onClick={() => setShowInterviewSetup(true)}
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors duration-150 ${
+              promptMode === 'interviewer' ? 'hidden' : 'hover:bg-amber-200/50'
+            }`}
+            title="面试背景（公司 / 岗位 / JD / 简历）"
+          >
+            <UserCircle className="w-3.5 h-3.5 text-amber-700" />
+          </button>
           {/* 面试官模式：开始面试按钮 */}
           {promptMode === 'interviewer' && !isInterviewStarted && !isInterviewEnded && (
             <button
@@ -2183,6 +2200,7 @@ function App() {
         isOpen={showInterviewSetup}
         onClose={() => setShowInterviewSetup(false)}
         onSubmit={handleInterviewSetupSubmit}
+        submitLabel={promptMode === 'interviewer' ? '开始面试' : '保存'}
       />
     </div>
   );
